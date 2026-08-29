@@ -27,9 +27,9 @@
 
 ### BPR Parameters
 
-Current: one same-user negative per positive, replacement sampling, resampled each epoch.
+Current: configurable 1/2/4 same-user negatives per positive, replacement sampling, resampled each epoch.
 
-Next legal parameters:
+Current and planned parameters:
 
 ```text
 pairs_per_positive: 1, 2, 4
@@ -43,7 +43,7 @@ The main architecture already accepts these FM/BPR feature parameters:
 
 | Parameter | Default | Validator range | Current integration |
 |---|---:|---:|---|
-| `pairs_per_positive` | 1 | 1–5 | Main FM backend only |
+| `pairs_per_positive` | 1 | 1, 2, 4 | Current runnable Agent and main FM backend |
 | `feature_smoothing` | 20 | 1–1000 | Main FeatureEncoder only |
 | `feature_buckets` | 20 | 2–100 | Main FeatureEncoder only |
 
@@ -144,7 +144,11 @@ Official functions that must not be behaviorally modified: `evaluate()`, `auc()`
 | Experiment | Primary | Decision |
 |---|---:|---|
 | FM+BCE | 0.601470 | Baseline |
-| FM+BPR | **0.603396** | KEEP |
+| FM+BPR, lr=0.001 | 0.603396 | KEEP |
+| FM+BPR, lr=0.0005 | 0.603696 | KEEP |
+| FM+BPR, lr=0.0003 | **0.603963** | KEEP; current best |
+| FM+BPR, 2 negatives/positive | 0.603379 | REJECT; no meaningful change |
+| FM+BPR, 4 negatives/positive | 0.602794 | REJECT |
 | FM + user rate | 0.600448 | REJECT |
 | FM + item rate | 0.591682 | REJECT |
 | LightGBM | 0.599817 | REJECT |
@@ -153,16 +157,15 @@ Official functions that must not be behaviorally modified: `evaluate()`, `auc()`
 
 ### Optimization Order
 
-1. BCE/BPR seeds 0–4.
-2. BPR negatives per positive: 1/2/4.
-3. BPR hard-negative sampling and user weighting.
-4. Strict-past 1/3/7-day item/user features.
-5. LightGBM LambdaRank grouped by user.
-6. Minimal DeepFM+BCE.
-7. DeepFM+BPR.
-8. Click/like multi-task learning.
-9. Watch-time auxiliary loss.
-10. Ensemble only after complementary models exist.
+1. BCE/BPR seeds 0–4 using BPR lr=0.0003.
+2. BPR hard-negative sampling and user weighting.
+3. Strict-past 1/3/7-day item/user features.
+4. LightGBM LambdaRank grouped by user.
+5. Minimal DeepFM+BCE.
+6. DeepFM+BPR.
+7. Click/like multi-task learning.
+8. Watch-time auxiliary loss.
+9. Ensemble only after complementary models exist.
 
 ### Code Extension Points
 
@@ -222,9 +225,9 @@ Official functions that must not be behaviorally modified: `evaluate()`, `auc()`
 
 ### BPR 参数
 
-当前：每个正样本配一个同用户负样本，有放回采样，每个 epoch 重采样。
+当前：每个正样本可配 1/2/4 个同用户负样本，有放回采样，每个 epoch 重采样。
 
-下一步合法参数：
+当前及计划参数：
 
 ```text
 pairs_per_positive: 1, 2, 4
@@ -238,7 +241,7 @@ Main 架构已经支持的额外参数：
 
 | 参数 | 默认值 | Validator 范围 | 当前接入位置 |
 |---|---:|---:|---|
-| `pairs_per_positive` | 1 | 1–5 | 仅 main FM backend |
+| `pairs_per_positive` | 1 | 1、2、4 | 当前可运行 Agent 和 main FM backend |
 | `feature_smoothing` | 20 | 1–1000 | 仅 main FeatureEncoder |
 | `feature_buckets` | 20 | 2–100 | 仅 main FeatureEncoder |
 
@@ -339,7 +342,11 @@ Main validator 还允许连续范围：`k: 4–128`、`lr: 1e-5–0.1`、`epochs
 | 实验 | Primary | 决策 |
 |---|---:|---|
 | FM+BCE | 0.601470 | Baseline |
-| FM+BPR | **0.603396** | KEEP |
+| FM+BPR，lr=0.001 | 0.603396 | KEEP |
+| FM+BPR，lr=0.0005 | 0.603696 | KEEP |
+| FM+BPR，lr=0.0003 | **0.603963** | KEEP；当前最佳 |
+| FM+BPR，每个正样本 2 个负样本 | 0.603379 | REJECT；无有效变化 |
+| FM+BPR，每个正样本 4 个负样本 | 0.602794 | REJECT |
 | FM + user rate | 0.600448 | REJECT |
 | FM + item rate | 0.591682 | REJECT |
 | LightGBM | 0.599817 | REJECT |
@@ -348,16 +355,15 @@ Main validator 还允许连续范围：`k: 4–128`、`lr: 1e-5–0.1`、`epochs
 
 ### 优化顺序
 
-1. BCE/BPR seed 0–4。
-2. BPR 每个正样本配 1/2/4 个负样本。
-3. BPR hard negative 和 user weighting。
-4. 严格过去窗口的 1/3/7 天 item/user feature。
-5. 按用户分组的 LightGBM LambdaRank。
-6. 最小 DeepFM+BCE。
-7. DeepFM+BPR。
-8. Click/like multi-task。
-9. Watch-time auxiliary loss。
-10. 只有模型互补时再 ensemble。
+1. 使用 BPR lr=0.0003 做 BCE/BPR seed 0–4 配对验证。
+2. BPR hard negative 和 user weighting。
+3. 严格过去窗口的 1/3/7 天 item/user feature。
+4. 按用户分组的 LightGBM LambdaRank。
+5. 最小 DeepFM+BCE。
+6. DeepFM+BPR。
+7. Click/like multi-task。
+8. Watch-time auxiliary loss。
+9. 只有模型互补时再 ensemble。
 
 ### 代码扩展位置
 

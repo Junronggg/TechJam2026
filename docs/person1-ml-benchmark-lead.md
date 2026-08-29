@@ -70,7 +70,7 @@ Gaps: unified registry, cache, temporal features.
 | BCE | Pointwise long-view classification | Ready |
 | BPR | Same-user positive score > negative score | Ready; current best |
 
-Gap: seeds 0–4, `pairs_per_positive`, hard negatives, user weighting.
+Ready: `pairs_per_positive = 1/2/4`. Gap: seeds 0–4, hard negatives, user weighting.
 
 ### P1.7 Models
 
@@ -107,7 +107,11 @@ Gap: correct registry status and unified adapters.
 | Experiment | Primary | Decision |
 |---|---:|---|
 | FM+BCE | 0.601470 | Baseline |
-| FM+BPR | **0.603396** | KEEP |
+| FM+BPR, lr=0.001 | 0.603396 | KEEP |
+| FM+BPR, lr=0.0005 | 0.603696 | KEEP |
+| FM+BPR, lr=0.0003 | **0.603963** | KEEP; current best |
+| FM+BPR, 2 negatives/positive | 0.603379 | REJECT |
+| FM+BPR, 4 negatives/positive | 0.602794 | REJECT |
 | FM + user rate | 0.600448 | REJECT |
 | FM + item rate | 0.591682 | REJECT |
 | LightGBM | 0.599817 | REJECT |
@@ -116,8 +120,8 @@ Gap: correct registry status and unified adapters.
 
 ### Next Tasks
 
-1. BCE/BPR paired runs for seeds 0–4.
-2. Test 1/2/4 negatives per positive.
+1. BCE/BPR paired runs for seeds 0–4 using BPR lr=0.0003.
+2. Test hard-negative sampling and user weighting.
 3. Unify training interface and registries.
 4. Add leakage-safe recent features.
 5. Test LightGBM LambdaRank.
@@ -194,7 +198,7 @@ fallback、参数、cache key、leakage rule、实现状态
 | BCE | Pointwise long-view 分类 | 可用 |
 | BPR | 同用户正样本分数 > 负样本 | 可用；当前最佳 |
 
-缺口：seed 0–4、`pairs_per_positive`、hard negative、用户权重。
+已支持：`pairs_per_positive = 1/2/4`。缺口：seed 0–4、hard negative、用户权重。
 
 ### P1.7 模型
 
@@ -231,7 +235,11 @@ fallback、参数、cache key、leakage rule、实现状态
 | 实验 | Primary | 决策 |
 |---|---:|---|
 | FM+BCE | 0.601470 | Baseline |
-| FM+BPR | **0.603396** | KEEP |
+| FM+BPR，lr=0.001 | 0.603396 | KEEP |
+| FM+BPR，lr=0.0005 | 0.603696 | KEEP |
+| FM+BPR，lr=0.0003 | **0.603963** | KEEP；当前最佳 |
+| FM+BPR，每个正样本 2 个负样本 | 0.603379 | REJECT |
+| FM+BPR，每个正样本 4 个负样本 | 0.602794 | REJECT |
 | FM + user rate | 0.600448 | REJECT |
 | FM + item rate | 0.591682 | REJECT |
 | LightGBM | 0.599817 | REJECT |
@@ -240,8 +248,8 @@ fallback、参数、cache key、leakage rule、实现状态
 
 ### 下一步
 
-1. Seed 0–4 的 BCE/BPR 配对实验。
-2. 测试每个正样本配 1/2/4 个负样本。
+1. 使用 BPR lr=0.0003 做 seed 0–4 的 BCE/BPR 配对实验。
+2. 测试 hard negative 和用户权重。
 3. 统一训练接口和 registry。
 4. 增加无泄漏的 recent feature。
 5. 测试 LightGBM LambdaRank。

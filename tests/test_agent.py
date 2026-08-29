@@ -70,6 +70,31 @@ class AgentTests(unittest.TestCase):
         self.assertTrue(all(users[p] == users[n] for p, n in zip(positives, negatives)))
         self.assertTrue(all(labels[p] == 1 and labels[n] == 0 for p, n in zip(positives, negatives)))
 
+    def test_pair_sampler_supports_multiple_negatives_per_positive(self):
+        try:
+            import numpy as np
+        except ModuleNotFoundError:
+            self.skipTest("NumPy unavailable in this interpreter")
+        from techjam_agent.bpr import build_pair_indices
+        users = ["u1", "u1", "u2", "u2"]
+        labels = np.asarray([1, 0, 1, 0])
+        positives, negatives = build_pair_indices(
+            users, labels, np.random.default_rng(0), pairs_per_positive=4
+        )
+        self.assertEqual(len(positives), 8)
+        self.assertTrue(all(users[p] == users[n] for p, n in zip(positives, negatives)))
+
+    def test_researcher_tunes_bpr_learning_rate_before_pair_count(self):
+        bpr = apply_changes(self.config, {"training_objective": "bpr"})
+        history = [{"config": self.config}, {"config": bpr}]
+        proposal = DeterministicResearcher().propose(bpr, history)
+        self.assertEqual(proposal.changes, {"learning_rate": 0.0005})
+
+        lower_lr = apply_changes(bpr, {"learning_rate": 0.0005})
+        history.append({"config": lower_lr})
+        proposal = DeterministicResearcher().propose(bpr, history)
+        self.assertEqual(proposal.changes, {"learning_rate": 0.0003})
+
     def test_researcher_adds_continuous_stats_after_lightgbm(self):
         lgb = apply_changes(self.config, {"model": "lightgbm"})
         proposal = DeterministicResearcher().propose(lgb, [{"config": self.config}])

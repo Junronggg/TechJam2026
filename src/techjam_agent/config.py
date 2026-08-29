@@ -13,6 +13,7 @@ ALLOWED_VALUES = {
     "l2": (0.0, 1e-6, 1e-5, 1e-4),
     "batch_size": (4096, 8192, 16384),
     "patience": (3, 4, 5),
+    "pairs_per_positive": (1, 2, 4),
     "seed": (0,),
 }
 FEATURE_KEYS = ("user_long_view_rate", "item_long_view_rate", "continuous_history_stats",

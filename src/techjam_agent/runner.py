@@ -181,7 +181,9 @@ class ExperimentRunner:
         started = time.monotonic()
         for epoch in range(1, hp["epochs"] + 1):
             if config["training_objective"] == "bpr":
-                positive, negative = build_pair_indices(utr, ytr, rng)
+                positive, negative = build_pair_indices(
+                    utr, ytr, rng, hp["pairs_per_positive"]
+                )
                 for start in range(0, len(positive), hp["batch_size"]):
                     selection = slice(start, start + hp["batch_size"])
                     bpr_step(model, Xtr[positive[selection]], Xtr[negative[selection]])

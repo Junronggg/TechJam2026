@@ -249,6 +249,27 @@ class DeterministicResearcher:
                     "GAUC and nDCG reward positive items ranking above negatives, not calibrated classification.",
                     {"training_objective": "bpr"}, "deterministic", empty_token_usage(),
                 )
+        if best["model"] == "fm" and best["training_objective"] == "bpr":
+            for value in (0.0005, 0.0003):
+                if value == hp["learning_rate"]:
+                    continue
+                candidate = apply_changes(best, {"learning_rate": value})
+                if experiment_key(candidate) not in tried:
+                    return Proposal(
+                        f"Test BPR learning_rate={value} with one negative per positive.",
+                        "A lower step size may preserve BPR ranking gains and reduce late-epoch degradation.",
+                        {"learning_rate": value}, "deterministic", empty_token_usage(),
+                    )
+            for value in (2, 4):
+                if value == hp["pairs_per_positive"]:
+                    continue
+                candidate = apply_changes(best, {"pairs_per_positive": value})
+                if experiment_key(candidate) not in tried:
+                    return Proposal(
+                        f"Test {value} same-user negatives per positive for BPR.",
+                        "More pairwise comparisons may improve ranking supervision without changing the model or features.",
+                        {"pairs_per_positive": value}, "deterministic", empty_token_usage(),
+                    )
         if best["model"] == "fm":
             model_change = ({"model": "lightgbm", "training_objective": "bce"}
                             if best["training_objective"] == "bpr" else {"model": "lightgbm"})

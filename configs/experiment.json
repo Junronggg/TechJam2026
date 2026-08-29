@@ -8,6 +8,7 @@
     "l2": 0.000001,
     "batch_size": 8192,
     "patience": 4,
+    "pairs_per_positive": 1,
     "seed": 0
   },
   "features": {

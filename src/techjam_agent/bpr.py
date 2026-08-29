@@ -5,8 +5,10 @@ from collections import defaultdict
 import numpy as np
 
 
-def build_pair_indices(users, labels, rng: np.random.Generator):
-    """Sample one same-user negative for every positive belonging to a mixed user."""
+def build_pair_indices(users, labels, rng: np.random.Generator, pairs_per_positive: int = 1):
+    """Sample same-user negatives for every positive belonging to a mixed user."""
+    if pairs_per_positive < 1:
+        raise ValueError("pairs_per_positive must be at least 1")
     groups = defaultdict(lambda: [[], []])
     for index, (user, label) in enumerate(zip(users, labels)):
         groups[user][int(label)].append(index)
@@ -14,7 +16,7 @@ def build_pair_indices(users, labels, rng: np.random.Generator):
     for negatives, positives in groups.values():
         if not positives or not negatives:
             continue
-        positive = np.asarray(positives, dtype=np.int64)
+        positive = np.repeat(np.asarray(positives, dtype=np.int64), pairs_per_positive)
         negative = rng.choice(np.asarray(negatives, dtype=np.int64), size=len(positive), replace=True)
         positive_parts.append(positive); negative_parts.append(negative)
     if not positive_parts:
