@@ -128,18 +128,29 @@ invalid, duplicated, or temporarily unavailable. Outputs are written to a timest
   for the validation-best checkpoint. They are never sent back to the researcher.
 - Each iteration includes a grounded critique (observation, interpretation, confidence,
   and next test) and is appended to `experiment_history.jsonl`.
-- `tree_snapshot.json` preserves parent/child lineage and rejected branches as evidence.
+- The manager keeps up to three active branch families. Parent selection combines validation
+  Primary, exploration, novelty, runtime, repetition, and failed/rejected-branch penalties.
+- Every candidate log records the parent-selection score breakdown; `tree_snapshot.json`
+  preserves parent/child lineage and rejected branches as evidence.
+- `summary.json` records LLM request, failure, and token totals, including failed attempts
+  that fell back to the deterministic researcher.
 
 Quick checks that do not require the dataset:
 
 ```bash
 python3 -m unittest discover -s tests -v
 python3 -m compileall -q src scripts tests
+```
+
+The authoritative runnable agent is `scripts/run_agent.py` backed by
+`src/techjam_agent/`. The root-level `run_agent.py`, `agent/`, `experiment/`, and
+`recommender/` modules are an earlier compatibility prototype and should not receive
+new Person 2 work unless the two implementations are deliberately consolidated.
+
 ## Research-agent architecture
 
-The Planner/Critic research loop and lightweight experiment-tree manager are now
-scaffolded. The interfaces, safety checks, memory, budget logic, and evidence
-logging are runnable, but no LLM or new recommender implementation is connected.
+The earlier root-level Planner/Critic research loop remains available for architecture
+smoke tests and comparison with the active `src/techjam_agent` implementation.
 See [the architecture document](docs/architecture.md).
 
 Run the architecture smoke test without training a model:

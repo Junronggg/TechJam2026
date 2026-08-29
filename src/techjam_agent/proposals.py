@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -9,7 +10,7 @@ from typing import Any, Callable
 
 from .config import ALLOWED_VALUES, FEATURE_KEYS, MODELS, OBJECTIVES, apply_changes, experiment_key
 from .memory import PLANNER_RECENT_HISTORY, build_memory_summary, collect_tried_keys
-from .tree import select_parent
+from .tree import branch_name, node_id_for, select_parent
 
 # One experiment may change 1-3 allow-listed fields. A single field is preferred,
 # but model switches such as FM+BPR -> LightGBM+BCE must set model and
@@ -48,6 +49,7 @@ class Proposal:
     changes: dict[str, Any]
     source: str
     token_usage: dict[str, int] | None = None
+    llm_attempts: int = 0
 
     @classmethod
     def parse(cls, value: dict[str, Any], source: str) -> "Proposal":
@@ -80,6 +82,7 @@ class Proposal:
                 "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
                 "total_tokens": int(usage.get("total_tokens", 0) or 0),
             },
+            "llm_attempts": int(self.llm_attempts),
         }
 
 
@@ -193,6 +196,42 @@ def expansion_parent_view(
     return view
 
 
+def expansion_parent_view_for_config(
+    history: list[dict[str, Any]],
+    parent_config: dict[str, Any],
+    global_best_config: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a lineage view for a tree-selected config, including weaker parents."""
+    parent_key = experiment_key(parent_config)
+    for item in reversed(history):
+        config = item.get("config") if isinstance(item, dict) else None
+        iteration = item.get("iteration") if isinstance(item, dict) else None
+        metrics = item.get("metrics") if isinstance(item, dict) else None
+        if (not isinstance(config, dict) or not isinstance(iteration, int) or
+                experiment_key(config) != parent_key):
+            continue
+        primary = validation_metrics_only(metrics)
+        changes = item.get("changes") if isinstance(item.get("changes"), dict) else {}
+        view = {
+            "node_id": node_id_for(iteration),
+            "iteration": iteration,
+            "branch": branch_name(changes),
+            "validation_primary": None if primary is None else primary.get("primary"),
+            "same_as_global_best": parent_config == global_best_config,
+        }
+        if not view["same_as_global_best"]:
+            view["config"] = parent_config
+        return view
+    return {
+        "node_id": None,
+        "iteration": None,
+        "branch": None,
+        "validation_primary": None,
+        "same_as_global_best": parent_config == global_best_config,
+        **({} if parent_config == global_best_config else {"config": parent_config}),
+    }
+
+
 def build_planner_prompt(
     best_config: dict[str, Any],
     history: list[dict[str, Any]],
@@ -202,6 +241,8 @@ def build_planner_prompt(
     epsilon: float = CONVERGENCE_EPSILON,
     recent: int = RECENT_HISTORY,
     expansion_parent: dict[str, Any] | None = None,
+    expansion_config: dict[str, Any] | None = None,
+    budget: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the planner context. Does not call an HTTP API."""
     return {
@@ -212,8 +253,13 @@ def build_planner_prompt(
         "change_rule": CHANGE_RULE,
         "official_baseline_primary": official_baseline_primary,
         "epsilon": epsilon,
+        "budget": budget or {
+            "remaining_iterations": None,
+            "remaining_seconds": None,
+            "estimated_next_experiment_seconds": None,
+        },
         "allowed_values": allowed_values if allowed_values is not None else default_allowed_values(),
-        "remaining": remaining_search_space(best_config),
+        "remaining": remaining_search_space(expansion_config or best_config),
         "memory": build_memory_summary(history),
         "global_best": {
             "config": best_config,
@@ -328,6 +374,8 @@ class OpenAICompatibleResearcher:
         api_key: str | None = None,
         urlopen: Callable[..., Any] | None = None,
         timeout: float = HTTP_TIMEOUT_SECONDS,
+        retry_backoff_seconds: float = 0.5,
+        sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self.model = model
         self.base_url = base_url.rstrip("/")
@@ -336,18 +384,50 @@ class OpenAICompatibleResearcher:
             raise ValueError("OPENAI_API_KEY is required for --researcher llm")
         self._urlopen = urlopen or urllib.request.urlopen
         self.timeout = timeout
+        self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
+        self._sleep = sleeper
         self.last_token_usage = empty_token_usage()
+        self.last_attempts = 0
+        self._run_context: dict[str, Any] = {}
+
+    def set_run_context(self, context: dict[str, Any]) -> None:
+        """Receive deterministic budget context from the Controller before planning."""
+        self._run_context = {
+            "remaining_iterations": context.get("remaining_iterations"),
+            "remaining_seconds": context.get("remaining_seconds"),
+            "estimated_next_experiment_seconds": context.get(
+                "estimated_next_experiment_seconds"
+            ),
+        }
 
     def propose(self, best: dict[str, Any], history: list[dict[str, Any]]) -> Proposal:
-        prompt = build_planner_prompt(best, history)
+        global_best_parent = select_parent(history)
+        global_best_config = best if global_best_parent is None else global_best_parent.config
+        parent_view = expansion_parent_view_for_config(history, best, global_best_config)
+        prompt = build_planner_prompt(
+            global_best_config,
+            history,
+            expansion_parent=parent_view,
+            expansion_config=best,
+            budget=self._run_context,
+        )
         tried = set(collect_tried_keys(history))
         accumulated = empty_token_usage()
+        self.last_token_usage = empty_token_usage()
+        self.last_attempts = 0
         last_error = "unknown error"
         for attempt in range(1, MAX_LLM_ATTEMPTS + 1):
+            self.last_attempts = attempt
             try:
                 payload = self._chat(prompt, repair=(attempt > 1))
             except (urllib.error.URLError, TimeoutError) as exc:
-                raise RuntimeError("LLM proposal failed: HTTP error") from exc
+                last_error = type(exc).__name__
+                if attempt >= MAX_LLM_ATTEMPTS:
+                    raise RuntimeError(
+                        f"LLM proposal failed after {MAX_LLM_ATTEMPTS} attempts: {last_error}"
+                    ) from exc
+                self._backoff(attempt)
+                continue
             except ValueError as exc:
                 last_error = type(exc).__name__
                 if attempt >= MAX_LLM_ATTEMPTS:
@@ -360,24 +440,29 @@ class OpenAICompatibleResearcher:
             try:
                 raw = _message_json(payload)
                 proposal = Proposal.parse(raw, "llm")
-            except (json.JSONDecodeError, ValueError, KeyError, IndexError) as exc:
+                candidate = apply_changes(best, proposal.changes)
+                if experiment_key(candidate) in tried:
+                    raise ValueError("LLM repeated a previous experiment")
+            except (json.JSONDecodeError, ValueError, KeyError, IndexError, TypeError) as exc:
                 last_error = type(exc).__name__
                 if attempt >= MAX_LLM_ATTEMPTS:
                     raise RuntimeError(
                         f"LLM proposal failed after {MAX_LLM_ATTEMPTS} attempts: {last_error}"
                     ) from exc
                 continue
-            candidate = apply_changes(best, proposal.changes)
-            if experiment_key(candidate) in tried:
-                raise ValueError("LLM repeated a previous experiment")
             return Proposal(
                 proposal.hypothesis,
                 proposal.reason,
                 proposal.changes,
                 "llm",
                 dict(accumulated),
+                attempt,
             )
         raise RuntimeError(f"LLM proposal failed after {MAX_LLM_ATTEMPTS} attempts: {last_error}")
+
+    def _backoff(self, attempt: int) -> None:
+        if self.retry_backoff_seconds:
+            self._sleep(self.retry_backoff_seconds * (2 ** (attempt - 1)))
 
     def _chat(self, prompt: dict[str, Any], *, repair: bool) -> dict[str, Any]:
         messages = [

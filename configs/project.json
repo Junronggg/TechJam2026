@@ -32,5 +32,14 @@
     "max_wall_clock_hours": 6,
     "convergence_epsilon": 0.002,
     "convergence_rounds": 3
+  },
+  "tree_search": {
+    "max_active_branches": 3,
+    "exploration_weight": 0.002,
+    "novelty_weight": 0.001,
+    "runtime_penalty_weight": 0.001,
+    "repetition_penalty_weight": 0.001,
+    "failed_child_penalty_weight": 0.002,
+    "rejected_node_penalty_weight": 0.002
   }
 }

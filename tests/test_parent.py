@@ -174,6 +174,9 @@ class LineageRecordingTests(unittest.TestCase):
 
         self.assertEqual(candidate["parent_id"], "baseline")
         self.assertEqual(candidate["parent_primary"], 0.601470)
+        self.assertEqual(candidate["parent_selection"]["parent_id"], "baseline")
+        self.assertIn("exploration_bonus", candidate["parent_selection"])
+        self.assertIn("runtime_penalty", candidate["parent_selection"])
         self.assertEqual(candidate["global_best_primary_before"], 0.601470)
         self.assertAlmostEqual(candidate["delta_from_parent"], 0.001926, places=6)
         self.assertAlmostEqual(candidate["delta_from_best"], 0.001926, places=6)
