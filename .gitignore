@@ -1,0 +1,30 @@
+# Python environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Local secrets and machine-specific settings
+.env
+
+# KuaiRand data and downloaded archives (never commit competition data)
+data/*
+!data/.gitkeep
+*.tar.gz
+*.zip
+
+# Generated experiment outputs
+artifacts/*
+!artifacts/.gitkeep
+logs/*
+!logs/.gitkeep
+submissions/*
+!submissions/.gitkeep
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+

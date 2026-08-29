@@ -1,0 +1,4 @@
+# The official starter kit depends only on NumPy.
+# Keep the preparation environment minimal until model development begins.
+numpy==1.26.4
+

@@ -1,0 +1,31 @@
+{
+  "project": "techjam-autonomous-ml-research-agent",
+  "benchmark": "KuaiRand-Pure",
+  "starter_dir": "kuairand-starter-kit",
+  "data_dir": "data/KuaiRand-Pure/data",
+  "dataset_archive": {
+    "url": "https://zenodo.org/records/10439422/files/KuaiRand-Pure.tar.gz",
+    "md5": "0820331067a3784d9691136f772b35a7"
+  },
+  "label": "long_view",
+  "metrics": ["GAUC", "nDCG@5"],
+  "primary_metric": "mean(GAUC, nDCG@5)",
+  "baseline": {
+    "model": "fm",
+    "seed": 0,
+    "k": 16,
+    "learning_rate": 0.001,
+    "max_epochs": 40,
+    "validation": {
+      "GAUC": 0.6674,
+      "nDCG@5": 0.5357,
+      "primary": 0.6016
+    }
+  },
+  "run_limits": {
+    "max_iterations": 50,
+    "max_wall_clock_hours": 6,
+    "convergence_epsilon": 0.002,
+    "convergence_rounds": 3
+  }
+}
