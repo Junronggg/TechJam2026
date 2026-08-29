@@ -85,6 +85,51 @@ Two feature sets currently coexist:
 | `user_tag_affinity` | Smoothed LOO bucket | FM | Encoder ready; run pending |
 | `temporal_recency` | Rolling history | Future | Not implemented |
 
+### Optimizable Functions
+
+#### Data and feature functions
+
+| Function | Current responsibility | Optimization options |
+|---|---|---|
+| `data.load()` | Load and date-split rows | Streaming/chunked CSV, cached parsed data, lower memory |
+| `data.encode()` | Five-field categorical encoding | Reusable vocabularies, cached matrices, numeric feature values |
+| `FeatureEncoder.fit_transform()` | Train-fit safe feature encoding | Separate `fit/transform`, persistent cache, sparse output |
+| `fit_historical_statistics()` | Build item/user/pair aggregates | Vectorization, daily aggregates, incremental updates |
+| `_smoothed_rate()` | Smoothed target rate | Tune smoothing, min count, hierarchical priors |
+| `_quantile_edges()` | Numeric-to-category buckets | Tune bucket count, monotonic/fixed bins, robust quantiles |
+| `aggregate()` / `aggregate_pair()` | Current pipeline aggregates | Cache, vectorize, temporal cutoffs, fallback hierarchy |
+| `smoothed_rate_bucket()` | LOO rate bucket | Tune prior/buckets; compare continuous representation |
+
+#### Model and objective functions
+
+| Function | Current responsibility | Optimization options |
+|---|---|---|
+| `FM.__init__()` | Initialize W/V and Adam state | Initialization scale, embedding dim, optimizer configuration |
+| `FM.logits()` | FM first/second-order score | Numeric-valued FM, field-aware interactions, interaction masking |
+| `FM.step()` | BCE gradient update | Class/user weighting, focal loss, optimizer, gradient clipping |
+| `FM.predict()` | Batched scoring | Batch size, memory mapping, parallel scoring |
+| `build_pair_indices()` | Same-user BPR pairs | Multiple negatives, user-balanced pairs, hard negatives |
+| `bpr_step()` | Pairwise BPR gradient | BPR lr/L2, margin, temperature, weighting, clipping |
+| `_run_lightgbm()` | Binary LightGBM training | LambdaRank, group-by-user, custom ranking metric, parameter search |
+| `_lightgbm_matrices()` | Categorical + continuous matrix | Feature selection, categorical encoding, cached matrices |
+| `run_validation_fm()` | Validation-only FM adapter | Multi-seed, pairs/positive, feature smoothing/buckets |
+
+#### Evaluation and agent functions
+
+| Function | Current responsibility | Optimization options |
+|---|---|---|
+| `evaluate()` | Official GAUC/nDCG@5 | Do not change; optimize only runtime with equivalence tests |
+| `Controller._execute()` | Run/log/KEEP/REJECT | Retry policy, resource metrics, statistical decision rules |
+| `Controller._converged()` | Stop after weak improvements | Correct post-best rounds, confidence-aware stopping |
+| `DeterministicResearcher.propose()` | Fixed experiment order | Evidence-driven ordering, branch coverage, failed-action memory |
+| `OpenAICompatibleResearcher.propose()` | LLM structured proposal | Better schema, prompt evidence, token limits, provider abstraction |
+| `GroundedCritic.review()` / `review()` | Interpret measured results | Multi-seed confidence, cost-aware critique, follow-up generation |
+| `TreeSearchPolicy.select()` | Choose experiment parent | Exploration/novelty/runtime weights, branch pruning |
+| `ExperimentValidator.validate_config()` | Reject illegal configs | Model-specific schemas, conditional parameters, resource limits |
+| `SubprocessExecutor.run()` / `IsolatedExperimentRunner.run()` | Isolate experiment | Streaming logs, memory limits, retry/recovery, checkpoint resume |
+
+Official functions that must not be behaviorally modified: `evaluate()`, `auc()`, and `ndcg_at_k()`. Any performance rewrite must pass exact-equivalence tests.
+
 ### Compatibility Rules
 
 - BPR: FM only.
@@ -234,6 +279,51 @@ Main validator 还允许连续范围：`k: 4–128`、`lr: 1e-5–0.1`、`epochs
 | `user_tab_long_view_rate` | Pair rate + count | LGBM | 0.597528；拒绝 |
 | `user_tag_affinity` | 平滑 LOO 分桶 | FM | Encoder 可用；待运行 |
 | `temporal_recency` | 滚动历史 | 未来 | 未实现 |
+
+### 可优化的 Function
+
+#### 数据与特征函数
+
+| Function | 当前职责 | 可优化方向 |
+|---|---|---|
+| `data.load()` | 加载并按日期切分 | CSV 流式/分块读取、解析缓存、降低内存 |
+| `data.encode()` | 五字段类别编码 | 复用 vocabulary、缓存矩阵、支持数值 feature value |
+| `FeatureEncoder.fit_transform()` | 安全拟合和编码 | 拆分 `fit/transform`、持久 cache、稀疏输出 |
+| `fit_historical_statistics()` | user/item/pair 聚合 | 向量化、按天预聚合、增量更新 |
+| `_smoothed_rate()` | 平滑 target rate | smoothing、min count、分层 prior |
+| `_quantile_edges()` | 连续值分桶 | bucket 数、固定/单调桶、robust quantile |
+| `aggregate()` / `aggregate_pair()` | 当前 pipeline 聚合 | Cache、向量化、时间 cutoff、fallback hierarchy |
+| `smoothed_rate_bucket()` | LOO rate 分桶 | prior/bucket 调参；对比连续表示 |
+
+#### 模型与 Objective 函数
+
+| Function | 当前职责 | 可优化方向 |
+|---|---|---|
+| `FM.__init__()` | 初始化 W/V 和 Adam | 初始化尺度、embedding dim、optimizer 配置 |
+| `FM.logits()` | FM 一阶/二阶打分 | 数值 FM、field-aware interaction、interaction mask |
+| `FM.step()` | BCE 梯度更新 | 类别/用户权重、focal loss、optimizer、gradient clipping |
+| `FM.predict()` | 分批预测 | Batch size、memory map、并行打分 |
+| `build_pair_indices()` | 同用户 BPR 配对 | 多负样本、user-balanced、hard negative |
+| `bpr_step()` | BPR 梯度 | BPR lr/L2、margin、temperature、weight、clipping |
+| `_run_lightgbm()` | Binary LightGBM | LambdaRank、user group、自定义 ranking metric、参数搜索 |
+| `_lightgbm_matrices()` | 类别+连续矩阵 | Feature selection、类别编码、矩阵 cache |
+| `run_validation_fm()` | Validation-only FM adapter | Multi-seed、pairs/positive、smoothing/buckets |
+
+#### 评估与 Agent 函数
+
+| Function | 当前职责 | 可优化方向 |
+|---|---|---|
+| `evaluate()` | 官方 GAUC/nDCG@5 | 不改行为；仅允许等价测试后的性能优化 |
+| `Controller._execute()` | 执行/日志/KEEP/REJECT | Retry、资源指标、统计决策规则 |
+| `Controller._converged()` | 连续弱提升后停止 | 修正 best 后轮数、confidence-aware stopping |
+| `DeterministicResearcher.propose()` | 固定实验顺序 | 证据驱动排序、分支覆盖、失败经验 |
+| `OpenAICompatibleResearcher.propose()` | LLM 结构化提案 | 更严格 schema、prompt evidence、token limit、provider adapter |
+| `GroundedCritic.review()` / `review()` | 解释实验 | 多 seed 置信度、cost-aware critique、follow-up |
+| `TreeSearchPolicy.select()` | 选择父节点 | exploration/novelty/runtime 权重、branch pruning |
+| `ExperimentValidator.validate_config()` | 拒绝非法配置 | 模型专属 schema、条件参数、资源上限 |
+| `SubprocessExecutor.run()` / `IsolatedExperimentRunner.run()` | 隔离实验 | 实时日志、内存限制、retry/recovery、checkpoint resume |
+
+禁止改变官方 `evaluate()`、`auc()`、`ndcg_at_k()` 的行为；任何性能重写都必须通过精确等价测试。
 
 ### 兼容规则
 
