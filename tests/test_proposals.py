@@ -131,7 +131,7 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(prompt["allowed_values"]["max_change_fields"], MAX_CHANGE_FIELDS)
         self.assertIn("1 and 3", CHANGE_RULE)
         self.assertIn("LightGBM", prompt["change_rule"])
-        self.assertEqual(prompt["current_best"]["validation_metrics"]["primary"], 0.6015)
+        self.assertEqual(prompt["global_best"]["validation_metrics"]["primary"], 0.6015)
         self.assertEqual(prompt["history"][0]["hypothesis"], "Reproduce the official FM baseline.")
         self.assertEqual(prompt["history"][0]["critique"]["observation"], "Validation Primary=0.601500")
         self.assertEqual(prompt["history"][0]["decision"], "KEEP")

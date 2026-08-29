@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from .config import ALLOWED_VALUES, FEATURE_KEYS, MODELS, OBJECTIVES, apply_changes, experiment_key
 from .memory import PLANNER_RECENT_HISTORY, build_memory_summary, collect_tried_keys
+from .tree import select_parent
 
 # One experiment may change 1-3 allow-listed fields. A single field is preferred,
 # but model switches such as FM+BPR -> LightGBM+BCE must set model and
@@ -29,6 +30,8 @@ CHANGE_RULE = (
     "use two or three fields only when they are one atomic switch "
     "(for example model plus training_objective when moving FM+BPR to LightGBM+BCE). "
     "Do not repeat a configuration already present in history. "
+    "Your changes are applied to expansion_parent, which may differ from global_best. "
+    "Do not supply lineage fields such as parent_id; the Controller owns lineage. "
     "Use validation Primary only; never use or request test metrics."
 )
 REPAIR_INSTRUCTION = (
@@ -169,6 +172,27 @@ def default_allowed_values() -> dict[str, Any]:
     }
 
 
+def expansion_parent_view(
+    history: list[dict[str, Any]],
+    global_best_config: dict[str, Any],
+) -> dict[str, Any]:
+    """Describe the node being expanded, and whether it is the global best.
+
+    The parent config is sent only when it differs from the global best, so the
+    single-branch case costs no extra tokens.
+    """
+    parent = select_parent(history)
+    if parent is None:
+        return {"node_id": None, "iteration": None, "branch": None,
+                "validation_primary": None, "same_as_global_best": True}
+    view = {"node_id": parent.node_id, "iteration": parent.iteration,
+            "branch": parent.branch, "validation_primary": parent.primary,
+            "same_as_global_best": parent.config == global_best_config}
+    if not view["same_as_global_best"]:
+        view["config"] = parent.config
+    return view
+
+
 def build_planner_prompt(
     best_config: dict[str, Any],
     history: list[dict[str, Any]],
@@ -177,6 +201,7 @@ def build_planner_prompt(
     official_baseline_primary: float = OFFICIAL_BASELINE_PRIMARY,
     epsilon: float = CONVERGENCE_EPSILON,
     recent: int = RECENT_HISTORY,
+    expansion_parent: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the planner context. Does not call an HTTP API."""
     return {
@@ -190,10 +215,12 @@ def build_planner_prompt(
         "allowed_values": allowed_values if allowed_values is not None else default_allowed_values(),
         "remaining": remaining_search_space(best_config),
         "memory": build_memory_summary(history),
-        "current_best": {
+        "global_best": {
             "config": best_config,
             "validation_metrics": latest_best_validation_metrics(history),
         },
+        "expansion_parent": (expansion_parent if expansion_parent is not None
+                             else expansion_parent_view(history, best_config)),
         "history": compact_history_for_planner(history, recent=min(recent, PLANNER_RECENT_HISTORY)),
         "response_contract": {
             "type": "object",

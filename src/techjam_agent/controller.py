@@ -12,7 +12,7 @@ from .config import apply_changes, validate_config
 from .critic import review
 from .memory import is_duplicate_config
 from .proposals import DeterministicResearcher, Proposal
-from .tree import ExperimentTree
+from .tree import ExperimentParent, ExperimentTree, select_parent
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -61,21 +61,29 @@ class Controller:
         self.convergence_streak = 0
         self.started = self.clock()
 
-    def _record(self, item: dict[str, Any], parent_iteration: int | None) -> None:
+    def _record(self, item: dict[str, Any], parent_id: str | None) -> None:
         self.history.append(item)
-        self.tree.add(item["iteration"], parent_iteration, item)
+        self.tree.add(item["iteration"], parent_id, item)
         _write_json(self.run_dir / f"iteration_{item['iteration']:03d}.json", item)
         _write_json(self.run_dir / "tree_snapshot.json", self.tree.snapshot())
         with (self.run_dir / "experiment_history.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(item, ensure_ascii=False, default=_json_default) + "\n")
 
-    def _execute(self, iteration: int, config: dict[str, Any], proposal: Proposal) -> None:
+    def _execute(self, iteration: int, config: dict[str, Any], proposal: Proposal,
+                 parent: ExperimentParent | None = None) -> None:
+        """Run one experiment against an explicit parent; global best stays a separate concept."""
         checkpoint = self.run_dir / "checkpoints" / f"iteration_{iteration:03d}.npz"
-        parent_score = None if self.best_score == float("-inf") else self.best_score
-        parent_iteration = self.best_iteration
+        global_best_before = None if self.best_score == float("-inf") else self.best_score
+        parent_id = None if parent is None else parent.node_id
+        parent_primary = None if parent is None else parent.primary
         item = {"iteration": iteration, "timestamp": datetime.now(timezone.utc).isoformat(),
-                **proposal.as_dict(), "parent_score": parent_score, "config": config,
-                "manual_intervention": False}
+                **proposal.as_dict(),
+                "parent_id": parent_id,
+                "parent_primary": parent_primary,
+                # Pre-P2.6 name for parent_primary. Kept so old readers stay valid.
+                "parent_score": parent_primary,
+                "global_best_primary_before": global_best_before,
+                "config": config, "manual_intervention": False}
         changes = "baseline" if not proposal.changes else ", ".join(
             f"{key}={value}" for key, value in proposal.changes.items())
         print(f"\nIteration {iteration}: {changes}", flush=True)
@@ -85,15 +93,18 @@ class Controller:
             score = metrics["primary"]
             decision = "KEEP" if score > self.best_score else "REJECT"
             item.update({"status": "success", "metrics": metrics,
-                         "delta_from_best": None if parent_score is None else score - parent_score,
+                         "delta_from_parent":
+                             None if parent_primary is None else score - parent_primary,
+                         "delta_from_best":
+                             None if global_best_before is None else score - global_best_before,
                          "decision": decision, "error": None})
             item["critique"] = review(
-                metrics, parent_score,
+                metrics, parent_primary,
                 self.project["run_limits"]["convergence_epsilon"], "success",
                 history=self.history, changes=proposal.changes,
             )
             if iteration > 0:
-                self._update_convergence_streak(score, parent_score)
+                self._update_convergence_streak(score, global_best_before)
             if decision == "KEEP":
                 self.best_score, self.best_config, self.best_checkpoint = score, config, checkpoint
                 self.best_iteration = iteration
@@ -102,16 +113,17 @@ class Controller:
                 shutil.copy2(checkpoint, self.artifacts_dir / "best_model.npz")
             print(f"  Result: primary={score:.6f} | {decision}", flush=True)
         except Exception as exc:
-            item.update({"status": "error", "metrics": None, "delta_from_best": None,
+            item.update({"status": "error", "metrics": None,
+                         "delta_from_parent": None, "delta_from_best": None,
                          "decision": "REJECT", "error": {"type": type(exc).__name__, "message": str(exc)}})
             item["critique"] = review(
-                None, parent_score,
+                None, parent_primary,
                 self.project["run_limits"]["convergence_epsilon"],
                 "error", item["error"],
                 history=self.history, changes=proposal.changes,
             )
             print(f"  Error: {type(exc).__name__}: {exc} | REJECT", flush=True)
-        self._record(item, parent_iteration)
+        self._record(item, parent_id)
 
     def _update_convergence_streak(self, score: Any, parent_score: Any) -> None:
         """Only a finite candidate comparison is convergence evidence; failures leave it as is."""
@@ -142,11 +154,15 @@ class Controller:
     def _elapsed(self) -> float:
         return self.clock() - self.started
 
-    def _propose(self, researcher) -> tuple[Any, Any, tuple[str, str] | None]:
+    def _select_parent(self) -> ExperimentParent | None:
+        """Phase A: always the global-best successful node. Overridable for branch policies."""
+        return select_parent(self.history)
+
+    def _propose(self, researcher, parent: ExperimentParent) -> tuple[Any, Any, tuple[str, str] | None]:
         """Resolve one legal, non-duplicate candidate, or report why the search stopped."""
         try:
-            proposal = researcher.propose(self.best_config, self.history)
-            candidate = apply_changes(self.best_config, proposal.changes)
+            proposal = researcher.propose(parent.config, self.history)
+            candidate = apply_changes(parent.config, proposal.changes)
         except (StopIteration, ValueError, RuntimeError) as exc:
             return None, None, ("search_exhausted", f"{type(exc).__name__}: {exc}")
         if is_duplicate_config(candidate, self.history):
@@ -180,7 +196,7 @@ class Controller:
                 stop_reason = blocked
                 break
             if iteration == 0:
-                self._execute(0, self.best_config, baseline)
+                self._execute(0, self.best_config, baseline, None)
                 if self.best_checkpoint is None:
                     stop_reason = "baseline_failed"
                     break
@@ -188,13 +204,17 @@ class Controller:
             if self._converged():
                 stop_reason = "converged"
                 break
-            proposal, candidate, failure = self._propose(self.researcher)
+            parent = self._select_parent()
+            if parent is None:
+                stop_reason, stop_detail = "search_exhausted", "no expandable parent node"
+                break
+            proposal, candidate, failure = self._propose(self.researcher, parent)
             if failure is not None and not isinstance(self.researcher, DeterministicResearcher):
-                proposal, candidate, failure = self._propose(DeterministicResearcher())
+                proposal, candidate, failure = self._propose(DeterministicResearcher(), parent)
             if failure is not None:
                 stop_reason, stop_detail = failure
                 break
-            self._execute(iteration, candidate, proposal)
+            self._execute(iteration, candidate, proposal, parent)
         final_test = None
         if self.best_checkpoint is not None:
             final_test = self.runner.finalize(self.best_config, self.best_checkpoint,
