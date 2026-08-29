@@ -20,7 +20,9 @@ def main() -> int:
     parser.add_argument("--researcher", choices=("deterministic", "llm"), default="deterministic")
     parser.add_argument("--model", default=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"))
     parser.add_argument("--base-url", default=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
-    parser.add_argument("--max-iterations", type=int)
+    parser.add_argument("--max-iterations", type=int,
+                        help="Maximum total executed experiments including the iteration-0 "
+                             "baseline. Clamped to the official maximum in configs/project.json.")
     parser.add_argument("--data-dir")
     args = parser.parse_args()
 

@@ -102,7 +102,7 @@ class AgentTests(unittest.TestCase):
             self.assertTrue((base / "artifacts" / "best_config.json").is_file())
             self.assertTrue((base / "submissions" / "final.csv").is_file())
             records = sorted((base / "logs").glob("iteration_*.json"))
-            self.assertEqual(len(records), 4)
+            self.assertEqual(len(records), 3)
             self.assertEqual(json.loads(records[1].read_text())["decision"], "KEEP")
             self.assertNotIn("test", json.loads(records[1].read_text())["metrics"])
             self.assertTrue((base / "logs" / "experiment_history.jsonl").is_file())

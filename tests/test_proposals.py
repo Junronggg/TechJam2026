@@ -292,9 +292,9 @@ class FallbackTests(unittest.TestCase):
                 base / "logs", base / "artifacts", base / "submissions",
             )
             with patch("sys.stdout", new=io.StringIO()):
-                controller.run(max_iterations=1)
+                controller.run(max_iterations=2)
             records = sorted((base / "logs").glob("iteration_*.json"))
-            self.assertGreaterEqual(len(records), 2)
+            self.assertEqual(len(records), 2)
             second = json.loads(records[1].read_text(encoding="utf-8"))
             self.assertEqual(second["source"], "deterministic")
             self.assertEqual(second["changes"], {"training_objective": "bpr"})
