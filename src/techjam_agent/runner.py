@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import importlib.util
 import os
 import sys
@@ -26,10 +27,12 @@ def _load_module(name: str, path: Path):
 
 
 class ExperimentRunner:
-    def __init__(self, root: Path, data_dir: Path, starter_dir: Path) -> None:
+    def __init__(self, root: Path, data_dir: Path, starter_dir: Path,
+                 evaluator_sha256: str | None = None) -> None:
         self.root = root
         self.data_dir = data_dir
         self.starter_dir = starter_dir
+        self.evaluator_sha256 = evaluator_sha256
         sys.path.insert(0, str(starter_dir))
         self.data = _load_module("techjam_starter_data", starter_dir / "data.py")
         self.evaluate_mod = _load_module("techjam_starter_evaluate", starter_dir / "evaluate.py")
@@ -37,6 +40,14 @@ class ExperimentRunner:
         self.submit = _load_module("techjam_starter_submit", starter_dir / "submit.py")
         self._splits = None
         self._encoded = None
+
+    def verify_evaluator(self) -> None:
+        if not self.evaluator_sha256:
+            return
+        path = self.starter_dir / "evaluate.py"
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual != self.evaluator_sha256:
+            raise RuntimeError(f"official evaluator integrity check failed: {actual}")
 
     def _encoded_for(self, config: dict[str, Any]):
         base, base_dim = self._encoded
@@ -116,8 +127,8 @@ class ExperimentRunner:
             raise RuntimeError("LightGBM is required: python -m pip install -r requirements.txt") from exc
         matrices = self._lightgbm_matrices(config)
         enc, _ = self._encoded
-        ytr, yva, yte = enc["train"][1], enc["valid"][1], enc["test"][1]
-        uva, ute = enc["valid"][2], enc["test"][2]
+        ytr, yva = enc["train"][1], enc["valid"][1]
+        uva = enc["valid"][2]
         hp = config["lightgbm_hyperparameters"]
         model = lgb.LGBMClassifier(
             objective="binary", learning_rate=hp["learning_rate"], num_leaves=hp["num_leaves"],
@@ -132,18 +143,16 @@ class ExperimentRunner:
         model.fit(matrices["train"], ytr, eval_set=[(matrices["valid"], yva)],
                   eval_metric="binary_logloss", categorical_feature=list(range(5)), callbacks=callbacks)
         valid_scores = model.predict_proba(matrices["valid"])[:, 1]
-        test_scores = model.predict_proba(matrices["test"])[:, 1]
         valid = self.evaluate_mod.evaluate(uva, yva, valid_scores)
-        test = self.evaluate_mod.evaluate(ute, yte, test_scores)
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         model.booster_.save_model(str(checkpoint.with_suffix(".txt")))
-        np.savez_compressed(checkpoint, test_scores=test_scores,
-                           best_iteration=np.asarray(model.best_iteration_))
-        return {**self._metrics(valid), "test": self._metrics(test),
+        np.savez_compressed(checkpoint, best_iteration=np.asarray(model.best_iteration_))
+        return {**self._metrics(valid),
                 "best_iteration": int(model.best_iteration_),
                 "runtime_seconds": float(time.monotonic() - started)}
 
     def prepare(self) -> None:
+        self.verify_evaluator()
         required = ("video_features_basic_pure.csv", "log_standard_4_08_to_4_21_pure.csv",
                     "log_standard_4_22_to_5_08_pure.csv")
         missing = [name for name in required if not (self.data_dir / name).is_file()]
@@ -165,7 +174,6 @@ class ExperimentRunner:
         hp = config["hyperparameters"]
         Xtr, ytr, utr = enc["train"]
         Xva, yva, uva = enc["valid"]
-        Xte, yte, ute = enc["test"]
         model = self.baseline.FM(dim, k=hp["embedding_dim"], lr=hp["learning_rate"],
                                  l2=hp["l2"], seed=hp["seed"])
         rng = np.random.default_rng(hp["seed"])
@@ -196,22 +204,32 @@ class ExperimentRunner:
             raise RuntimeError("training produced no checkpoint")
         model.V, model.W, model.b = best_state
         valid = self.evaluate_mod.evaluate(uva, yva, model.predict(Xva))
-        test_scores = model.predict(Xte)
-        test = self.evaluate_mod.evaluate(ute, yte, test_scores)
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(checkpoint, V=model.V, W=model.W, b=model.b,
-                           test_scores=test_scores, best_epoch=np.asarray(best_epoch))
+                           best_epoch=np.asarray(best_epoch))
         return {"GAUC": float(valid["GAUC"]), "nDCG@5": float(valid["nDCG@5"]),
                 "primary": float(valid["primary"]),
-                "test": self._metrics(test),
                 "best_epoch": int(best_epoch),
                 "runtime_seconds": float(time.monotonic() - started)}
 
-    def write_submission(self, checkpoint: Path, output: Path) -> None:
+    def finalize(self, config: dict[str, Any], checkpoint: Path, output: Path) -> dict[str, Any]:
         if self._splits is None:
             self.prepare()
-        with np.load(checkpoint) as state:
-            scores = state["test_scores"]
+        enc, dim = self._encoded_for(config)
+        Xtest, ytest, users = enc["test"]
+        if config["model"] == "lightgbm":
+            import lightgbm as lgb
+            model = lgb.Booster(model_file=str(checkpoint.with_suffix(".txt")))
+            scores = model.predict(self._lightgbm_matrices(config)["test"])
+        else:
+            hp = config["hyperparameters"]
+            model = self.baseline.FM(dim, k=hp["embedding_dim"], lr=hp["learning_rate"],
+                                     l2=hp["l2"], seed=hp["seed"])
+            with np.load(checkpoint) as state:
+                model.V, model.W, model.b = state["V"], state["W"], state["b"]
+            scores = model.predict(Xtest)
+        metrics = self.evaluate_mod.evaluate(users, ytest, scores)
         output.parent.mkdir(parents=True, exist_ok=True)
         self.submit.write_submission(output, self._splits["test"], scores)
         self.submit.read_submission(output, self._splits["test"])
+        return self._metrics(metrics)
