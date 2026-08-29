@@ -20,6 +20,11 @@ def main() -> int:
     parser.add_argument("--researcher", choices=("deterministic", "llm"), default="deterministic")
     parser.add_argument("--model", default=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"))
     parser.add_argument("--base-url", default=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
+    parser.add_argument(
+        "--evidence-file",
+        default=os.getenv("TECHJAM_RESEARCH_EVIDENCE", "configs/research_evidence.json"),
+        help="Persistent validation-only evidence supplied to the LLM Researcher.",
+    )
     parser.add_argument("--max-iterations", type=int,
                         help="Maximum total executed experiments including the iteration-0 "
                              "baseline. Clamped to the official maximum in configs/project.json.")
@@ -40,8 +45,21 @@ def main() -> int:
     data_dir = Path(configured)
     if not data_dir.is_absolute():
         data_dir = ROOT / data_dir
-    researcher = (OpenAICompatibleResearcher(args.model, args.base_url)
-                  if args.researcher == "llm" else DeterministicResearcher())
+    if args.researcher == "llm":
+        evidence_path = Path(args.evidence_file)
+        if not evidence_path.is_absolute():
+            evidence_path = ROOT / evidence_path
+        try:
+            prior_evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            parser.error(f"cannot load research evidence from {evidence_path}: {exc}")
+        if not isinstance(prior_evidence, dict):
+            parser.error("research evidence must be a JSON object")
+        researcher = OpenAICompatibleResearcher(
+            args.model, args.base_url, prior_evidence=prior_evidence
+        )
+    else:
+        researcher = DeterministicResearcher()
     run_id = datetime.now(timezone.utc).strftime("run_%Y%m%dT%H%M%SZ")
     local_runner = ExperimentRunner(ROOT, data_dir, ROOT / project["starter_dir"],
                                     project.get("official_evaluator_sha256"))

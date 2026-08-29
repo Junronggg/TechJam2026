@@ -24,6 +24,14 @@ HTTP_TIMEOUT_SECONDS = 60
 MAX_LLM_ATTEMPTS = 3
 RECENT_HISTORY = 20
 VALIDATION_METRIC_KEYS = ("GAUC", "nDCG@5", "primary")
+BLOCKED_EVIDENCE_KEYS = frozenset({
+    "test",
+    "test_metrics",
+    "final_test_metrics",
+    "test_primary",
+    "test_gauc",
+    "test_ndcg",
+})
 CHANGE_RULE = (
     "Propose exactly one legal experiment. Change between 1 and "
     f"{MAX_CHANGE_FIELDS} allow-listed fields. Prefer a single-field change; "
@@ -124,6 +132,23 @@ def validation_metrics_only(metrics: Any) -> dict[str, Any] | None:
     return cleaned or None
 
 
+def sanitize_prior_evidence(value: Any) -> Any:
+    """Recursively remove test-split fields before evidence enters an LLM prompt."""
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            normalized = str(key).strip().lower()
+            if normalized in BLOCKED_EVIDENCE_KEYS or normalized.startswith("test_"):
+                continue
+            cleaned[str(key)] = sanitize_prior_evidence(item)
+        return cleaned
+    if isinstance(value, list):
+        return [sanitize_prior_evidence(item) for item in value]
+    if isinstance(value, tuple):
+        return [sanitize_prior_evidence(item) for item in value]
+    return value
+
+
 def compact_history_for_planner(history: list[dict[str, Any]], recent: int = RECENT_HISTORY) -> list[dict[str, Any]]:
     compact: list[dict[str, Any]] = []
     for item in history[-recent:]:
@@ -202,6 +227,7 @@ def build_planner_prompt(
     epsilon: float = CONVERGENCE_EPSILON,
     recent: int = RECENT_HISTORY,
     expansion_parent: dict[str, Any] | None = None,
+    prior_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the planner context. Does not call an HTTP API."""
     return {
@@ -214,6 +240,7 @@ def build_planner_prompt(
         "epsilon": epsilon,
         "allowed_values": allowed_values if allowed_values is not None else default_allowed_values(),
         "remaining": remaining_search_space(best_config),
+        "prior_evidence": sanitize_prior_evidence(prior_evidence or {}),
         "memory": build_memory_summary(history),
         "global_best": {
             "config": best_config,
@@ -242,14 +269,114 @@ class DeterministicResearcher:
         tried = set(collect_tried_keys(history))
         hp = best["hyperparameters"]
         if best["model"] == "fm" and best["training_objective"] == "bce":
-            candidate = apply_changes(best, {"training_objective": "bpr"})
+            bpr_switch = {"training_objective": "bpr", "learning_rate": 0.0003}
+            candidate = apply_changes(best, bpr_switch)
             if experiment_key(candidate) not in tried:
                 return Proposal(
-                    "Align FM training with within-user ranking by replacing BCE with pairwise BPR.",
-                    "GAUC and nDCG reward positive items ranking above negatives, not calibrated classification.",
-                    {"training_objective": "bpr"}, "deterministic", empty_token_usage(),
+                    "Reproduce the best FM+BPR configuration with learning_rate=0.0003.",
+                    "Earlier controlled experiments found BPR at 0.0003 outperformed BCE and higher BPR learning rates.",
+                    bpr_switch, "deterministic", empty_token_usage(),
                 )
         if best["model"] == "fm" and best["training_objective"] == "bpr":
+            for value in (0.4, 0.3, 0.5):
+                changes = {
+                    "model": "ensemble",
+                    "training_objective": "hybrid",
+                    "ensemble_deepfm_weight": value,
+                }
+                candidate = apply_changes(best, changes)
+                if experiment_key(candidate) not in tried:
+                    return Proposal(
+                        f"Blend FM+BPR with DeepFM+BCE using DeepFM weight {value}.",
+                        "Validation analysis found complementary ranking errors after within-user normalization.",
+                        changes, "deterministic", empty_token_usage(),
+                    )
+            for value in (0.75, 0.5, 0.25):
+                changes = {"training_objective": "hybrid", "hybrid_bpr_weight": value}
+                candidate = apply_changes(best, changes)
+                if experiment_key(candidate) not in tried:
+                    return Proposal(
+                        f"Test FM hybrid BCE+BPR with BPR weight {value}.",
+                        "Pointwise supervision may regularize the ranking objective while BPR remains dominant.",
+                        changes, "deterministic", empty_token_usage(),
+                    )
+        if best["model"] == "ensemble":
+            changes = {
+                "model": "multitask_deepfm",
+                "training_objective": "bce",
+                "learning_rate": 0.001,
+            }
+            candidate = apply_changes(best, changes)
+            if experiment_key(candidate) not in tried:
+                return Proposal(
+                    "Train DeepFM jointly on long_view, click, and like.",
+                    "Auxiliary feedback may improve shared user-item representations without becoming inference features.",
+                    changes, "deterministic", empty_token_usage(),
+                )
+            for value in (0.4, 0.3, 0.5):
+                if value == hp["ensemble_deepfm_weight"]:
+                    continue
+                candidate = apply_changes(best, {"ensemble_deepfm_weight": value})
+                if experiment_key(candidate) not in tried:
+                    return Proposal(
+                        f"Test ensemble DeepFM weight {value}.",
+                        "Blend weight controls the balance between pairwise FM and pointwise DeepFM.",
+                        {"ensemble_deepfm_weight": value}, "deterministic", empty_token_usage(),
+                    )
+            deepfm_candidates = (
+                (
+                    {"model": "deepfm", "training_objective": "bce", "learning_rate": 0.001},
+                    "Test DeepFM with pointwise BCE on the same base fields.",
+                    "This isolates whether a nonlinear interaction tower improves over FM.",
+                ),
+                (
+                    {"model": "deepfm", "training_objective": "bce", "learning_rate": 0.0005},
+                    "Test DeepFM+BCE with learning_rate=0.0005.",
+                    "The first DeepFM result was competitive, so a lower step size may improve its peak.",
+                ),
+                (
+                    {"model": "deepfm", "training_objective": "bce", "learning_rate": 0.002},
+                    "Test DeepFM+BCE with learning_rate=0.002.",
+                    "A higher step size checks whether the nonlinear tower benefits from faster fitting.",
+                ),
+            )
+            for changes, hypothesis, reason in deepfm_candidates:
+                candidate = apply_changes(best, changes)
+                if experiment_key(candidate) not in tried:
+                    return Proposal(
+                        hypothesis, reason, changes, "deterministic", empty_token_usage()
+                    )
+        if best["model"] == "deepfm":
+            if best["training_objective"] == "bce":
+                changes = {"training_objective": "bpr", "learning_rate": 0.0003}
+                candidate = apply_changes(best, changes)
+                if experiment_key(candidate) not in tried:
+                    return Proposal(
+                        "Test DeepFM with the ranking-aligned BPR objective.",
+                        "This separates the objective effect while retaining nonlinear interactions.",
+                        changes, "deterministic", empty_token_usage(),
+                    )
+            for value in (64, 16):
+                if value == hp["deepfm_hidden_dim"]:
+                    continue
+                candidate = apply_changes(best, {"deepfm_hidden_dim": value})
+                if experiment_key(candidate) not in tried:
+                    return Proposal(
+                        f"Test DeepFM hidden dimension {value}.",
+                        "Hidden width controls the capacity of nonlinear feature interactions.",
+                        {"deepfm_hidden_dim": value}, "deterministic", empty_token_usage(),
+                    )
+            if hp["learning_rate"] == 0.0003:
+                for value in (1, 2, 3, 4):
+                    if value == hp["seed"]:
+                        continue
+                    candidate = apply_changes(best, {"seed": value})
+                    if experiment_key(candidate) not in tried:
+                        return Proposal(
+                            f"Repeat the best FM+BPR configuration with seed={value}.",
+                            "A multi-seed check tests whether the observed ranking gain is stable.",
+                            {"seed": value}, "deterministic", empty_token_usage(),
+                        )
             for value in (0.0005, 0.0003):
                 if value == hp["learning_rate"]:
                     continue
@@ -349,6 +476,7 @@ class OpenAICompatibleResearcher:
         api_key: str | None = None,
         urlopen: Callable[..., Any] | None = None,
         timeout: float = HTTP_TIMEOUT_SECONDS,
+        prior_evidence: dict[str, Any] | None = None,
     ) -> None:
         self.model = model
         self.base_url = base_url.rstrip("/")
@@ -357,10 +485,11 @@ class OpenAICompatibleResearcher:
             raise ValueError("OPENAI_API_KEY is required for --researcher llm")
         self._urlopen = urlopen or urllib.request.urlopen
         self.timeout = timeout
+        self.prior_evidence = sanitize_prior_evidence(prior_evidence or {})
         self.last_token_usage = empty_token_usage()
 
     def propose(self, best: dict[str, Any], history: list[dict[str, Any]]) -> Proposal:
-        prompt = build_planner_prompt(best, history)
+        prompt = build_planner_prompt(best, history, prior_evidence=self.prior_evidence)
         tried = set(collect_tried_keys(history))
         accumulated = empty_token_usage()
         last_error = "unknown error"
@@ -402,7 +531,17 @@ class OpenAICompatibleResearcher:
 
     def _chat(self, prompt: dict[str, Any], *, repair: bool) -> dict[str, Any]:
         messages = [
-            {"role": "system", "content": "You are a cautious autonomous ML researcher."},
+            {
+                "role": "system",
+                "content": (
+                    "You are a cautious autonomous ML researcher. Treat prior_evidence as "
+                    "authoritative experimental memory. Do not repeat rejected mechanisms "
+                    "unless the proposed legal action tests a materially different hypothesis. "
+                    "Prefer evidence from multiple rolling folds over a single split. Propose "
+                    "only values explicitly listed in allowed_values; roadmap items are not "
+                    "currently executable actions."
+                ),
+            },
             {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
         ]
         if repair:
