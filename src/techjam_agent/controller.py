@@ -74,8 +74,11 @@ class Controller:
             item.update({"status": "success", "metrics": metrics,
                          "delta_from_best": None if parent_score is None else score - parent_score,
                          "decision": decision, "error": None})
-            item["critique"] = review(metrics, parent_score,
-                                      self.project["run_limits"]["convergence_epsilon"], "success")
+            item["critique"] = review(
+                metrics, parent_score,
+                self.project["run_limits"]["convergence_epsilon"], "success",
+                history=self.history, changes=proposal.changes,
+            )
             if decision == "KEEP":
                 self.best_score, self.best_config, self.best_checkpoint = score, config, checkpoint
                 self.best_iteration = iteration
@@ -86,9 +89,12 @@ class Controller:
         except Exception as exc:
             item.update({"status": "error", "metrics": None, "delta_from_best": None,
                          "decision": "REJECT", "error": {"type": type(exc).__name__, "message": str(exc)}})
-            item["critique"] = review(None, parent_score,
-                                      self.project["run_limits"]["convergence_epsilon"],
-                                      "error", item["error"])
+            item["critique"] = review(
+                None, parent_score,
+                self.project["run_limits"]["convergence_epsilon"],
+                "error", item["error"],
+                history=self.history, changes=proposal.changes,
+            )
             print(f"  Error: {type(exc).__name__}: {exc} | REJECT", flush=True)
         self._record(item, parent_iteration)
 
