@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import py_compile
@@ -60,6 +61,14 @@ def main() -> int:
                 result(False, f"compiles: {name} ({exc.msg})")
                 starter_ok = False
 
+    evaluator_path = starter_dir / "evaluate.py"
+    if evaluator_path.is_file():
+        actual_hash = hashlib.sha256(evaluator_path.read_bytes()).hexdigest()
+        expected_hash = config["organizer_integrity"]["evaluator_sha256"]
+        evaluator_ok = actual_hash == expected_hash
+        result(evaluator_ok, "official evaluator SHA-256 unchanged")
+        starter_ok &= evaluator_ok
+
     data_ok = True
     for name in REQUIRED_DATA_FILES:
         path = data_dir / name
@@ -78,4 +87,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

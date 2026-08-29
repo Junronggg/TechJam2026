@@ -1,0 +1,41 @@
+{
+  "architecture": "planner_critic_tree_search",
+  "llm": {
+    "provider": null,
+    "model": null,
+    "status": "not_connected"
+  },
+  "budget": {
+    "max_iterations": 50,
+    "max_wall_clock_seconds": 21600,
+    "convergence_epsilon": 0.002,
+    "convergence_rounds": 3,
+    "max_repair_attempts": 1
+  },
+  "tree_search": {
+    "max_active_branches": 3,
+    "exploration_weight": 0.002,
+    "novelty_weight": 0.001,
+    "runtime_penalty_weight": 0.001
+  },
+  "real_backend": {
+    "experiment_timeout_seconds": 900,
+    "development_split": "valid",
+    "test_labels_allowed": false
+  },
+  "safe_operations": [
+    "CHANGE_HYPERPARAMETER",
+    "CHANGE_OBJECTIVE",
+    "ADD_FEATURE",
+    "REMOVE_FEATURE",
+    "CHANGE_MODEL",
+    "CHANGE_LOSS_WEIGHT"
+  ],
+  "protected_files": [
+    "kuairand-starter-kit/evaluate.py",
+    "kuairand-starter-kit/baseline_scores.json"
+  ],
+  "official_evaluator_sha256": "ecfde28392eb14fec4f488083251df50624e1af2b86278b962daecfb42d195de",
+  "novel_patch_mode": false,
+  "work_delegation": false
+}

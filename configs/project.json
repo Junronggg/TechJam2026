@@ -10,6 +10,9 @@
   "label": "long_view",
   "metrics": ["GAUC", "nDCG@5"],
   "primary_metric": "mean(GAUC, nDCG@5)",
+  "organizer_integrity": {
+    "evaluator_sha256": "ecfde28392eb14fec4f488083251df50624e1af2b86278b962daecfb42d195de"
+  },
   "baseline": {
     "model": "fm",
     "seed": 0,

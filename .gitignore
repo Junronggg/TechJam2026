@@ -21,10 +21,13 @@ logs/*
 !logs/.gitkeep
 submissions/*
 !submissions/.gitkeep
+runs/*
+!runs/.gitkeep
+best/*
+!best/.gitkeep
 
 # Editors and operating systems
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-
