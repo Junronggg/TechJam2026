@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from techjam_agent.controller import Controller
 from techjam_agent.proposals import DeterministicResearcher, OpenAICompatibleResearcher
+from techjam_agent.isolated import IsolatedExperimentRunner
 
 
 def main() -> int:
@@ -40,7 +41,9 @@ def main() -> int:
     researcher = (OpenAICompatibleResearcher(args.model, args.base_url)
                   if args.researcher == "llm" else DeterministicResearcher())
     run_id = datetime.now(timezone.utc).strftime("run_%Y%m%dT%H%M%SZ")
-    runner = ExperimentRunner(ROOT, data_dir, ROOT / project["starter_dir"])
+    local_runner = ExperimentRunner(ROOT, data_dir, ROOT / project["starter_dir"],
+                                    project.get("official_evaluator_sha256"))
+    runner = IsolatedExperimentRunner(local_runner, project["experiment_timeout_seconds"])
     controller = Controller(runner, researcher, initial, project, ROOT / "logs" / run_id,
                             ROOT / "artifacts", ROOT / "submissions")
     summary = controller.run(args.max_iterations)

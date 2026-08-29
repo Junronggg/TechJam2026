@@ -120,6 +120,16 @@ invalid, duplicated, or temporarily unavailable. Outputs are written to a timest
 `submissions/final.csv`. All ranking metrics still come from the untouched organizer
 `kuairand-starter-kit/evaluate.py`.
 
+### Research safety and evidence
+
+- Every training experiment runs in an isolated child process with a 15-minute timeout.
+- The official evaluator is checked against a pinned SHA-256 digest before data loading.
+- Iterations expose validation metrics only; test metrics are computed once, after research,
+  for the validation-best checkpoint. They are never sent back to the researcher.
+- Each iteration includes a grounded critique (observation, interpretation, confidence,
+  and next test) and is appended to `experiment_history.jsonl`.
+- `tree_snapshot.json` preserves parent/child lineage and rejected branches as evidence.
+
 Quick checks that do not require the dataset:
 
 ```bash

@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Any
 
 from .config import apply_changes, experiment_key, validate_config
+from .critic import review
 from .proposals import DeterministicResearcher, Proposal
+from .tree import ExperimentTree
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -42,15 +44,22 @@ class Controller:
         self.history: list[dict[str, Any]] = []
         self.best_score = float("-inf")
         self.best_checkpoint: Path | None = None
+        self.best_iteration: int | None = None
+        self.tree = ExperimentTree()
         self.started = time.monotonic()
 
-    def _record(self, item: dict[str, Any]) -> None:
+    def _record(self, item: dict[str, Any], parent_iteration: int | None) -> None:
         self.history.append(item)
+        self.tree.add(item["iteration"], parent_iteration, item)
         _write_json(self.run_dir / f"iteration_{item['iteration']:03d}.json", item)
+        _write_json(self.run_dir / "tree_snapshot.json", self.tree.snapshot())
+        with (self.run_dir / "experiment_history.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(item, ensure_ascii=False, default=_json_default) + "\n")
 
     def _execute(self, iteration: int, config: dict[str, Any], proposal: Proposal) -> None:
         checkpoint = self.run_dir / "checkpoints" / f"iteration_{iteration:03d}.npz"
         parent_score = None if self.best_score == float("-inf") else self.best_score
+        parent_iteration = self.best_iteration
         item = {"iteration": iteration, "timestamp": datetime.now(timezone.utc).isoformat(),
                 **proposal.as_dict(), "parent_score": parent_score, "config": config,
                 "manual_intervention": False}
@@ -65,8 +74,11 @@ class Controller:
             item.update({"status": "success", "metrics": metrics,
                          "delta_from_best": None if parent_score is None else score - parent_score,
                          "decision": decision, "error": None})
+            item["critique"] = review(metrics, parent_score,
+                                      self.project["run_limits"]["convergence_epsilon"], "success")
             if decision == "KEEP":
                 self.best_score, self.best_config, self.best_checkpoint = score, config, checkpoint
+                self.best_iteration = iteration
                 _write_json(self.artifacts_dir / "best_config.json", config)
                 _write_json(self.artifacts_dir / "best_metrics.json", metrics)
                 shutil.copy2(checkpoint, self.artifacts_dir / "best_model.npz")
@@ -74,8 +86,11 @@ class Controller:
         except Exception as exc:
             item.update({"status": "error", "metrics": None, "delta_from_best": None,
                          "decision": "REJECT", "error": {"type": type(exc).__name__, "message": str(exc)}})
+            item["critique"] = review(None, parent_score,
+                                      self.project["run_limits"]["convergence_epsilon"],
+                                      "error", item["error"])
             print(f"  Error: {type(exc).__name__}: {exc} | REJECT", flush=True)
-        self._record(item)
+        self._record(item, parent_iteration)
 
     def _converged(self) -> bool:
         limits = self.project["run_limits"]
@@ -118,13 +133,16 @@ class Controller:
                     stop_reason = f"proposal_stopped: {exc}"
                     break
             self._execute(iteration, candidate, proposal)
+        final_test = None
         if self.best_checkpoint is not None:
-            self.runner.write_submission(self.best_checkpoint, self.submissions_dir / "final.csv")
+            final_test = self.runner.finalize(self.best_config, self.best_checkpoint,
+                                              self.submissions_dir / "final.csv")
+            _write_json(self.artifacts_dir / "final_test_metrics.json", final_test)
         summary = {"stop_reason": stop_reason, "iterations": len(self.history),
                    "best_primary": None if self.best_score == float("-inf") else self.best_score,
-                   "best_iteration": next((x["iteration"] for x in self.history
-                       if x.get("metrics") and x["metrics"]["primary"] == self.best_score), None),
+                   "best_iteration": self.best_iteration,
                    "manual_interventions": 0,
+                   "final_test_metrics": final_test,
                    "wall_clock_seconds": time.monotonic() - self.started}
         _write_json(self.run_dir / "summary.json", summary)
         print(f"\nStopped: {stop_reason} | best_primary={summary['best_primary']}", flush=True)

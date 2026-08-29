@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,11 +26,12 @@ class FakeRunner:
         checkpoint.write_bytes(b"checkpoint")
         score = 0.60 + (0.01 if self.calls == 2 else 0.0)
         return {"GAUC": score, "nDCG@5": score, "primary": score,
-                "test": {}, "best_epoch": 1, "runtime_seconds": 0.01}
+                "best_epoch": 1, "runtime_seconds": 0.01}
 
-    def write_submission(self, checkpoint, output):
+    def finalize(self, config, checkpoint, output):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text("row_id,user_id,video_id,score\n", encoding="utf-8")
+        return {"GAUC": 0.62, "nDCG@5": 0.58, "primary": 0.60}
 
 
 class AgentTests(unittest.TestCase):
@@ -102,6 +104,16 @@ class AgentTests(unittest.TestCase):
             records = sorted((base / "logs").glob("iteration_*.json"))
             self.assertEqual(len(records), 4)
             self.assertEqual(json.loads(records[1].read_text())["decision"], "KEEP")
+            self.assertNotIn("test", json.loads(records[1].read_text())["metrics"])
+            self.assertTrue((base / "logs" / "experiment_history.jsonl").is_file())
+            tree = json.loads((base / "logs" / "tree_snapshot.json").read_text())
+            self.assertEqual(tree["nodes"][1]["parent_id"], "baseline")
+            self.assertEqual(summary["final_test_metrics"]["primary"], 0.60)
+
+    def test_official_evaluator_matches_pinned_digest(self):
+        expected = self.project["official_evaluator_sha256"]
+        actual = hashlib.sha256((ROOT / "kuairand-starter-kit" / "evaluate.py").read_bytes()).hexdigest()
+        self.assertEqual(actual, expected)
 
 
 if __name__ == "__main__":
