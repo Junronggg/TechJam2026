@@ -25,6 +25,7 @@
   },
   "safe_operations": [
     "CHANGE_HYPERPARAMETER",
+    "CHANGE_OBJECTIVE",
     "ADD_FEATURE",
     "REMOVE_FEATURE",
     "CHANGE_MODEL",

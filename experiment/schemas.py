@@ -12,6 +12,7 @@ from typing import Any, Mapping
 
 class Operation(str, Enum):
     CHANGE_HYPERPARAMETER = "CHANGE_HYPERPARAMETER"
+    CHANGE_OBJECTIVE = "CHANGE_OBJECTIVE"
     ADD_FEATURE = "ADD_FEATURE"
     REMOVE_FEATURE = "REMOVE_FEATURE"
     CHANGE_MODEL = "CHANGE_MODEL"
@@ -65,6 +66,7 @@ class ModelConfig:
     features: tuple[str, ...]
     hyperparameters: Mapping[str, float | int | str | bool]
     seed: int = 0
+    objective: str = "pointwise"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +74,7 @@ class ModelConfig:
             "features": list(self.features),
             "hyperparameters": dict(self.hyperparameters),
             "seed": self.seed,
+            "objective": self.objective,
         }
 
     def signature(self) -> str:
@@ -175,4 +178,3 @@ class BudgetState:
 def write_json(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-

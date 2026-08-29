@@ -19,6 +19,7 @@ class ValidationPolicy:
     allowed_operations: frozenset[Operation]
     allowed_features: frozenset[str]
     allowed_models: frozenset[str]
+    allowed_objectives: frozenset[str] = frozenset({"pointwise", "bpr"})
     hyperparameter_ranges: Mapping[str, tuple[float, float]] = field(default_factory=dict)
     protected_paths: tuple[str, ...] = (
         "kuairand-starter-kit/evaluate.py",
@@ -31,6 +32,7 @@ class ValidationPolicy:
             allowed_operations=frozenset(
                 {
                     Operation.CHANGE_HYPERPARAMETER,
+                    Operation.CHANGE_OBJECTIVE,
                     Operation.ADD_FEATURE,
                     Operation.REMOVE_FEATURE,
                     Operation.CHANGE_MODEL,
@@ -38,7 +40,17 @@ class ValidationPolicy:
                 }
             ),
             allowed_features=frozenset(
-                {"user_id", "video_id", "author_id", "tab", "dur_bucket"}
+                {
+                    "user_id",
+                    "video_id",
+                    "author_id",
+                    "tab",
+                    "dur_bucket",
+                    "item_popularity",
+                    "user_activity",
+                    "item_long_view_rate",
+                    "user_tag_affinity",
+                }
             ),
             allowed_models=frozenset({"fm"}),
             hyperparameter_ranges={
@@ -46,6 +58,9 @@ class ValidationPolicy:
                 "lr": (1e-5, 0.1),
                 "epochs": (1, 100),
                 "l2": (0.0, 1.0),
+                "pairs_per_positive": (1, 5),
+                "feature_smoothing": (1.0, 1000.0),
+                "feature_buckets": (2, 100),
             },
         )
 
@@ -66,6 +81,7 @@ class ExperimentValidator:
 
         required = {
             Operation.CHANGE_HYPERPARAMETER: {"name", "value"},
+            Operation.CHANGE_OBJECTIVE: {"objective"},
             Operation.ADD_FEATURE: {"feature"},
             Operation.REMOVE_FEATURE: {"feature"},
             Operation.CHANGE_MODEL: {"model"},
@@ -78,6 +94,10 @@ class ExperimentValidator:
     def validate_config(self, config: ModelConfig) -> None:
         if config.model not in self.policy.allowed_models:
             raise ExperimentValidationError(f"Model is not registered as available: {config.model}")
+        if config.objective not in self.policy.allowed_objectives:
+            raise ExperimentValidationError(
+                f"Training objective is not available: {config.objective}"
+            )
         unknown_features = set(config.features).difference(self.policy.allowed_features)
         if unknown_features:
             raise ExperimentValidationError(
@@ -110,4 +130,3 @@ class ExperimentValidator:
         for key, value in values.items():
             if isinstance(value, float) and not math.isfinite(value):
                 raise ExperimentValidationError(f"Non-finite value for {key}")
-

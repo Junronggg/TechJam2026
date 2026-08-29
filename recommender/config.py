@@ -14,10 +14,13 @@ def apply_experiment(parent: ModelConfig, spec: ExperimentSpec) -> ModelConfig:
     features = list(parent.features)
     hyperparameters = dict(parent.hyperparameters)
     model = parent.model
+    objective = parent.objective
 
     if spec.operation is Operation.CHANGE_HYPERPARAMETER:
         name = str(spec.parameters["name"])
         hyperparameters[name] = spec.parameters["value"]
+    elif spec.operation is Operation.CHANGE_OBJECTIVE:
+        objective = str(spec.parameters["objective"])
     elif spec.operation is Operation.ADD_FEATURE:
         feature = str(spec.parameters["feature"])
         if feature not in features:
@@ -42,5 +45,5 @@ def apply_experiment(parent: ModelConfig, spec: ExperimentSpec) -> ModelConfig:
         features=tuple(features),
         hyperparameters=hyperparameters,
         seed=parent.seed,
+        objective=objective,
     )
-

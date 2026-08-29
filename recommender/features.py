@@ -23,26 +23,27 @@ FEATURE_REGISTRY: dict[str, FeatureDefinition] = {
         "dur_bucket", ("duration_ms",), "train", "quantiles must be fit on train only", True
     ),
     "item_popularity": FeatureDefinition(
-        "item_popularity", ("video_id",), "train", "aggregate train interactions only"
+        "item_popularity", ("video_id",), "train", "aggregate train interactions only", True
     ),
     "user_activity": FeatureDefinition(
-        "user_activity", ("user_id",), "train", "aggregate train interactions only"
+        "user_activity", ("user_id",), "train", "aggregate train interactions only", True
     ),
     "item_long_view_rate": FeatureDefinition(
         "item_long_view_rate",
         ("video_id", "long_view"),
         "train",
-        "never fit with validation labels",
+        "leave-one-out on train; never fit with validation labels",
+        True,
     ),
-    "user_category_affinity": FeatureDefinition(
-        "user_category_affinity",
-        ("user_id", "category", "long_view"),
+    "user_tag_affinity": FeatureDefinition(
+        "user_tag_affinity",
+        ("user_id", "tag", "long_view"),
         "train",
-        "use historical train rows only with smoothing",
+        "leave-one-out train target encoding with smoothing",
+        True,
     ),
 }
 
 
 def implemented_features() -> set[str]:
     return {name for name, definition in FEATURE_REGISTRY.items() if definition.implemented}
-

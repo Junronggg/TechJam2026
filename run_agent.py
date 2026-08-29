@@ -63,34 +63,64 @@ def dry_run_templates() -> tuple[ExperimentTemplate, ...]:
             parameters={"feature": "dur_bucket"},
             expected_effect={"gauc": "uncertain", "ndcg": "uncertain"},
         ),
+        ExperimentTemplate(
+            branch="item_history",
+            hypothesis="Smoothed item history may add ranking signal.",
+            operation=Operation.ADD_FEATURE,
+            parameters={"feature": "item_long_view_rate"},
+            expected_effect={"gauc": "increase", "ndcg": "uncertain"},
+        ),
+        ExperimentTemplate(
+            branch="personalization",
+            hypothesis="User-tag affinity may add personalized ranking signal.",
+            operation=Operation.ADD_FEATURE,
+            parameters={"feature": "user_tag_affinity"},
+            expected_effect={"gauc": "increase", "ndcg": "increase"},
+        ),
     )
 
 
 def real_run_templates() -> tuple[ExperimentTemplate, ...]:
     return (
         ExperimentTemplate(
-            branch="capacity",
-            hypothesis="A larger FM latent dimension may capture richer interactions.",
-            operation=Operation.CHANGE_HYPERPARAMETER,
-            parameters={"name": "k", "value": 32},
-            expected_effect={"gauc": "uncertain", "ndcg": "uncertain"},
-            evidence="Tests model capacity against the official k=16 baseline.",
+            branch="ranking_objective",
+            hypothesis="Within-user BPR should align FM training with ranking metrics.",
+            operation=Operation.CHANGE_OBJECTIVE,
+            parameters={"objective": "bpr"},
+            expected_effect={"gauc": "increase", "ndcg": "increase"},
+            evidence="The benchmark scores within-user ranking, while the baseline uses pointwise loss.",
         ),
         ExperimentTemplate(
-            branch="optimization",
-            hypothesis="A higher learning rate may reach a better validation optimum.",
-            operation=Operation.CHANGE_HYPERPARAMETER,
-            parameters={"name": "lr", "value": 0.003},
-            expected_effect={"gauc": "uncertain", "ndcg": "uncertain"},
-            evidence="Contrasts optimization dynamics with the official lr=0.001.",
+            branch="item_history",
+            hypothesis="Smoothed historical item relevance may improve ranking.",
+            operation=Operation.ADD_FEATURE,
+            parameters={"feature": "item_long_view_rate"},
+            expected_effect={"gauc": "increase", "ndcg": "increase"},
+            evidence="Uses leave-one-out train encoding and train-only validation transforms.",
         ),
         ExperimentTemplate(
-            branch="feature_ablation",
-            hypothesis="Removing duration buckets tests their incremental ranking value.",
-            operation=Operation.REMOVE_FEATURE,
-            parameters={"feature": "dur_bucket"},
+            branch="personalization",
+            hypothesis="Smoothed user-tag relevance history may improve personalization.",
+            operation=Operation.ADD_FEATURE,
+            parameters={"feature": "user_tag_affinity"},
+            expected_effect={"gauc": "increase", "ndcg": "increase"},
+            evidence="Uses only train labels with leave-one-out encoding for training rows.",
+        ),
+        ExperimentTemplate(
+            branch="item_exposure",
+            hypothesis="Item exposure popularity may add a stable prior.",
+            operation=Operation.ADD_FEATURE,
+            parameters={"feature": "item_popularity"},
+            expected_effect={"gauc": "uncertain", "ndcg": "increase"},
+            evidence="Counts training impressions only.",
+        ),
+        ExperimentTemplate(
+            branch="user_activity",
+            hypothesis="User activity buckets may interact with item-side FM fields.",
+            operation=Operation.ADD_FEATURE,
+            parameters={"feature": "user_activity"},
             expected_effect={"gauc": "uncertain", "ndcg": "uncertain"},
-            evidence="A controlled ablation provides a feature-importance check.",
+            evidence="Counts training interactions only; useful through FM cross terms.",
         ),
     )
 
@@ -144,7 +174,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="run real FM experiments on the KuaiRand-Pure validation split",
     )
-    parser.add_argument("--iterations", type=int, default=3, choices=range(1, 4))
+    parser.add_argument("--iterations", type=int, default=3, choices=range(1, 6))
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument(
         "--data-dir",

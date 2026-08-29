@@ -14,6 +14,8 @@ import numpy as np
 
 from experiment.evaluator import OfficialEvaluator
 from experiment.schemas import ExperimentResult, ExperimentStatus, MetricBundle, ModelConfig
+from recommender.feature_encoding import FeatureEncoder
+from recommender.objectives import build_within_user_pairs, pairwise_bpr_step
 
 
 TRAIN_DATES = (20220408, 20220421)
@@ -40,10 +42,10 @@ def load_starter_modules(starter_dir: Path) -> tuple[ModuleType, ModuleType]:
 
 def load_train_valid(data_dir: Path) -> dict[str, list[tuple[object, ...]]]:
     """Load only train/validation labels; rows after 2022-04-28 are discarded first."""
-    video_to_author: dict[str, str] = {}
+    video_to_metadata: dict[str, tuple[str, str]] = {}
     with (data_dir / "video_features_basic_pure.csv").open(newline="") as handle:
         for row in csv.DictReader(handle):
-            video_to_author[row["video_id"]] = row["author_id"]
+            video_to_metadata[row["video_id"]] = (row["author_id"], row.get("tag") or "UNK")
 
     splits: dict[str, list[tuple[object, ...]]] = {"train": [], "valid": []}
     files = (
@@ -61,15 +63,18 @@ def load_train_valid(data_dir: Path) -> dict[str, list[tuple[object, ...]]]:
                 else:
                     # Crucially, do not read the relevance label for test-period rows.
                     continue
+                author, tag = video_to_metadata.get(row["video_id"], ("UNK", "UNK"))
                 splits[split].append(
                     (
                         date,
                         row["user_id"],
                         row["video_id"],
-                        video_to_author.get(row["video_id"], "UNK"),
+                        author,
                         row["tab"],
                         float(row["duration_ms"]),
                         1 if row["long_view"] != "0" else 0,
+                        tag,
+                        int(row["hourmin"]),
                     )
                 )
     return splits
@@ -88,39 +93,56 @@ def run_validation_fm(
         raise ValueError(f"Official FM backend cannot run model={config.model!r}")
 
     started = time.monotonic()
-    official_data, official_baseline = load_starter_modules(starter_dir)
+    _, official_baseline = load_starter_modules(starter_dir)
     evaluator = OfficialEvaluator(starter_dir / "evaluate.py", evaluator_sha256)
     evaluator.verify_integrity()
     splits = load_train_valid(data_dir)
     if verbose:
         print(f"loaded validation-only splits: { {name: len(rows) for name, rows in splits.items()} }")
-    encoded, dimension = official_data.encode(splits)
+    params = dict(config.hyperparameters)
+    encoder = FeatureEncoder(
+        config.features,
+        smoothing=float(params.get("feature_smoothing", 20.0)),
+        buckets=int(params.get("feature_buckets", 20)),
+    )
+    encoded, dimension = encoder.fit_transform(splits)
     del splits
     gc.collect()
 
-    official_fields = tuple(official_data.FIELDS)
-    unknown = set(config.features).difference(official_fields)
-    if unknown:
-        raise ValueError(f"Official FM adapter does not implement features: {sorted(unknown)}")
-    if not config.features:
-        raise ValueError("At least one feature is required")
-    column_indices = np.asarray([official_fields.index(name) for name in config.features])
-
-    x_train_full, y_train, _ = encoded["train"]
-    x_valid_full, y_valid, valid_users = encoded["valid"]
-    x_valid = x_valid_full[:, column_indices]
-    params = dict(config.hyperparameters)
+    x_train, y_train, train_users = encoded["train"]
+    x_valid, y_valid, valid_users = encoded["valid"]
     k = int(params.get("k", 16))
     learning_rate = float(params.get("lr", 0.001))
     epochs = int(params.get("epochs", 40))
     l2 = float(params.get("l2", 1e-6))
     batch_size = int(params.get("batch_size", 8192))
     patience = int(params.get("patience", 4))
+    pairs_per_positive = int(params.get("pairs_per_positive", 1))
 
     model = official_baseline.FM(
         dimension, k=k, lr=learning_rate, l2=l2, seed=config.seed
     )
     random = np.random.default_rng(config.seed)
+    positive_pairs: np.ndarray | None = None
+    negative_pairs: np.ndarray | None = None
+    if config.objective == "bpr":
+        positive_pairs, negative_pairs = build_within_user_pairs(
+            train_users, y_train, config.seed, pairs_per_positive
+        )
+        if verbose:
+            print(
+                f"[{experiment_id}] objective=bpr pairs={len(positive_pairs):,} "
+                f"features={list(config.features)}",
+                flush=True,
+            )
+    elif config.objective == "pointwise":
+        if verbose:
+            print(
+                f"[{experiment_id}] objective=pointwise features={list(config.features)}",
+                flush=True,
+            )
+    else:
+        raise ValueError(f"Unsupported training objective: {config.objective}")
     best_primary = float("-inf")
     best_state: tuple[np.ndarray, np.ndarray, np.float32] | None = None
     best_metrics: MetricBundle | None = None
@@ -128,12 +150,22 @@ def run_validation_fm(
 
     for epoch in range(1, epochs + 1):
         epoch_started = time.monotonic()
-        order = random.permutation(len(y_train))
+        order = random.permutation(
+            len(y_train) if config.objective == "pointwise" else len(positive_pairs)
+        )
         losses: list[float] = []
         for start in range(0, len(order), batch_size):
             batch_rows = order[start : start + batch_size]
-            x_batch = x_train_full[batch_rows][:, column_indices]
-            losses.append(model.step(x_batch, y_train[batch_rows]))
+            if config.objective == "pointwise":
+                losses.append(model.step(x_train[batch_rows], y_train[batch_rows]))
+            else:
+                losses.append(
+                    pairwise_bpr_step(
+                        model,
+                        x_train[positive_pairs[batch_rows]],
+                        x_train[negative_pairs[batch_rows]],
+                    )
+                )
         scores = model.predict(x_valid)
         metrics = evaluator.evaluate(valid_users, y_valid, scores)
         if verbose:
@@ -172,6 +204,7 @@ def run_validation_fm(
         W=model.W,
         b=model.b,
         features=np.asarray(config.features),
+        objective=np.asarray(config.objective),
     )
     return ExperimentResult(
         experiment_id=experiment_id,
@@ -181,4 +214,3 @@ def run_validation_fm(
         checkpoint=str(checkpoint_path),
         prediction_path=str(prediction_path),
     )
-

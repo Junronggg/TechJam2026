@@ -28,6 +28,7 @@ def main() -> int:
         features=tuple(raw_config["features"]),
         hyperparameters=raw_config["hyperparameters"],
         seed=int(raw_config["seed"]),
+        objective=raw_config.get("objective", "pointwise"),
     )
     try:
         result = run_validation_fm(
@@ -52,4 +53,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

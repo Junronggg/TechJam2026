@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass
 
 from agent.memory import ExperimentNode, ResearchMemory
+from experiment.schemas import Decision
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,11 @@ class TreeSearchPolicy:
         """Keep the strongest node from each of the best few research branches."""
         by_branch: dict[str, ExperimentNode] = {}
         for node in memory.successful_nodes():
+            if node.critic is not None and node.critic.decision not in {
+                Decision.KEEP,
+                Decision.FOLLOW_UP,
+            }:
+                continue
             current = by_branch.get(node.branch)
             if current is None or node.primary > current.primary:
                 by_branch[node.branch] = node
@@ -65,4 +71,3 @@ class TreeSearchPolicy:
         selected = max(selections, key=lambda value: value.priority)
         selected.node.visits += 1
         return selected
-
