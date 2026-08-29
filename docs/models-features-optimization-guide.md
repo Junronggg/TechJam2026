@@ -9,9 +9,12 @@
 | Random baseline | Random score | Organizer reference only | Not used for optimization |
 | Item popularity | Smoothed train item rate | Organizer reference only | Below FM |
 | FM | BCE | Ready | 0.601470 |
-| FM | BPR | **Current best** | **0.603396** |
+| FM | BPR / hybrid | Ready | BPR 0.603963 (seed 0) |
 | LightGBM | Binary BCE | Ready; rejected | 0.599817 |
-| DeepFM | Planned BCE/BPR | Not implemented | — |
+| DeepFM | BCE/BPR | Implemented in NumPy | BCE best 0.603862; BPR 0.603530 |
+| Multi-task DeepFM | long_view + click/like auxiliary BCE | PROMISING; 2/3 rolling folds improved | 0.604259 |
+| FM+DeepFM ensemble | BPR FM + BCE DeepFM | KEEP; 3/3 rolling folds improved | **0.604713** |
+| Ensemble + temporal | Same ensemble + strict-past counts | REJECT; 1/3 rolling folds improved | 0.605010 single split |
 
 ### FM Parameters
 
@@ -23,13 +26,15 @@
 | `l2` | 1e-6 | 0, 1e-6, 1e-5, 1e-4 |
 | `batch_size` | 8192 | 4096, 8192, 16384 |
 | `patience` | 4 | 3, 4, 5 |
-| `seed` | 0 | Currently only 0; next 0–4 |
+| `seed` | 0 | 0, 1, 2, 3, 4 |
+| `deepfm_hidden_dim` | 32 | 16, 32, 64 |
+| `auxiliary_loss_weight` | 0.1 | 0.05, 0.1, 0.2, 0.5 |
 
 ### BPR Parameters
 
-Current: one same-user negative per positive, replacement sampling, resampled each epoch.
+Current: configurable 1/2/4 same-user negatives per positive, replacement sampling, resampled each epoch.
 
-Next legal parameters:
+Current and planned parameters:
 
 ```text
 pairs_per_positive: 1, 2, 4
@@ -43,7 +48,7 @@ The main architecture already accepts these FM/BPR feature parameters:
 
 | Parameter | Default | Validator range | Current integration |
 |---|---:|---:|---|
-| `pairs_per_positive` | 1 | 1–5 | Main FM backend only |
+| `pairs_per_positive` | 1 | 1, 2, 4 | Current runnable Agent and main FM backend |
 | `feature_smoothing` | 20 | 1–1000 | Main FeatureEncoder only |
 | `feature_buckets` | 20 | 2–100 | Main FeatureEncoder only |
 
@@ -66,7 +71,7 @@ The main validator also accepts continuous ranges `k: 4–128`, `lr: 1e-5–0.1`
 
 Two feature sets currently coexist:
 
-- Current `scripts/run_agent.py` switches: `user_long_view_rate`, `item_long_view_rate`, `continuous_history_stats`, `user_tab_long_view_rate`.
+- Current `scripts/run_agent.py` switches include historical rates, explicit user crosses, and strict-past 3-day user/item counts.
 - Main `recommender/feature_encoding.py`: the five base fields plus `item_popularity`, `user_activity`, `item_long_view_rate`, and `user_tag_affinity`.
 
 | Feature | Type | Models | Status/result |
@@ -83,7 +88,8 @@ Two feature sets currently coexist:
 | `continuous_history_stats` | Rates + log counts | LGBM | 0.590084; rejected |
 | `user_tab_long_view_rate` | Pair rate + count | LGBM | 0.597528; rejected |
 | `user_tag_affinity` | Smoothed LOO bucket | FM | Encoder ready; run pending |
-| `temporal_recency` | Rolling history | Future | Not implemented |
+| `user_recent_3d_activity` | Strict-past 3-day count | FM/DeepFM/ensemble | Implemented; rolling REJECT |
+| `item_recent_3d_exposure` | Strict-past 3-day count | FM/DeepFM/ensemble | Implemented; rolling REJECT |
 
 ### Optimizable Functions
 
@@ -132,9 +138,10 @@ Official functions that must not be behaviorally modified: `evaluate()`, `auc()`
 
 ### Compatibility Rules
 
-- BPR: FM only.
+- BPR and hybrid: FM and DeepFM.
 - Continuous history and user×tab continuous features: LightGBM only.
-- DeepFM: unavailable.
+- DeepFM: BCE and BPR available.
+- Multi-task DeepFM: BCE only; click/like are training-only auxiliary labels, never inference features.
 - Unknown/out-of-range parameters: reject before training.
 - Historical target features: train LOO; validation/test use train only.
 - Test metrics: never returned to the research loop.
@@ -144,25 +151,61 @@ Official functions that must not be behaviorally modified: `evaluate()`, `auc()`
 | Experiment | Primary | Decision |
 |---|---:|---|
 | FM+BCE | 0.601470 | Baseline |
-| FM+BPR | **0.603396** | KEEP |
+| FM+BCE, seed=1 | 0.601761 | Paired seed check |
+| FM+BCE, seed=2 | 0.601090 | Paired seed check |
+| FM+BCE, seed=3 | 0.601503 | Paired seed check |
+| FM+BPR, lr=0.001 | 0.603396 | KEEP |
+| FM+BPR, lr=0.0005 | 0.603696 | KEEP |
+| FM+BPR, lr=0.0003 | **0.603963** | KEEP; current best |
+| FM+BPR, lr=0.0003, seed=1 | 0.603352 | Multi-seed check |
+| FM+BPR, lr=0.0003, seed=2 | 0.603757 | Multi-seed check |
+| FM+BPR, lr=0.0003, seed=3 | **0.604128** | Highest single run |
+| FM+BPR, 2 negatives/positive | 0.603379 | REJECT; no meaningful change |
+| FM+BPR, 4 negatives/positive | 0.602794 | REJECT |
+| FM+BPR, semi-hard pool=2 | 0.601855 | REJECT |
+| FM+BPR, semi-hard pool=4 | 0.587747 | REJECT |
+| FM+BPR + user×tab cross | 0.602869 | REJECT |
+| FM+BPR + user×author cross | 0.602180 | REJECT |
+| FM+BPR + both crosses | 0.601198 | REJECT |
+| DeepFM+BCE, lr=0.0005 | 0.603457 | REJECT |
+| DeepFM+BCE, lr=0.001 | 0.603862 | REJECT; close to best |
+| DeepFM+BCE, lr=0.002 | 0.603637 | REJECT |
+| DeepFM+BPR, lr=0.0003 | 0.603530 | REJECT |
+| Multi-task DeepFM, click+like weight=0.1 | 0.604259 | PROMISING; rolling check required |
+| FM hybrid, BPR weight=0.75 | 0.603962 | REJECT; tied with pure BPR |
+| FM hybrid, BPR weight=0.50 | 0.603912 | REJECT |
+| FM hybrid, BPR weight=0.25 | 0.603507 | REJECT |
+| Ensemble, DeepFM weight=0.3 | 0.604562 | REJECT |
+| Ensemble, DeepFM weight=0.4 | **0.604713** | KEEP; current best |
+| Ensemble, DeepFM weight=0.5 | 0.604203 | REJECT |
+| Ensemble + user recent 3d activity | 0.604931 | KEEP on validation |
+| Ensemble + user/item recent 3d exposure | **0.605010** | Validation best; test regressed |
 | FM + user rate | 0.600448 | REJECT |
 | FM + item rate | 0.591682 | REJECT |
 | LightGBM | 0.599817 | REJECT |
 | LightGBM + global stats | 0.590084 | REJECT |
 | LightGBM + user×tab | 0.597528 | REJECT |
 
+### Rolling Validation
+
+| Fold | FM+BPR | Ensemble | Ensemble + temporal | Ensemble vs FM | Temporal vs ensemble |
+|---|---:|---:|---:|---:|---:|
+| 04/15–04/17 | 0.610742 | 0.611392 | 0.611736 | +0.000650 | +0.000345 |
+| 04/18–04/20 | 0.580129 | 0.581429 | 0.580824 | +0.001301 | -0.000606 |
+| 04/21–04/23 | 0.586890 | 0.588308 | 0.587830 | +0.001418 | -0.000477 |
+| Mean | 0.592587 | **0.593710** | 0.593463 | **+0.001123** | -0.000246 |
+
+Decision: keep the 0.4-weight FM+DeepFM ensemble because it improved 3/3 folds. Reject the temporal addition because it improved only 1/3 folds and regressed on the official test.
+
+Multi-task DeepFM versus DeepFM on the same rolling folds: `+0.000204`, `+0.000440`, `-0.000050`; mean `+0.000198`, wins 2/3. Keep the implementation as promising but do not promote it to the best model or sweep its weight.
+
 ### Optimization Order
 
-1. BCE/BPR seeds 0–4.
-2. BPR negatives per positive: 1/2/4.
-3. BPR hard-negative sampling and user weighting.
-4. Strict-past 1/3/7-day item/user features.
-5. LightGBM LambdaRank grouped by user.
-6. Minimal DeepFM+BCE.
-7. DeepFM+BPR.
-8. Click/like multi-task learning.
-9. Watch-time auxiliary loss.
-10. Ensemble only after complementary models exist.
+1. Feed the rolling evidence and failed-direction memory to the LLM Researcher.
+2. Implement one stronger interaction model: DCNv2.
+3. Test DCNv2 complementarity before adding it to the ensemble.
+4. Revisit multi-task only if DCNv2 provides a stronger shared representation.
+5. Validate the final ensemble across seeds without choosing the best seed.
 
 ### Code Extension Points
 
@@ -204,9 +247,12 @@ Official functions that must not be behaviorally modified: `evaluate()`, `auc()`
 | Random baseline | 随机分数 | 官方参考，不参与优化 | 不使用 |
 | Item popularity | 平滑 train item rate | 官方参考 | 低于 FM |
 | FM | BCE | 可用 | 0.601470 |
-| FM | BPR | **当前最佳** | **0.603396** |
+| FM | BPR / hybrid | 可用 | BPR 0.603963（seed 0） |
 | LightGBM | Binary BCE | 可用；已拒绝 | 0.599817 |
-| DeepFM | 计划 BCE/BPR | 未实现 | — |
+| DeepFM | BCE/BPR | NumPy 已实现 | BCE 最佳 0.603862；BPR 0.603530 |
+| Multi-task DeepFM | long_view + click/like 辅助 BCE | PROMISING；rolling 2/3 提升 | 0.604259 |
+| FM+DeepFM ensemble | BPR FM + BCE DeepFM | KEEP；rolling 3/3 提升 | **0.604713** |
+| Ensemble + temporal | 同一 ensemble + 严格过去计数 | REJECT；rolling 仅 1/3 提升 | 单切分 0.605010 |
 
 ### FM 参数
 
@@ -218,13 +264,15 @@ Official functions that must not be behaviorally modified: `evaluate()`, `auc()`
 | `l2` | 1e-6 | 0, 1e-6, 1e-5, 1e-4 |
 | `batch_size` | 8192 | 4096, 8192, 16384 |
 | `patience` | 4 | 3, 4, 5 |
-| `seed` | 0 | 当前仅 0；下一步 0–4 |
+| `seed` | 0 | 0、1、2、3、4 |
+| `deepfm_hidden_dim` | 32 | 16、32、64 |
+| `auxiliary_loss_weight` | 0.1 | 0.05、0.1、0.2、0.5 |
 
 ### BPR 参数
 
-当前：每个正样本配一个同用户负样本，有放回采样，每个 epoch 重采样。
+当前：每个正样本可配 1/2/4 个同用户负样本，有放回采样，每个 epoch 重采样。
 
-下一步合法参数：
+当前及计划参数：
 
 ```text
 pairs_per_positive: 1, 2, 4
@@ -238,7 +286,7 @@ Main 架构已经支持的额外参数：
 
 | 参数 | 默认值 | Validator 范围 | 当前接入位置 |
 |---|---:|---:|---|
-| `pairs_per_positive` | 1 | 1–5 | 仅 main FM backend |
+| `pairs_per_positive` | 1 | 1、2、4 | 当前可运行 Agent 和 main FM backend |
 | `feature_smoothing` | 20 | 1–1000 | 仅 main FeatureEncoder |
 | `feature_buckets` | 20 | 2–100 | 仅 main FeatureEncoder |
 
@@ -261,7 +309,7 @@ Main validator 还允许连续范围：`k: 4–128`、`lr: 1e-5–0.1`、`epochs
 
 仓库当前存在两组 feature 配置：
 
-- 当前 `scripts/run_agent.py` 开关：`user_long_view_rate`、`item_long_view_rate`、`continuous_history_stats`、`user_tab_long_view_rate`。
+- 当前 `scripts/run_agent.py` 开关包括历史比例、显式 user 交叉，以及严格过去 3 天的 user/item 计数。
 - Main `recommender/feature_encoding.py`：5 个基础字段，加 `item_popularity`、`user_activity`、`item_long_view_rate`、`user_tag_affinity`。
 
 | Feature | 类型 | 模型 | 状态/结果 |
@@ -278,7 +326,8 @@ Main validator 还允许连续范围：`k: 4–128`、`lr: 1e-5–0.1`、`epochs
 | `continuous_history_stats` | Rate + log count | LGBM | 0.590084；拒绝 |
 | `user_tab_long_view_rate` | Pair rate + count | LGBM | 0.597528；拒绝 |
 | `user_tag_affinity` | 平滑 LOO 分桶 | FM | Encoder 可用；待运行 |
-| `temporal_recency` | 滚动历史 | 未来 | 未实现 |
+| `user_recent_3d_activity` | 严格过去 3 天计数 | FM/DeepFM/ensemble | 已实现；rolling REJECT |
+| `item_recent_3d_exposure` | 严格过去 3 天计数 | FM/DeepFM/ensemble | 已实现；rolling REJECT |
 
 ### 可优化的 Function
 
@@ -327,9 +376,10 @@ Main validator 还允许连续范围：`k: 4–128`、`lr: 1e-5–0.1`、`epochs
 
 ### 兼容规则
 
-- BPR 只支持 FM。
+- BPR 和 hybrid 支持 FM、DeepFM。
 - 连续历史统计和 user×tab 连续特征只支持 LightGBM。
-- DeepFM 当前不可用。
+- DeepFM 已支持 BCE 和 BPR。
+- Multi-task DeepFM 仅支持 BCE；click/like 只作为训练辅助标签，不是推理特征。
 - 未知/越界参数训练前拒绝。
 - Target 历史特征：train LOO；validation/test 只用 train。
 - Test 指标不反馈给研究循环。
@@ -339,25 +389,61 @@ Main validator 还允许连续范围：`k: 4–128`、`lr: 1e-5–0.1`、`epochs
 | 实验 | Primary | 决策 |
 |---|---:|---|
 | FM+BCE | 0.601470 | Baseline |
-| FM+BPR | **0.603396** | KEEP |
+| FM+BCE，seed=1 | 0.601761 | 配对 seed 验证 |
+| FM+BCE，seed=2 | 0.601090 | 配对 seed 验证 |
+| FM+BCE，seed=3 | 0.601503 | 配对 seed 验证 |
+| FM+BPR，lr=0.001 | 0.603396 | KEEP |
+| FM+BPR，lr=0.0005 | 0.603696 | KEEP |
+| FM+BPR，lr=0.0003 | **0.603963** | KEEP；当前最佳 |
+| FM+BPR，lr=0.0003，seed=1 | 0.603352 | 多 seed 验证 |
+| FM+BPR，lr=0.0003，seed=2 | 0.603757 | 多 seed 验证 |
+| FM+BPR，lr=0.0003，seed=3 | **0.604128** | 单次最高 |
+| FM+BPR，每个正样本 2 个负样本 | 0.603379 | REJECT；无有效变化 |
+| FM+BPR，每个正样本 4 个负样本 | 0.602794 | REJECT |
+| FM+BPR，semi-hard 候选池=2 | 0.601855 | REJECT |
+| FM+BPR，semi-hard 候选池=4 | 0.587747 | REJECT |
+| FM+BPR + user×tab 交叉 | 0.602869 | REJECT |
+| FM+BPR + user×author 交叉 | 0.602180 | REJECT |
+| FM+BPR + 两种交叉 | 0.601198 | REJECT |
+| DeepFM+BCE，lr=0.0005 | 0.603457 | REJECT |
+| DeepFM+BCE，lr=0.001 | 0.603862 | REJECT；接近 best |
+| DeepFM+BCE，lr=0.002 | 0.603637 | REJECT |
+| DeepFM+BPR，lr=0.0003 | 0.603530 | REJECT |
+| Multi-task DeepFM，click+like 权重=0.1 | 0.604259 | PROMISING；需 rolling 验证 |
+| FM hybrid，BPR 权重=0.75 | 0.603962 | REJECT；与纯 BPR 持平 |
+| FM hybrid，BPR 权重=0.50 | 0.603912 | REJECT |
+| FM hybrid，BPR 权重=0.25 | 0.603507 | REJECT |
+| Ensemble，DeepFM 权重=0.3 | 0.604562 | REJECT |
+| Ensemble，DeepFM 权重=0.4 | **0.604713** | KEEP；当前最佳 |
+| Ensemble，DeepFM 权重=0.5 | 0.604203 | REJECT |
+| Ensemble + user 最近 3 天活跃度 | 0.604931 | Validation KEEP |
+| Ensemble + user/item 最近 3 天曝光 | **0.605010** | Validation 最高；Test 回落 |
 | FM + user rate | 0.600448 | REJECT |
 | FM + item rate | 0.591682 | REJECT |
 | LightGBM | 0.599817 | REJECT |
 | LightGBM + global stats | 0.590084 | REJECT |
 | LightGBM + user×tab | 0.597528 | REJECT |
 
+### Rolling Validation
+
+| Fold | FM+BPR | Ensemble | Ensemble + temporal | Ensemble 相对 FM | Temporal 相对 ensemble |
+|---|---:|---:|---:|---:|---:|
+| 04/15–04/17 | 0.610742 | 0.611392 | 0.611736 | +0.000650 | +0.000345 |
+| 04/18–04/20 | 0.580129 | 0.581429 | 0.580824 | +0.001301 | -0.000606 |
+| 04/21–04/23 | 0.586890 | 0.588308 | 0.587830 | +0.001418 | -0.000477 |
+| 平均 | 0.592587 | **0.593710** | 0.593463 | **+0.001123** | -0.000246 |
+
+决策：保留 DeepFM 权重 0.4 的 FM+DeepFM ensemble，因为它在 3/3 folds 都提升。拒绝 temporal 增量，因为它只在 1/3 folds 提升，且官方 test 也回落。
+
+Multi-task DeepFM 相对普通 DeepFM 的 rolling 增量为：`+0.000204`、`+0.000440`、`-0.000050`；平均 `+0.000198`，2/3 folds 提升。保留实现并标记为 promising，但不升级为当前最佳，也不继续扫权重。
+
 ### 优化顺序
 
-1. BCE/BPR seed 0–4。
-2. BPR 每个正样本配 1/2/4 个负样本。
-3. BPR hard negative 和 user weighting。
-4. 严格过去窗口的 1/3/7 天 item/user feature。
-5. 按用户分组的 LightGBM LambdaRank。
-6. 最小 DeepFM+BCE。
-7. DeepFM+BPR。
-8. Click/like multi-task。
-9. Watch-time auxiliary loss。
-10. 只有模型互补时再 ensemble。
+1. 把 rolling 证据和失败方向记忆输入 LLM Researcher。
+2. 只实现一个更强交互模型：DCNv2。
+3. 先验证 DCNv2 的预测互补性，再决定是否加入 ensemble。
+4. 只有 DCNv2 提供更强共享表示时，再回头研究 multi-task。
+5. 不挑最高 seed，验证最终 ensemble 的多 seed 稳定性。
 
 ### 代码扩展位置
 

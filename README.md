@@ -93,6 +93,16 @@ item, while leaving the model structure, features, split, and official evaluator
 unchanged. The first seed-0 comparison improved validation primary from `0.601470` to
 `0.603396`; this should be repeated across seeds before claiming a stable gain.
 
+The NumPy model suite also includes DeepFM and `multitask_deepfm`. The multi-task
+variant shares embeddings and its MLP across `long_view`, click, and like losses;
+click/like are training-only auxiliary labels and are never passed as prediction-time
+features. Run the reproducible rolling comparisons with:
+
+```bash
+python scripts/run_rolling_validation.py
+python scripts/run_multitask_rolling.py
+```
+
 Run the offline deterministic researcher first:
 
 ```powershell
@@ -113,6 +123,11 @@ To let an OpenAI-compatible model choose experiments, set `OPENAI_API_KEY` and r
 ```bash
 python3 scripts/run_agent.py --researcher llm --model gpt-4.1-mini
 ```
+
+The LLM also receives validation-only persistent evidence from
+`configs/research_evidence.json`, including rolling-validation wins and rejected
+mechanisms. Override it with `--evidence-file PATH`. Test-split metric fields are
+removed before the prompt is sent.
 
 The LLM path automatically falls back to the deterministic policy if a proposal is
 invalid, duplicated, or temporarily unavailable. Outputs are written to a timestamped
@@ -135,11 +150,13 @@ Quick checks that do not require the dataset:
 ```bash
 python3 -m unittest discover -s tests -v
 python3 -m compileall -q src scripts tests
+```
+
 ## Research-agent architecture
 
 The Planner/Critic research loop and lightweight experiment-tree manager are now
-scaffolded. The interfaces, safety checks, memory, budget logic, and evidence
-logging are runnable, but no LLM or new recommender implementation is connected.
+implemented. The interfaces, safety checks, persistent evidence memory, budget logic,
+and evidence logging are runnable; the LLM can propose only allow-listed experiments.
 See [the architecture document](docs/architecture.md).
 
 Run the architecture smoke test without training a model:

@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "scope": "Validation-only and rolling-validation evidence for within-user long_view ranking.",
+  "supported_findings": [
+    {
+      "mechanism": "FM with pairwise BPR",
+      "evidence": "Across paired seeds 0-3, BPR improved mean validation Primary by 0.002344 over BCE."
+    },
+    {
+      "mechanism": "FM+BPR and DeepFM+BCE ensemble with DeepFM weight 0.4",
+      "evidence": "Improved over FM+BPR in all 3 rolling folds; mean Primary delta was +0.001123."
+    }
+  ],
+  "rejected_findings": [
+    {
+      "mechanism": "Strict-past 3-day user activity and item exposure counts",
+      "evidence": "Improved the ensemble in only 1 of 3 rolling folds; mean incremental delta was -0.000246."
+    },
+    {
+      "mechanism": "Global user/item target rates and counts",
+      "evidence": "Categorical FM and continuous LightGBM variants both reduced validation Primary."
+    },
+    {
+      "mechanism": "Semi-hard negative sampling",
+      "evidence": "Candidate pools of 2 and 4 both reduced validation Primary."
+    },
+    {
+      "mechanism": "Explicit user-by-tab and user-by-author categorical crosses",
+      "evidence": "Each cross and their combination reduced validation Primary."
+    },
+    {
+      "mechanism": "Hybrid BCE+BPR loss",
+      "evidence": "Weights 0.25, 0.50, and 0.75 did not beat pure BPR."
+    }
+  ],
+  "uncertain_findings": [
+    {
+      "mechanism": "Multi-task DeepFM with click and like auxiliary BCE at weight 0.1",
+      "evidence": "Improved the official validation split by 0.000397 and 2 of 3 rolling folds; rolling mean delta versus DeepFM was +0.000198, with fold 3 at -0.000050. Keep the implementation but do not sweep the weight yet."
+    }
+  ],
+  "rolling_validation": {
+    "folds": [
+      {
+        "valid_dates": "2022-04-15..2022-04-17",
+        "fm_bpr_primary": 0.610742,
+        "ensemble_primary": 0.611392,
+        "ensemble_temporal_primary": 0.611736
+      },
+      {
+        "valid_dates": "2022-04-18..2022-04-20",
+        "fm_bpr_primary": 0.580129,
+        "ensemble_primary": 0.581429,
+        "ensemble_temporal_primary": 0.580824
+      },
+      {
+        "valid_dates": "2022-04-21..2022-04-23",
+        "fm_bpr_primary": 0.586890,
+        "ensemble_primary": 0.588308,
+        "ensemble_temporal_primary": 0.587830
+      }
+    ],
+    "decision": "Keep the non-temporal ensemble and reject the temporal increment."
+  },
+  "research_policy": [
+    "Prefer a new mechanism or information source over fine-grained parameter sweeps.",
+    "Do not repeat rejected mechanisms without a materially different representation or objective.",
+    "Use rolling-fold consistency when judging stability.",
+    "Never request or use official test metrics during research."
+  ],
+  "roadmap_not_current_actions": [
+    "DCNv2 as one stronger interaction model",
+    "ensemble expansion only after measuring prediction complementarity"
+  ]
+}
