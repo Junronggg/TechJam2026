@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .config import ALLOWED_VALUES, FEATURE_KEYS, MODELS, OBJECTIVES, apply_changes, experiment_key
+from .memory import PLANNER_RECENT_HISTORY, build_memory_summary, collect_tried_keys
 
 # One experiment may change 1-3 allow-listed fields. A single field is preferred,
 # but model switches such as FM+BPR -> LightGBM+BCE must set model and
@@ -188,11 +189,12 @@ def build_planner_prompt(
         "epsilon": epsilon,
         "allowed_values": allowed_values if allowed_values is not None else default_allowed_values(),
         "remaining": remaining_search_space(best_config),
+        "memory": build_memory_summary(history),
         "current_best": {
             "config": best_config,
             "validation_metrics": latest_best_validation_metrics(history),
         },
-        "history": compact_history_for_planner(history, recent=recent),
+        "history": compact_history_for_planner(history, recent=min(recent, PLANNER_RECENT_HISTORY)),
         "response_contract": {
             "type": "object",
             "required": ["hypothesis", "reason", "changes"],
@@ -210,7 +212,7 @@ class DeterministicResearcher:
     """Safe offline policy; also provides a fallback when an LLM is unavailable."""
 
     def propose(self, best: dict[str, Any], history: list[dict[str, Any]]) -> Proposal:
-        tried = {experiment_key(item["config"]) for item in history if "config" in item}
+        tried = set(collect_tried_keys(history))
         hp = best["hyperparameters"]
         if best["model"] == "fm" and best["training_objective"] == "bce":
             candidate = apply_changes(best, {"training_objective": "bpr"})
@@ -311,7 +313,7 @@ class OpenAICompatibleResearcher:
 
     def propose(self, best: dict[str, Any], history: list[dict[str, Any]]) -> Proposal:
         prompt = build_planner_prompt(best, history)
-        tried = {experiment_key(item["config"]) for item in history if "config" in item}
+        tried = set(collect_tried_keys(history))
         accumulated = empty_token_usage()
         last_error = "unknown error"
         for attempt in range(1, MAX_LLM_ATTEMPTS + 1):

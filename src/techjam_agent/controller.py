@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import apply_changes, experiment_key, validate_config
+from .config import apply_changes, validate_config
 from .critic import review
+from .memory import is_duplicate_config
 from .proposals import DeterministicResearcher, Proposal
 from .tree import ExperimentTree
 
@@ -129,7 +130,7 @@ class Controller:
             try:
                 proposal = self.researcher.propose(self.best_config, self.history)
                 candidate = apply_changes(self.best_config, proposal.changes)
-                if experiment_key(candidate) in {experiment_key(x["config"]) for x in self.history}:
+                if is_duplicate_config(candidate, self.history):
                     raise ValueError("researcher proposed a duplicate configuration")
             except (StopIteration, ValueError, RuntimeError) as exc:
                 if not isinstance(self.researcher, DeterministicResearcher):
@@ -138,6 +139,9 @@ class Controller:
                 else:
                     stop_reason = f"proposal_stopped: {exc}"
                     break
+            if is_duplicate_config(candidate, self.history):
+                stop_reason = "proposal_stopped: duplicate configuration"
+                break
             self._execute(iteration, candidate, proposal)
         final_test = None
         if self.best_checkpoint is not None:
