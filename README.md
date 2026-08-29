@@ -75,3 +75,34 @@ Then generate and validate a sample submission:
 Treat `kuairand-starter-kit/evaluate.py` and the published baseline metadata as
 fixed references. Keep generated data, logs, artifacts, submissions, secrets,
 and the virtual environment out of version control.
+
+## Research-agent architecture
+
+The Planner/Critic research loop and lightweight experiment-tree manager are now
+scaffolded. The interfaces, safety checks, memory, budget logic, and evidence
+logging are runnable, but no LLM or new recommender implementation is connected.
+See [the architecture document](docs/architecture.md).
+
+Run the architecture smoke test without training a model:
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 run_agent.py --dry-run
+```
+
+Run the real validation benchmark with the deterministic Planner and isolated FM
+backend (baseline plus up to three experiments):
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 run_agent.py --real-run --iterations 3
+```
+
+Real runs use only the KuaiRand-Pure train/validation periods. Post-validation
+rows are discarded before their relevance label is read. Evidence is stored in
+`artifacts/real-runs/`, including checkpoints, validation predictions, stdout,
+metrics, experiment lineage, and the final resource summary.
+
+Run the unit tests:
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -v
+```
