@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from dataclasses import dataclass
 from typing import Any
 
 from .config import experiment_key
@@ -17,7 +18,19 @@ VERDICT_CATEGORIES = {
     "failed": "failed",
 }
 MAX_HYPOTHESIS_CHARS = 160
-PATTERN_LIMIT = 20
+# A model that cannot run at all is blocked after a single failure. Everything else
+# needs corroboration, so one timeout never closes a research direction.
+GENERIC_FAILURE_THRESHOLD = 2
+STRUCTURAL_ERROR_TYPES = frozenset({"ImportError", "ModuleNotFoundError"})
+# Substrings this project's own runner and validator emit. LLM prose is never read.
+STRUCTURAL_ERROR_MARKERS = (
+    "is required:",
+    "no module named",
+    "cannot import ",
+    "must be one of",
+    "currently supports only",
+    "requires training_objective",
+)
 
 
 def _finite(value: Any) -> bool:
@@ -176,6 +189,100 @@ def is_duplicate_config(config: dict[str, Any], history: list[dict[str, Any]] | 
     if not isinstance(config, dict):
         return False
     return experiment_key(config) in set(collect_tried_keys(history))
+
+
+@dataclass(frozen=True)
+class EvidenceDirections:
+    """What the recorded evidence says about each research direction.
+
+    A blocked model cannot run at all, so it is never proposed. Soft evidence only
+    lowers priority: it is relaxed once no ordinary candidate remains.
+    """
+
+    blocked_models: frozenset[str] = frozenset()
+    soft_models: frozenset[str] = frozenset()
+    soft_mechanisms: frozenset[tuple[str, str]] = frozenset()
+
+    def __bool__(self) -> bool:
+        return bool(self.blocked_models or self.soft_models or self.soft_mechanisms)
+
+    def hard_block_for(self, config: dict[str, Any]) -> str | None:
+        """Return an audit note when this config cannot run, else None."""
+        model = _model_of(config)
+        if model is not None and model in self.blocked_models:
+            return f"{model} cannot run here: an earlier attempt failed structurally"
+        return None
+
+    def soft_reason_for(self, config: dict[str, Any]) -> str | None:
+        """Return an audit note when evidence merely argues against this config."""
+        model = _model_of(config)
+        if model is None:
+            return None
+        if model in self.soft_models:
+            return f"{model} failed repeatedly without a structural cause"
+        objective = config.get("training_objective")
+        if isinstance(objective, str) and (model, objective) in self.soft_mechanisms:
+            return f"{model}+{objective} was rejected on validation"
+        return None
+
+
+def _model_of(config: Any) -> str | None:
+    if not isinstance(config, dict):
+        return None
+    model = config.get("model")
+    return model if isinstance(model, str) else None
+
+
+def _is_structural_failure(item: dict[str, Any]) -> bool:
+    """True when the recorded error names a missing dependency or an unusable model."""
+    error = item.get("error")
+    if not isinstance(error, dict):
+        return False
+    kind = error.get("type")
+    if isinstance(kind, str) and kind.strip() in STRUCTURAL_ERROR_TYPES:
+        return True
+    message = error.get("message")
+    if not isinstance(message, str):
+        return False
+    lowered = message.lower()
+    return any(marker in lowered for marker in STRUCTURAL_ERROR_MARKERS)
+
+
+def evidence_directions(history: list[dict[str, Any]] | None) -> EvidenceDirections:
+    """Split the structured evidence into hard blocks and soft preferences.
+
+    Pure and deterministic: only recorded verdicts, error types, error messages,
+    model, training_objective and changes are read. A rejected verdict narrows to
+    the model/objective pair the change actually introduced, so unrelated models
+    and plain hyperparameter tuning stay available.
+    """
+    blocked: set[str] = set()
+    generic: dict[str, int] = {}
+    mechanisms: set[tuple[str, str]] = set()
+    for item in history or []:
+        if not isinstance(item, dict):
+            continue
+        config = item.get("config")
+        if not isinstance(config, dict):
+            continue
+        model = config.get("model")
+        objective = config.get("training_objective")
+        if not isinstance(model, str) or not isinstance(objective, str):
+            continue
+        verdict = _verdict(item)
+        if verdict == "failed":
+            if _is_structural_failure(item):
+                blocked.add(model)
+            else:
+                generic[model] = generic.get(model, 0) + 1
+        elif verdict == "reject":
+            changes = item.get("changes")
+            if isinstance(changes, dict) and ("model" in changes
+                                              or "training_objective" in changes):
+                mechanisms.add((model, objective))
+    repeated = {name for name, count in generic.items()
+                if count >= GENERIC_FAILURE_THRESHOLD and name not in blocked}
+    return EvidenceDirections(frozenset(blocked), frozenset(repeated), frozenset(mechanisms))
 
 
 def build_memory_summary(history: list[dict[str, Any]] | None) -> dict[str, Any]:
