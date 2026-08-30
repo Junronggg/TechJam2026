@@ -1,3 +1,4 @@
 # NumPy powers the organizer starter kit; LightGBM is the first model extension.
 numpy>=1.26,<3
 lightgbm==4.6.0
+scikit-learn==1.7.1

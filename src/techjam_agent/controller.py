@@ -12,7 +12,16 @@ from .config import apply_changes, validate_config
 from .critic import review
 from .memory import is_duplicate_config
 from .proposals import DeterministicResearcher, Proposal
-from .tree import ExperimentParent, ExperimentTree, select_parent
+from .tree import (
+    ExperimentParent,
+    ExperimentTree,
+    TreePolicyConfig,
+    TreeSearchPolicy,
+    node_id_for,
+)
+
+
+MAX_PROPOSAL_RESOLUTION_ATTEMPTS = 5
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -60,6 +69,13 @@ class Controller:
         self.clock = clock
         self.convergence_streak = 0
         self.started = self.clock()
+        self.tree_policy = TreeSearchPolicy(TreePolicyConfig(**project.get("tree_search", {})))
+        self._pending_parent_selection: dict[str, Any] | None = None
+        self.llm_token_usage = {"prompt_tokens": 0, "completion_tokens": 0,
+                                "total_tokens": 0}
+        self.llm_requests = 0
+        self.llm_failures = 0
+        self._research_context: dict[str, Any] = {}
 
     def _record(self, item: dict[str, Any], parent_id: str | None) -> None:
         self.history.append(item)
@@ -74,8 +90,11 @@ class Controller:
         """Run one experiment against an explicit parent; global best stays a separate concept."""
         checkpoint = self.run_dir / "checkpoints" / f"iteration_{iteration:03d}.npz"
         global_best_before = None if self.best_score == float("-inf") else self.best_score
+        global_best_node_id = node_id_for(self.best_iteration)
         parent_id = None if parent is None else parent.node_id
         parent_primary = None if parent is None else parent.primary
+        # Node identity, not score equality: two nodes can share a Primary value.
+        expanded_global_best = parent_id is not None and parent_id == global_best_node_id
         item = {"iteration": iteration, "timestamp": datetime.now(timezone.utc).isoformat(),
                 **proposal.as_dict(),
                 "parent_id": parent_id,
@@ -83,7 +102,14 @@ class Controller:
                 # Pre-P2.6 name for parent_primary. Kept so old readers stay valid.
                 "parent_score": parent_primary,
                 "global_best_primary_before": global_best_before,
+                "global_best_node_id_before": global_best_node_id,
+                "expanded_global_best": expanded_global_best,
                 "config": config, "manual_intervention": False}
+        if (self._pending_parent_selection is not None and
+                self._pending_parent_selection.get("parent_id") == parent_id):
+            item["parent_selection"] = self._pending_parent_selection
+        else:
+            item["parent_selection"] = None
         changes = "baseline" if not proposal.changes else ", ".join(
             f"{key}={value}" for key, value in proposal.changes.items())
         print(f"\nIteration {iteration}: {changes}", flush=True)
@@ -104,7 +130,8 @@ class Controller:
                 history=self.history, changes=proposal.changes,
             )
             if iteration > 0:
-                self._update_convergence_streak(score, global_best_before)
+                self._update_convergence_streak(
+                    score, global_best_before, expanded_global_best=expanded_global_best)
             if decision == "KEEP":
                 self.best_score, self.best_config, self.best_checkpoint = score, config, checkpoint
                 self.best_iteration = iteration
@@ -124,16 +151,25 @@ class Controller:
             )
             print(f"  Error: {type(exc).__name__}: {exc} | REJECT", flush=True)
         self._record(item, parent_id)
+        self._pending_parent_selection = None
 
-    def _update_convergence_streak(self, score: Any, parent_score: Any) -> None:
-        """Only a finite candidate comparison is convergence evidence; failures leave it as is."""
-        candidate, parent = _as_float(score), _as_float(parent_score)
-        if candidate is None or parent is None:
+    def _update_convergence_streak(self, score: Any, global_best_before: Any, *,
+                                   expanded_global_best: bool) -> None:
+        """Track how long the search has gone without moving the global best forward.
+
+        A real improvement clears the streak whichever parent produced it, because a new
+        global best is progress even when it came from an explored side branch. Only a
+        flat attempt against the leading node counts as evidence of a stall; expanding a
+        weaker branch is a deliberate search decision, and unusable results say nothing,
+        so both leave the streak alone.
+        """
+        candidate, best = _as_float(score), _as_float(global_best_before)
+        if candidate is None or best is None:
             return
         epsilon = float(self.project["run_limits"]["convergence_epsilon"])
-        if candidate - parent > epsilon:
+        if candidate - best > epsilon:
             self.convergence_streak = 0
-        else:
+        elif expanded_global_best:
             self.convergence_streak += 1
 
     def _converged(self) -> bool:
@@ -155,19 +191,68 @@ class Controller:
         return self.clock() - self.started
 
     def _select_parent(self) -> ExperimentParent | None:
-        """Phase A: always the global-best successful node. Overridable for branch policies."""
-        return select_parent(self.history)
+        """Choose a parent from the branch-preserving search frontier."""
+        budget_seconds = float(self.project["run_limits"]["max_wall_clock_hours"]) * 3600.0
+        remaining = max(0.0, budget_seconds - self._elapsed())
+        try:
+            selection = self.tree_policy.select(self.history, remaining)
+        except RuntimeError:
+            self._pending_parent_selection = None
+            return None
+        self._pending_parent_selection = selection.as_dict()
+        return selection.parent
+
+    def _capture_researcher_accounting(self, researcher: Any, *, failed: bool) -> None:
+        attempts = getattr(researcher, "last_attempts", 0)
+        try:
+            attempts = max(0, int(attempts))
+        except (TypeError, ValueError):
+            attempts = 0
+        if attempts == 0:
+            return
+        usage = getattr(researcher, "last_token_usage", {})
+        if isinstance(usage, dict):
+            for key in self.llm_token_usage:
+                try:
+                    self.llm_token_usage[key] += max(0, int(usage.get(key, 0) or 0))
+                except (TypeError, ValueError):
+                    continue
+        self.llm_requests += attempts
+        if failed:
+            self.llm_failures += 1
 
     def _propose(self, researcher, parent: ExperimentParent) -> tuple[Any, Any, tuple[str, str] | None]:
         """Resolve one legal, non-duplicate candidate, or report why the search stopped."""
-        try:
-            proposal = researcher.propose(parent.config, self.history)
-            candidate = apply_changes(parent.config, proposal.changes)
-        except (StopIteration, ValueError, RuntimeError) as exc:
-            return None, None, ("search_exhausted", f"{type(exc).__name__}: {exc}")
-        if is_duplicate_config(candidate, self.history):
-            return None, None, ("duplicate_configuration", "candidate configuration already executed")
-        return proposal, candidate, None
+        set_context = getattr(researcher, "set_run_context", None)
+        if callable(set_context):
+            set_context(dict(self._research_context))
+        last_problem: tuple[str, str] | None = None
+        for _ in range(MAX_PROPOSAL_RESOLUTION_ATTEMPTS):
+            failed = False
+            try:
+                proposal = researcher.propose(parent.config, self.history)
+            except StopIteration as exc:
+                failed = True
+                self._capture_researcher_accounting(researcher, failed=failed)
+                return None, None, ("search_exhausted", f"{type(exc).__name__}: {exc}")
+            except (ValueError, RuntimeError) as exc:
+                failed = True
+                self._capture_researcher_accounting(researcher, failed=failed)
+                return None, None, ("search_exhausted", f"{type(exc).__name__}: {exc}")
+            self._capture_researcher_accounting(researcher, failed=failed)
+            try:
+                candidate = apply_changes(parent.config, proposal.changes)
+            except (KeyError, TypeError, ValueError) as exc:
+                last_problem = ("search_exhausted", f"invalid proposal: {type(exc).__name__}: {exc}")
+                continue
+            if is_duplicate_config(candidate, self.history):
+                last_problem = ("duplicate_configuration",
+                                "candidate configuration already executed")
+                continue
+            return proposal, candidate, None
+        return None, None, last_problem or (
+            "search_exhausted", "planner could not produce a legal configuration"
+        )
 
     def _budget_block(self, budget_seconds: float, reserve: float) -> str | None:
         remaining = budget_seconds - self._elapsed()
@@ -208,6 +293,11 @@ class Controller:
             if parent is None:
                 stop_reason, stop_detail = "search_exhausted", "no expandable parent node"
                 break
+            self._research_context = {
+                "remaining_iterations": cap - iteration,
+                "remaining_seconds": max(0.0, budget_seconds - self._elapsed()),
+                "estimated_next_experiment_seconds": reserve,
+            }
             proposal, candidate, failure = self._propose(self.researcher, parent)
             if failure is not None and not isinstance(self.researcher, DeterministicResearcher):
                 proposal, candidate, failure = self._propose(DeterministicResearcher(), parent)
@@ -234,13 +324,17 @@ class Controller:
                    "elapsed_seconds": elapsed,
                    "remaining_seconds": max(0.0, budget_seconds - elapsed),
                    "wall_clock_seconds": elapsed,
+                   "llm_requests": self.llm_requests,
+                   "llm_failures": self.llm_failures,
+                   "llm_tokens": dict(self.llm_token_usage),
                    "limits": {"max_total_experiments": cap,
                               "official_max_iterations": int(limits["max_iterations"]),
                               "max_wall_clock_hours": limits["max_wall_clock_hours"],
                               "wall_clock_budget_seconds": budget_seconds,
                               "convergence_epsilon": float(limits["convergence_epsilon"]),
                               "convergence_rounds": int(limits["convergence_rounds"]),
-                              "experiment_cost_seconds": reserve}}
+                              "experiment_cost_seconds": reserve,
+                              "max_active_branches": self.tree_policy.config.max_active_branches}}
         _write_json(self.run_dir / "summary.json", summary)
         print(f"\nStopped: {stop_reason} | best_primary={summary['best_primary']}", flush=True)
         return summary
