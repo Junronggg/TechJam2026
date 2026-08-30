@@ -309,6 +309,10 @@ def collect_artifact_evidence(root: Path, manifest: dict[str, Any]) -> list[dict
                 f"source {source_id} uses markdown; structured artifacts only"
             )
         path = root / relative
+        if not path.is_file():
+            if source.get("optional") is True:
+                continue
+            raise FileNotFoundError(f"evidence source {source_id} is missing: {relative}")
         payload = _load_object(path)
         if payload.get("test_labels_used") is True:
             raise ValueError(f"source {source_id} used test labels")

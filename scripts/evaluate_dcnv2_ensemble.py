@@ -15,6 +15,12 @@ sys.path.insert(0, str(ROOT / "src"))
 from techjam_agent.dcnv2 import DCNv2
 from techjam_agent.deepfm import DeepFM
 from techjam_agent.ensemble import within_user_zscore
+from techjam_agent.feasibility_producers import (
+    correlation_pair,
+    correlation_summary_from_pairs,
+    format_missing_correlation_inputs,
+    missing_correlation_inputs,
+)
 from techjam_agent.rolling import build_rolling_splits
 from techjam_agent.runner import ExperimentRunner
 
@@ -103,11 +109,24 @@ def evaluate_scope(runner, initial, checkpoints):
     }
 
 
+def feasibility_correlations_from_result(result: dict) -> dict:
+    correlations = result["prediction_correlations"]
+    return correlation_summary_from_pairs([
+        correlation_pair("fm", "deepfm", correlations["fm_deepfm"]),
+        correlation_pair("fm", "dcnv2", correlations["fm_dcnv2"]),
+        correlation_pair("deepfm", "dcnv2", correlations["deepfm_dcnv2"]),
+    ])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check DCNv2 ensemble complementarity")
     parser.add_argument("--data-dir", default="data/KuaiRand-Pure/data")
     parser.add_argument("--output-dir", default="runs/dcnv2_ensemble")
     args = parser.parse_args()
+    missing = missing_correlation_inputs(ROOT)
+    if missing["official_validation_checkpoints"]:
+        print(format_missing_correlation_inputs(missing), file=sys.stderr)
+        return 2
     data_dir = Path(args.data_dir)
     if not data_dir.is_absolute():
         data_dir = ROOT / data_dir
@@ -162,6 +181,7 @@ def main() -> int:
         "official_validation": main_result,
         "rolling_folds": rolling,
         "rolling_aggregate": aggregate,
+        "feasibility_correlations": feasibility_correlations_from_result(main_result),
     }
     (output_dir / "summary.json").write_text(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8"
