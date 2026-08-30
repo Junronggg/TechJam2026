@@ -11,7 +11,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from techjam_agent.controller import Controller
-from techjam_agent.evidence import build_generated_family_policies, merge_generated_policies
+from techjam_agent.evidence import (
+    attach_feasibility_evidence,
+    build_feasibility_evidence,
+    build_generated_family_policies,
+    merge_generated_policies,
+)
 from techjam_agent.experiment_planner import MEMORY_MODES
 from techjam_agent.local_env import load_local_env
 from techjam_agent.proposals import DeterministicResearcher, OpenAICompatibleResearcher
@@ -95,6 +100,9 @@ def main() -> int:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         generated_policies = build_generated_family_policies(ROOT, manifest)
         prior_evidence = merge_generated_policies(prior_evidence, generated_policies)
+        prior_evidence = attach_feasibility_evidence(
+            prior_evidence, build_feasibility_evidence(ROOT, manifest),
+        )
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         parser.error(f"cannot build family policies from {manifest_path}: {exc}")
     if args.researcher == "llm":

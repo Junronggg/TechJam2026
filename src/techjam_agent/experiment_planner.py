@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
@@ -12,6 +13,7 @@ from .config import (
     apply_changes,
     experiment_key,
 )
+from .evidence import feasibility_from_prior
 from .memory import collect_tried_keys, distill_research_patterns, evidence_directions
 
 
@@ -74,6 +76,9 @@ FAMILY_PRIORS = {
     "optimization": (0.25, 0.35, 0.20, 0.20, 0.90),
 }
 MEMORY_MODES = ("no_memory", "raw_history", "distilled_patterns")
+ENSEMBLE_MEMBER_PAIRS = {
+    "heterogeneous_ensemble": frozenset({"fm", "deepfm"}),
+}
 PRIOR_POLICIES = {
     "exploit_with_confirmation",
     "ensemble_only",
@@ -105,6 +110,7 @@ class RankedCandidate:
     family_trials: int
     hard_blocked: bool
     soft_stopped: bool
+    evidence_reasons: tuple[str, ...] = ()
 
     @property
     def direction_stopped(self) -> bool:
@@ -121,6 +127,7 @@ class RankedCandidate:
             "hard_blocked": self.hard_blocked,
             "soft_stopped": self.soft_stopped,
             "direction_stopped": self.direction_stopped,
+            "evidence_reasons": list(self.evidence_reasons),
         })
         return result
 
@@ -429,6 +436,150 @@ def _classify_evidence(
     return False, soft
 
 
+def _scoped_feature(candidate: CandidateExperiment) -> str | None:
+    features = [key for key in candidate.changes if key in FEATURE_KEYS]
+    if len(features) == 1:
+        return features[0]
+    return None
+
+
+def _exact_feature_scope(record: dict[str, Any], feature: str) -> bool:
+    applies = record.get("applies_to")
+    if not isinstance(applies, dict):
+        return False
+    scope = applies.get("features")
+    if not isinstance(scope, dict) or not scope:
+        return False
+    if scope.get(feature) is not True:
+        return False
+    return not any(key != feature and value is True for key, value in scope.items())
+
+
+def _runtime_applies(record: dict[str, Any], candidate: CandidateExperiment,
+                     changed: dict[str, Any]) -> bool:
+    if record.get("family") != candidate.family:
+        return False
+    applies = record.get("applies_to")
+    if not isinstance(applies, dict):
+        return True
+    return _policy_applies({"applies_to": applies}, changed)
+
+
+def _robust_scoped_stop(
+    prior_evidence: dict[str, Any] | None,
+    family: str,
+    changed: dict[str, Any],
+) -> bool:
+    """True when an existing robust stop_direction already covers this config."""
+    pattern = _matching_prior_pattern(
+        _prior_family_patterns(prior_evidence), family, changed,
+    )
+    if not pattern or pattern.get("policy") != "stop_direction":
+        return False
+    return _artifact_has_robust_sample(pattern)
+
+
+def _feasibility_effect(
+    candidate: CandidateExperiment,
+    changed: dict[str, Any],
+    prior_evidence: dict[str, Any] | None,
+) -> tuple[bool, bool, float, tuple[str, ...]]:
+    """Apply cheap feasibility evidence without changing the 6-hour budget."""
+    bundle = feasibility_from_prior(prior_evidence)
+    thresholds = bundle["thresholds"]
+    hard = False
+    soft = False
+    reasons: set[str] = set()
+    compute_cost = candidate.compute_cost
+    measured: list[float] = []
+    leakage_seen = False
+    for record in bundle["records"]:
+        if not isinstance(record, dict):
+            continue
+        result = record.get("result")
+        if not isinstance(result, dict):
+            continue
+        kind = record.get("kind") or result.get("kind")
+        if kind == "feature_coverage":
+            feature = _scoped_feature(candidate)
+            if candidate.action_type != ActionType.TRY_FEATURE or feature is None:
+                continue
+            if not _exact_feature_scope(record, feature):
+                continue
+            if not _policy_applies({"applies_to": record.get("applies_to")}, changed):
+                continue
+            try:
+                coverage = float(result["coverage"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            eligible = result.get("eligible_rows")
+            if coverage == 0 and eligible == 0:
+                hard = True
+            elif 0 < coverage < float(thresholds["low_coverage"]):
+                soft = True
+            elif coverage == 0:
+                soft = True
+        elif kind == "prediction_correlation":
+            if candidate.action_type != ActionType.TRY_ENSEMBLE:
+                continue
+            models = result.get("models")
+            expected = ENSEMBLE_MEMBER_PAIRS.get(candidate.family)
+            if not isinstance(models, list) or expected is None:
+                continue
+            if frozenset(models) != expected:
+                continue
+            try:
+                correlation = float(result["correlation"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if correlation < float(thresholds["high_correlation"]):
+                continue
+            reasons.add("high_prediction_correlation")
+            if _robust_scoped_stop(prior_evidence, candidate.family, changed):
+                hard = True
+            else:
+                soft = True
+        elif kind == "family_runtime":
+            if not _runtime_applies(record, candidate, changed):
+                continue
+            try:
+                measured.append(float(result["median_runtime_seconds"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        elif kind == "leakage_status":
+            if candidate.action_type != ActionType.TRY_FEATURE:
+                continue
+            feature = _scoped_feature(candidate)
+            if feature is None or not _exact_feature_scope(record, feature):
+                continue
+            if not _policy_applies({"applies_to": record.get("applies_to")}, changed):
+                continue
+            leakage_seen = True
+            status = result.get("status")
+            if status == "unsafe":
+                hard = True
+                reasons.add("unsafe_leakage")
+            elif status == "safe" and result.get("strict_past") is True:
+                continue
+            else:
+                soft = True
+                reasons.add("uncertain_leakage_evidence")
+    if candidate.action_type == ActionType.TRY_FEATURE and not leakage_seen:
+        soft = True
+        reasons.add("missing_leakage_evidence")
+    if hard:
+        soft = False
+    if measured:
+        reference = float(thresholds["runtime_reference_seconds"])
+        median_runtime = float(statistics.median(sorted(measured)))
+        if reference > 0:
+            compute_cost = min(
+                float(thresholds["runtime_cost_max"]),
+                max(float(thresholds["runtime_cost_min"]), median_runtime / reference),
+            )
+    return hard, soft, compute_cost, tuple(sorted(reasons))
+
+
 def _row_flags(row: Any) -> tuple[bool, bool]:
     """Read hard/soft flags, including legacy rows that only have direction_stopped."""
     hard = getattr(row, "hard_blocked", None)
@@ -509,11 +660,14 @@ def rank_candidates(
         else:
             deltas, weak, advantage = _family_observations(history, candidate.family)
         observed = sum(deltas) / len(deltas) if deltas else None
+        feas_hard, feas_soft, compute_cost, feas_reasons = _feasibility_effect(
+            candidate, changed, prior_evidence,
+        )
         score = (
             weights["expected_gain"] * candidate.expected_gain
             + weights["evidence_strength"] * candidate.evidence_strength
             + weights["novelty"] * candidate.novelty / (1 + len(deltas))
-            - weights["compute_cost"] * candidate.compute_cost
+            - weights["compute_cost"] * compute_cost
             - weights["redundancy"] * candidate.redundancy
         )
         if observed is not None:
@@ -536,10 +690,15 @@ def rank_candidates(
             hard_blocked, soft_stopped = True, False
         elif memory_mode != "no_memory" and directions.soft_reason_for(changed) is not None:
             soft_stopped = True
+        if feas_hard:
+            hard_blocked, soft_stopped = True, False
+        elif feas_soft and not hard_blocked:
+            soft_stopped = True
         if hard_blocked or soft_stopped:
             score -= 1.0
         ranked.append(RankedCandidate(
             candidate, score, observed, len(deltas), hard_blocked, soft_stopped,
+            feas_reasons,
         ))
     return sorted(ranked, key=lambda row: (-row.score, row.candidate.family,
                                             experiment_key(apply_changes(config, row.candidate.changes))))
@@ -608,6 +767,7 @@ class AutonomousExperimentPlanner:
             "selected_action_type": str(winner.candidate.action_type),
             "selection_pass": "preferred" if preferred else "relaxed",
             "selected_score": float(winner.score),
+            "evidence_reasons": list(winner.evidence_reasons),
             "criteria": (
                 "expected_gain + evidence_strength + novelty - compute_cost - redundancy; "
                 "scoped artifact policies override family-level patterns only when the "

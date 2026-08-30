@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import statistics
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -11,13 +12,31 @@ from .config import FEATURE_SCHEMA_VERSION
 
 
 POLICY_SCHEMA_VERSION = 1
-SUPPORTED_KINDS = {
+FEASIBILITY_SCHEMA_VERSION = 1
+POLICY_KINDS = {
     "rolling_aggregate",
     "rolling_fold_field",
     "paired_seed",
     "placebo_margin",
     "single_delta",
 }
+FEASIBILITY_KINDS = {
+    "feature_coverage",
+    "prediction_correlation",
+    "family_runtime",
+    "leakage_status",
+}
+SUPPORTED_KINDS = POLICY_KINDS | FEASIBILITY_KINDS
+MARKDOWN_SUFFIXES = {".md"}
+DEFAULT_FEASIBILITY_THRESHOLDS = {
+    "low_coverage": 0.01,
+    "high_correlation": 0.99,
+    "high_correlation_effect": "soft_stop",
+    "runtime_reference_seconds": 60.0,
+    "runtime_cost_min": 0.05,
+    "runtime_cost_max": 2.0,
+}
+HIGH_CORRELATION_EFFECTS = frozenset({"hard_block", "soft_stop"})
 
 
 def _load_object(path: Path) -> dict[str, Any]:
@@ -133,7 +152,132 @@ def _extract_result(payload: dict[str, Any], source: dict[str, Any],
             "delta": delta,
             "robust": kind == "placebo_margin",
         }
+    if kind == "feature_coverage":
+        return _feature_coverage_result(selected)
+    if kind == "prediction_correlation":
+        return _prediction_correlation_result(selected, source)
+    if kind == "family_runtime":
+        return _family_runtime_result(selected, source)
+    if kind == "leakage_status":
+        return _leakage_status_result(selected)
     raise AssertionError("unreachable evidence kind")
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    number = int(value)
+    if number < 0:
+        raise ValueError("counts cannot be negative")
+    return number
+
+
+def _feature_coverage_result(selected: Any) -> dict[str, Any]:
+    if isinstance(selected, dict):
+        coverage = _finite(selected["coverage"])
+        eligible = _optional_int(selected.get("eligible_rows"))
+        total = _optional_int(selected.get("total_rows"))
+    else:
+        coverage = _finite(selected)
+        eligible = None
+        total = None
+    if coverage < 0:
+        raise ValueError("coverage cannot be negative")
+    return {
+        "kind": "feature_coverage",
+        "coverage": coverage,
+        "eligible_rows": eligible,
+        "total_rows": total,
+    }
+
+
+def _prediction_correlation_result(selected: Any, source: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(selected, dict):
+        correlation = _finite(selected["correlation"])
+        models = selected.get("models", source.get("models"))
+        split = selected.get("split", "validation")
+    else:
+        correlation = _finite(selected)
+        models = source.get("models")
+        split = "validation"
+    if isinstance(split, str) and split.strip().lower() in {"test", "final_test"}:
+        raise ValueError("prediction correlation must use validation predictions")
+    if not isinstance(models, list) or len(models) != 2:
+        raise ValueError("prediction_correlation requires exactly two models")
+    if any(not isinstance(name, str) or not name for name in models):
+        raise ValueError("prediction_correlation models must be non-empty strings")
+    if not -1.0 <= correlation <= 1.0:
+        raise ValueError("correlation must be in [-1, 1]")
+    return {
+        "kind": "prediction_correlation",
+        "correlation": correlation,
+        "models": sorted(models),
+        "split": split if isinstance(split, str) else "validation",
+    }
+
+
+def _collect_runtimes(node: Any, runtime_key: str, model: str | None) -> list[float]:
+    found: list[float] = []
+    if isinstance(node, dict):
+        if model is None:
+            value = node.get(runtime_key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                found.append(_finite(value))
+        elif model in node and isinstance(node[model], dict):
+            value = node[model].get(runtime_key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                found.append(_finite(value))
+        for child in node.values():
+            found.extend(_collect_runtimes(child, runtime_key, model))
+    elif isinstance(node, list):
+        for child in node:
+            found.extend(_collect_runtimes(child, runtime_key, model))
+    return found
+
+
+def _family_runtime_result(selected: Any, source: dict[str, Any]) -> dict[str, Any]:
+    runtime_key = source.get("runtime_key", "runtime_seconds")
+    if not isinstance(runtime_key, str) or not runtime_key:
+        raise ValueError("family_runtime requires runtime_key")
+    model = source.get("runtime_model")
+    if model is not None and (not isinstance(model, str) or not model):
+        raise ValueError("runtime_model must be a non-empty string")
+    if isinstance(selected, (int, float)) and not isinstance(selected, bool):
+        runtimes = [_finite(selected)]
+    else:
+        runtimes = _collect_runtimes(selected, runtime_key, model)
+    if not runtimes:
+        raise ValueError("family_runtime found no runtime_seconds")
+    runtimes = sorted(runtimes)
+    return {
+        "kind": "family_runtime",
+        "runtime_seconds": runtimes,
+        "median_runtime_seconds": float(statistics.median(runtimes)),
+        "observations": len(runtimes),
+    }
+
+
+def _leakage_status_result(selected: Any) -> dict[str, Any]:
+    if not isinstance(selected, dict):
+        raise ValueError("leakage_status must resolve to an object")
+    status = selected.get("status")
+    leakage_safe = selected.get("leakage_safe")
+    strict_past = selected.get("strict_past")
+    if status not in (None, "safe", "unsafe", "uncertain"):
+        raise ValueError("leakage status must be safe, unsafe, or uncertain")
+    if status is None:
+        if leakage_safe is False or selected.get("causal") is False:
+            status = "unsafe"
+        elif leakage_safe is True and strict_past is True:
+            status = "safe"
+        else:
+            status = "uncertain"
+    return {
+        "kind": "leakage_status",
+        "status": status,
+        "leakage_safe": leakage_safe if isinstance(leakage_safe, bool) else None,
+        "strict_past": strict_past if isinstance(strict_past, bool) else None,
+    }
 
 
 def collect_artifact_evidence(root: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -160,6 +304,10 @@ def collect_artifact_evidence(root: Path, manifest: dict[str, Any]) -> list[dict
         seen_ids.add(source_id)
         if source.get("validation_only") is not True:
             raise ValueError(f"source {source_id} is not declared validation-only")
+        if Path(relative).suffix.lower() in MARKDOWN_SUFFIXES:
+            raise ValueError(
+                f"source {source_id} uses markdown; structured artifacts only"
+            )
         path = root / relative
         payload = _load_object(path)
         if payload.get("test_labels_used") is True:
@@ -226,8 +374,86 @@ def _policy_for_records(records: list[dict[str, Any]]) -> tuple[str, str, str, f
     return "gather_evidence", "INSUFFICIENT", "RESEARCH_ONLY", 0.40
 
 
+def _normalized_thresholds(raw: Any) -> dict[str, Any]:
+    thresholds = dict(DEFAULT_FEASIBILITY_THRESHOLDS)
+    if raw is None:
+        return thresholds
+    if not isinstance(raw, dict):
+        raise ValueError("feasibility_thresholds must be an object")
+    for key in DEFAULT_FEASIBILITY_THRESHOLDS:
+        if key not in raw:
+            continue
+        value = raw[key]
+        if key == "high_correlation_effect":
+            if value not in HIGH_CORRELATION_EFFECTS:
+                raise ValueError(
+                    "high_correlation_effect must be hard_block or soft_stop"
+                )
+            thresholds[key] = value
+            continue
+        number = _finite(value)
+        if key != "high_correlation" and number <= 0:
+            raise ValueError(f"{key} must be positive")
+        thresholds[key] = number
+    if thresholds["runtime_cost_min"] > thresholds["runtime_cost_max"]:
+        raise ValueError("runtime_cost_min cannot exceed runtime_cost_max")
+    return thresholds
+
+
+def build_feasibility_evidence(root: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    """Build scoped cheap-feasibility records from the same validation-only manifest."""
+    schema = manifest.get("feasibility_schema_version", FEASIBILITY_SCHEMA_VERSION)
+    if schema != FEASIBILITY_SCHEMA_VERSION:
+        raise ValueError(
+            f"feasibility_schema_version must be {FEASIBILITY_SCHEMA_VERSION}"
+        )
+    records = [
+        record for record in collect_artifact_evidence(root, manifest)
+        if record["kind"] in FEASIBILITY_KINDS
+    ]
+    return {
+        "version": FEASIBILITY_SCHEMA_VERSION,
+        "source": "generated_from_validation_artifacts",
+        "test_metrics_included": False,
+        "thresholds": _normalized_thresholds(manifest.get("feasibility_thresholds")),
+        "records": records,
+    }
+
+
+def attach_feasibility_evidence(
+    prior: dict[str, Any],
+    feasibility: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(prior)
+    merged["feasibility"] = feasibility
+    return merged
+
+
+def feasibility_from_prior(prior_evidence: dict[str, Any] | None) -> dict[str, Any]:
+    """Read attached feasibility evidence; missing records are not treated as safe."""
+    empty = {
+        "version": FEASIBILITY_SCHEMA_VERSION,
+        "thresholds": dict(DEFAULT_FEASIBILITY_THRESHOLDS),
+        "records": [],
+    }
+    if not isinstance(prior_evidence, dict):
+        return empty
+    bundle = prior_evidence.get("feasibility")
+    if not isinstance(bundle, dict):
+        return empty
+    records = bundle.get("records")
+    return {
+        "version": bundle.get("version", FEASIBILITY_SCHEMA_VERSION),
+        "thresholds": _normalized_thresholds(bundle.get("thresholds")),
+        "records": records if isinstance(records, list) else [],
+    }
+
+
 def build_generated_family_policies(root: Path, manifest: dict[str, Any]) -> dict[str, Any]:
-    records = collect_artifact_evidence(root, manifest)
+    records = [
+        record for record in collect_artifact_evidence(root, manifest)
+        if record["kind"] in POLICY_KINDS
+    ]
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     contexts: dict[tuple[str, str], dict[str, Any]] = {}
     for record in records:
