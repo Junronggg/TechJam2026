@@ -190,6 +190,33 @@ Agent action space 新增 `pairwise_multitask`：同一个 MultiTask DeepFM 中�
 
 这两条结果已进入 evidence manifest，分别绑定 model、objective、embedding、auxiliary signal/weight 和 learning rate，不会阻止未来采用不同 target 或 sampler 的新 pairwise mechanism。Agent 因此能执行该能力，也能根据自己的 validation 结果停止重复配置。
 
+### Run G：OpenRouter LLM Researcher 端到端接入
+
+本地配置保存在 git-ignored `.env`；真实 key 不进入代码、`.env.example`、运行日志或提交。先运行无训练连接检查，再执行两轮 validation-only autonomous run：
+
+```bash
+python scripts/check_llm_connection.py
+python scripts/run_agent.py --researcher llm --max-iterations 2
+```
+
+运行目录：`logs/run_20260830T142119Z`
+
+| 审计项 | 结果 |
+|---|---:|
+| Provider / model | OpenRouter / `openai/gpt-4.1-mini` |
+| LLM requests / failures | 1 / 0 |
+| Deterministic fallbacks | 0 |
+| Prompt / completion / total tokens | 8158 / 135 / 8293 |
+| Manual interventions | 0 |
+| Agent action | FM BCE → FM BPR, lr=0.0003 |
+| Baseline / candidate Primary | 0.601470 / 0.603963 |
+| Delta | +0.002493 |
+| Stop reason | `max_iterations`（预先限制为 2） |
+
+LLM 读取结构化 validation memory、合法 action space、候选评分和剩余预算后，选择了与 deterministic planner 相同的首个动作。这个结果证明 LLM 路径真实可用，并能产生合法、可执行且有证据支持的 hypothesis；它不证明“接 API 本身提高模型分数”，因为提升来自被选择的 BPR 训练方案。
+
+首次受限网络运行 `logs/run_20260830T141747Z` 发生 1 次 LLM failure 后自动回退到 deterministic。随后增加了安全连接检查和 `llm_fallbacks` 审计字段，使网络/API 故障不再被误认为 LLM 自主选择。
+
 ## Memory 机制
 
 `research_memory.json` 包含两层：
@@ -272,8 +299,9 @@ python scripts/replay_planner_memory.py --max-steps 12
 python scripts/build_family_policies.py \
   --check-against configs/generated_family_policies.json
 
-# LLM planner（需要 API key）
-python scripts/run_agent.py --researcher llm --model gpt-4.1-mini
+# LLM planner（先在 git-ignored .env 配置 API key）
+python scripts/check_llm_connection.py
+python scripts/run_agent.py --researcher llm
 ```
 
 ## 对应提交

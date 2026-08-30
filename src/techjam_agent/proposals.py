@@ -587,6 +587,7 @@ class OpenAICompatibleResearcher:
         self._sleep = sleeper
         self.last_token_usage = empty_token_usage()
         self.last_attempts = 0
+        self.last_error: str | None = None
         self._run_context: dict[str, Any] = {}
         self.last_selection: dict[str, Any] | None = None
 
@@ -616,13 +617,16 @@ class OpenAICompatibleResearcher:
         accumulated = empty_token_usage()
         self.last_token_usage = empty_token_usage()
         self.last_attempts = 0
+        self.last_error = None
         last_error = "unknown error"
         for attempt in range(1, MAX_LLM_ATTEMPTS + 1):
             self.last_attempts = attempt
             try:
                 payload = self._chat(prompt, repair=(attempt > 1))
             except (urllib.error.URLError, TimeoutError) as exc:
-                last_error = type(exc).__name__
+                status = getattr(exc, "code", None)
+                last_error = type(exc).__name__ if status is None else f"HTTP {status}"
+                self.last_error = last_error
                 if attempt >= MAX_LLM_ATTEMPTS:
                     raise RuntimeError(
                         f"LLM proposal failed after {MAX_LLM_ATTEMPTS} attempts: {last_error}"
@@ -631,6 +635,7 @@ class OpenAICompatibleResearcher:
                 continue
             except ValueError as exc:
                 last_error = type(exc).__name__
+                self.last_error = last_error
                 if attempt >= MAX_LLM_ATTEMPTS:
                     raise RuntimeError(
                         f"LLM proposal failed after {MAX_LLM_ATTEMPTS} attempts: {last_error}"
@@ -646,6 +651,7 @@ class OpenAICompatibleResearcher:
                     raise ValueError("LLM repeated a previous experiment")
             except (json.JSONDecodeError, ValueError, KeyError, IndexError, TypeError) as exc:
                 last_error = type(exc).__name__
+                self.last_error = last_error
                 if attempt >= MAX_LLM_ATTEMPTS:
                     raise RuntimeError(
                         f"LLM proposal failed after {MAX_LLM_ATTEMPTS} attempts: {last_error}"
@@ -660,6 +666,7 @@ class OpenAICompatibleResearcher:
                 ),
                 "ranked_candidates": prompt.get("candidate_ranking", []),
             }
+            self.last_error = None
             return Proposal(
                 proposal.hypothesis,
                 proposal.reason,

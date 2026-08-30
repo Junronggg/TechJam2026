@@ -13,8 +13,12 @@ sys.path.insert(0, str(ROOT / "src"))
 from techjam_agent.controller import Controller
 from techjam_agent.evidence import build_generated_family_policies, merge_generated_policies
 from techjam_agent.experiment_planner import MEMORY_MODES
+from techjam_agent.local_env import load_local_env
 from techjam_agent.proposals import DeterministicResearcher, OpenAICompatibleResearcher
 from techjam_agent.isolated import IsolatedExperimentRunner
+
+
+load_local_env(ROOT / ".env")
 
 
 def main() -> int:

@@ -191,11 +191,19 @@ rejected combination, saving one logged experiment. This demonstrates a changed 
 trajectory and deliberately does not generalize combination evidence to every individual
 feature; it is not a new independent model-score result.
 
-To let an OpenAI-compatible model choose experiments, set `OPENAI_API_KEY` and run:
+To let an OpenAI-compatible model choose experiments, copy `.env.example` to the
+git-ignored `.env`, set the key locally, and run:
 
 ```bash
-python3 scripts/run_agent.py --researcher llm --model gpt-4.1-mini
+python3 scripts/check_llm_connection.py
+python3 scripts/run_agent.py --researcher llm
 ```
+
+`scripts/run_agent.py` loads `.env` automatically while preserving values already
+exported by the shell. The example defaults to OpenRouter's OpenAI-compatible endpoint
+and `openai/gpt-4.1-mini`; use `OPENAI_BASE_URL` and `OPENAI_MODEL` to select another
+compatible provider or model. The connection checker reports only status, provider,
+model, and token usage—it never prints the key.
 
 Both the deterministic planner and the LLM receive validation-only persistent evidence from
 `configs/research_evidence.json`. Before every run, `configs/evidence_manifest.json`
@@ -214,7 +222,9 @@ python3 scripts/build_family_policies.py \
 ```
 
 The LLM path automatically falls back to the deterministic policy if a proposal is
-invalid, duplicated, or temporarily unavailable. Outputs are written to a timestamped
+invalid, duplicated, or temporarily unavailable. `summary.json` records each fallback
+and a sanitized provider error such as `HTTP 401`, so a deterministic proposal cannot
+be mistaken for an LLM decision. Outputs are written to a timestamped
 `logs/run_*` directory, `artifacts/best_config.json`, `artifacts/best_model.npz`, and
 `submissions/final.csv`. All ranking metrics still come from the untouched organizer
 `kuairand-starter-kit/evaluate.py`.

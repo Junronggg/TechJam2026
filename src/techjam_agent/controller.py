@@ -78,6 +78,7 @@ class Controller:
                                 "total_tokens": 0}
         self.llm_requests = 0
         self.llm_failures = 0
+        self.llm_fallbacks: list[dict[str, Any]] = []
         self._research_context: dict[str, Any] = {}
         self._pending_candidate_selection: dict[str, Any] | None = None
         self._pending_diagnostic: dict[str, Any] | None = None
@@ -531,6 +532,11 @@ class Controller:
             }
             proposal, candidate, failure = self._propose(self.researcher, parent)
             if failure is not None and not isinstance(self.researcher, DeterministicResearcher):
+                self.llm_fallbacks.append({
+                    "iteration": iteration,
+                    "reason": failure[1],
+                    "provider_error": getattr(self.researcher, "last_error", None),
+                })
                 proposal, candidate, failure = self._propose(DeterministicResearcher(), parent)
             if failure is not None:
                 stop_reason, stop_detail = failure
@@ -566,6 +572,7 @@ class Controller:
                    "wall_clock_seconds": elapsed,
                    "llm_requests": self.llm_requests,
                    "llm_failures": self.llm_failures,
+                   "llm_fallbacks": list(self.llm_fallbacks),
                    "llm_tokens": dict(self.llm_token_usage),
                    "limits": {"max_total_experiments": cap,
                               "official_max_iterations": int(limits["max_iterations"]),
