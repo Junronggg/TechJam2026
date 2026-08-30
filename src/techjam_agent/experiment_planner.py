@@ -4,7 +4,13 @@ import math
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from .config import ALLOWED_VALUES, FEATURE_KEYS, apply_changes, experiment_key
+from .config import (
+    ALLOWED_VALUES,
+    FEATURE_KEYS,
+    FEATURE_SCHEMA_VERSION,
+    apply_changes,
+    experiment_key,
+)
 from .memory import collect_tried_keys, distill_research_patterns
 
 
@@ -30,6 +36,7 @@ FAMILY_PRIORS = {
     "ranking_objective": (0.90, 0.95, 0.80, 0.25, 0.20),
     "heterogeneous_ensemble": (0.82, 0.90, 0.70, 0.70, 0.30),
     "multitask": (0.62, 0.75, 0.70, 0.65, 0.45),
+    "pairwise_multitask": (0.64, 0.60, 0.80, 0.75, 0.35),
     "cross_network": (0.52, 0.65, 0.65, 0.60, 0.85),
     "sequence_model": (0.05, 0.90, 0.95, 1.00, 0.20),
     "tree_model": (0.20, 0.90, 0.60, 0.45, 0.50),
@@ -122,6 +129,13 @@ def _model_candidates(config: dict[str, Any]) -> list[CandidateExperiment]:
             {"model": "multitask_deepfm", "training_objective": "bce", "learning_rate": 0.001},
             "multitask",
         ))
+    if not (model == "multitask_deepfm" and config["training_objective"] == "bpr"):
+        rows.append(_candidate(
+            "Combine within-user BPR ranking with like-only auxiliary supervision.",
+            "FM benefits from BPR and like-only DeepFM has stable rolling evidence; this controlled action changes the main objective without changing the auxiliary target.",
+            {"model": "multitask_deepfm", "training_objective": "bpr", "learning_rate": 0.001},
+            "pairwise_multitask",
+        ))
     if model != "dcnv2":
         rows.append(_candidate(
             "Test a low-rank DCNv2 interaction model.",
@@ -201,6 +215,8 @@ def _family_for_item(item: dict[str, Any]) -> str:
     if changes.get("training_objective") == "bpr":
         return "ranking_objective"
     model = changes.get("model")
+    if model == "multitask_deepfm" and changes.get("training_objective") == "bpr":
+        return "pairwise_multitask"
     return {
         "ensemble": "heterogeneous_ensemble",
         "multitask_deepfm": "multitask",
@@ -233,28 +249,91 @@ def _family_observations(history: list[dict[str, Any]], family: str) -> tuple[li
     return deltas, weak, strong_slice_or_diversity
 
 
-def _prior_family_patterns(prior_evidence: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+def _prior_family_patterns(
+    prior_evidence: dict[str, Any] | None,
+) -> dict[str, list[dict[str, Any]]]:
     """Read only explicit machine-readable policies; never infer policy from prose."""
     if not isinstance(prior_evidence, dict):
         return {}
     rows = prior_evidence.get("family_policies")
     if not isinstance(rows, list):
         return {}
-    patterns: dict[str, dict[str, Any]] = {}
+    patterns: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
         family, policy = row.get("family"), row.get("policy")
         if family not in FAMILY_PRIORS or policy not in PRIOR_POLICIES:
             continue
-        patterns[str(family)] = {
+        pattern = {
             "family": str(family),
             "policy": str(policy),
             "confidence": row.get("confidence"),
             "evidence": row.get("evidence"),
+            "policy_id": row.get("policy_id"),
+            "scientific_verdict": row.get("scientific_verdict"),
+            "competition_status": row.get("competition_status"),
+            "applies_to": row.get("applies_to"),
+            "expires_if": row.get("expires_if"),
+            "created_from": row.get("created_from"),
             "source": "persistent_validation_memory",
         }
+        patterns.setdefault(str(family), []).append(pattern)
     return patterns
+
+
+def _policy_applies(pattern: dict[str, Any], candidate_config: dict[str, Any]) -> bool:
+    """Return whether a persisted policy is valid for this concrete action."""
+    scope = pattern.get("applies_to")
+    if scope is None:
+        return True  # Backward-compatible manual policy without an explicit scope.
+    if not isinstance(scope, dict):
+        return False
+    task = scope.get("task")
+    if task not in (None, "long_view"):
+        return False
+    schema = scope.get("feature_schema")
+    if schema not in (None, FEATURE_SCHEMA_VERSION):
+        return False
+    models = scope.get("models", [])
+    if not isinstance(models, list):
+        return False
+    if models and candidate_config.get("model") not in models:
+        return False
+    objectives = scope.get("training_objectives", [])
+    if not isinstance(objectives, list):
+        return False
+    if objectives and candidate_config.get("training_objective") not in objectives:
+        return False
+    for section in ("features", "hyperparameters"):
+        expected = scope.get(section, {})
+        actual = candidate_config.get(section, {})
+        if not isinstance(expected, dict) or not isinstance(actual, dict):
+            return False
+        if any(actual.get(key) != value for key, value in expected.items()):
+            return False
+    return True
+
+
+def _matching_prior_pattern(
+    patterns: dict[str, list[dict[str, Any]]],
+    family: str,
+    candidate_config: dict[str, Any],
+) -> dict[str, Any] | None:
+    applicable = [
+        pattern for pattern in patterns.get(family, [])
+        if _policy_applies(pattern, candidate_config)
+    ]
+    if not applicable:
+        return None
+
+    def confidence(pattern: dict[str, Any]) -> float:
+        raw = pattern.get("confidence")
+        if isinstance(raw, (int, float)):
+            return float(raw)
+        return {"high": 0.9, "medium": 0.6, "low": 0.3}.get(str(raw), 0.0)
+
+    return max(applicable, key=confidence)
 
 
 def rank_candidates(
@@ -305,9 +384,12 @@ def rank_candidates(
         )
         if observed is not None:
             score += weights["observed_gain"] * max(-0.005, min(0.005, observed))
-        # Evidence produced in the current run is the freshest signal. Persistent
-        # validation memory fills families that this run has not evaluated yet.
-        pattern = current_patterns.get(candidate.family) or prior_patterns.get(candidate.family, {})
+        # A scoped artifact policy describes this concrete configuration and is
+        # stronger than a family-level pattern distilled from a different variant
+        # in the current run. Unscoped/current evidence remains the fallback.
+        pattern = _matching_prior_pattern(
+            prior_patterns, candidate.family, changed
+        ) or current_patterns.get(candidate.family) or {}
         pattern_policy = pattern.get("policy")
         if pattern_policy == "exploit_with_confirmation":
             score += 0.08
@@ -374,16 +456,26 @@ class AutonomousExperimentPlanner:
             _prior_family_patterns(self.prior_evidence)
             if self.memory_mode == "distilled_patterns" else {}
         )
-        matching_patterns = {**prior_patterns, **current_patterns}
+        selected_config = apply_changes(config, winner.candidate.changes)
+        retrieved_pattern = _matching_prior_pattern(
+            prior_patterns, winner.candidate.family, selected_config
+        ) or current_patterns.get(winner.candidate.family)
         self.last_selection = {
             "memory_mode": self.memory_mode,
             "selected_family": winner.candidate.family,
             "selected_score": float(winner.score),
             "criteria": (
                 "expected_gain + evidence_strength + novelty - compute_cost - redundancy; "
-                "current-run family outcomes and distilled research patterns override priors"
+                "scoped artifact policies override family-level patterns only when the "
+                "candidate configuration matches their declared scope"
             ),
-            "retrieved_pattern": matching_patterns.get(winner.candidate.family),
+            "retrieved_pattern": retrieved_pattern,
+            "decision_stage": (
+                "slow_confirmation"
+                if retrieved_pattern
+                and retrieved_pattern.get("policy") == "exploit_with_confirmation"
+                else "fast_screen"
+            ),
             "counterfactual_choices": counterfactual_choices,
             "memory_changed_choice": any(
                 choice is not None and choice["differs_from_selected"]

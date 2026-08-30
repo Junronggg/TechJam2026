@@ -115,6 +115,11 @@ The NumPy model suite also includes DeepFM, `multitask_deepfm`, and low-rank DCN
 The multi-task model can isolate click, like, censored completion, and capped
 log-watch targets; the current evidence-backed default is like-only. Auxiliary
 outcomes are training-only targets and are never passed as prediction-time features.
+Multi-task DeepFM can also combine a within-user BPR long-view objective with the
+pointwise auxiliary head. In the controlled like-only experiment this scored
+`0.603322` versus `0.604400` for BCE; the externally reported `k=32, aux=0.3`
+configuration scored `0.603610`. Both exact configurations remain reproducible but
+are rejected by scoped evidence rather than advertised as improvements.
 The FM branch also supports a learned constant `global_context` field; it improved
 all three rolling folds, but won only 3/4 paired seeds and is therefore still a
 candidate. Candidate-history fields failed their matched placebo check. Run the
@@ -132,6 +137,7 @@ python scripts/analyze_conditional_complementarity.py
 python scripts/evaluate_history_gated_ensemble.py
 python scripts/run_lightweight_sequence_ablation.py
 python scripts/evaluate_random_exposure_robustness.py
+python scripts/run_pairwise_multitask_ablation.py
 ```
 
 Run the offline deterministic researcher first:
@@ -178,10 +184,12 @@ python3 scripts/replay_planner_memory.py --max-steps 12
 ```
 
 This offline replay does not retrain models or load test metrics. In the current log
-archive, `no_memory` and `raw_history` both repeated two temporal experiments already
-rejected by rolling validation, while `distilled_patterns` stopped that family and
-kept the robust `0.604713` ensemble. This demonstrates a changed planning trajectory,
-not a new independent model-score result.
+archive, `no_memory` and `raw_history` both formed the two-feature temporal combination
+already rejected by rolling validation. The scoped `distilled_patterns` policy allows
+the not-yet-rolled single feature but blocks the second action that would recreate the
+rejected combination, saving one logged experiment. This demonstrates a changed planning
+trajectory and deliberately does not generalize combination evidence to every individual
+feature; it is not a new independent model-score result.
 
 To let an OpenAI-compatible model choose experiments, set `OPENAI_API_KEY` and run:
 
@@ -190,9 +198,20 @@ python3 scripts/run_agent.py --researcher llm --model gpt-4.1-mini
 ```
 
 Both the deterministic planner and the LLM receive validation-only persistent evidence from
-`configs/research_evidence.json`, including rolling-validation wins and rejected
-mechanisms. Override it with `--evidence-file PATH`. Test-split metric fields are
-not part of the machine-readable family policies and are removed before an LLM prompt is sent.
+`configs/research_evidence.json`. Before every run, `configs/evidence_manifest.json`
+routes selected rolling, placebo, and paired-seed artifacts through the deterministic
+policy builder. Generated policies carry artifact hashes, task/model/schema scope,
+scientific verdicts, and competition status; they override old manual policies only for
+the same family and matching scope. Override the files with `--evidence-file PATH` and
+`--evidence-manifest PATH`. Test-split metric fields are not part of planning evidence
+and are removed before an LLM prompt is sent.
+
+Audit whether the committed policy snapshot still matches the current artifacts:
+
+```bash
+python3 scripts/build_family_policies.py \
+  --check-against configs/generated_family_policies.json
+```
 
 The LLM path automatically falls back to the deterministic policy if a proposal is
 invalid, duplicated, or temporarily unavailable. Outputs are written to a timestamped
@@ -230,6 +249,8 @@ interventions; its short trajectory still had no memory-driven choice divergence
   preserves parent/child lineage and rejected branches as evidence.
 - `research_memory.json` records validation-only hypothesis evidence and distilled
   research patterns; the planner does not parse `TRY.md` to decide the next experiment.
+- Generated cross-run policies are applicable only when task, model, and feature-schema
+  scope match. Changed artifact hashes regenerate policy identities on the next run.
 - `manual_interventions.jsonl` records intervention id, reason, action, and whether the
   intervention was avoidable. A normal uninterrupted run reports zero interventions.
 - `candidate_selection` records the top five considered actions and all score components,

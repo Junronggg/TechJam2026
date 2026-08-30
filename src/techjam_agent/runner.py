@@ -464,6 +464,19 @@ class ExperimentRunner:
                             hybrid_step(
                                 model, positive_x, negative_x, hp["hybrid_bpr_weight"]
                             )
+                    elif config["model"] == "multitask_deepfm":
+                        positive_rows = positive[selection]
+                        negative_rows = negative[selection]
+                        model.pairwise_multitask_step(
+                            positive_x,
+                            negative_x,
+                            auxiliary_train[positive_rows],
+                            auxiliary_train[negative_rows],
+                            hp["auxiliary_loss_weight"],
+                            auxiliary_mask[positive_rows],
+                            auxiliary_mask[negative_rows],
+                            "mse" if hp["auxiliary_signals"] == "log_watch" else "bce",
+                        )
                     elif config["model"] == "deepfm":
                         model.bpr_step(positive_x, negative_x)
                     else:

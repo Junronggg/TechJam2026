@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from techjam_agent.controller import Controller
+from techjam_agent.evidence import build_generated_family_policies, merge_generated_policies
 from techjam_agent.experiment_planner import MEMORY_MODES
 from techjam_agent.proposals import DeterministicResearcher, OpenAICompatibleResearcher
 from techjam_agent.isolated import IsolatedExperimentRunner
@@ -32,6 +33,14 @@ def main() -> int:
         "--evidence-file",
         default=os.getenv("TECHJAM_RESEARCH_EVIDENCE", "configs/research_evidence.json"),
         help="Persistent validation-only evidence supplied to the selected Researcher.",
+    )
+    parser.add_argument(
+        "--evidence-manifest",
+        default=os.getenv(
+            "TECHJAM_EVIDENCE_MANIFEST", "configs/evidence_manifest.json"
+        ),
+        help=("Manifest of validation artifacts used to regenerate scoped family "
+              "policies before every run."),
     )
     parser.add_argument("--max-iterations", type=int,
                         help="Maximum total executed experiments including the iteration-0 "
@@ -75,6 +84,15 @@ def main() -> int:
         parser.error(f"cannot load research evidence from {evidence_path}: {exc}")
     if not isinstance(prior_evidence, dict):
         parser.error("research evidence must be a JSON object")
+    manifest_path = Path(args.evidence_manifest)
+    if not manifest_path.is_absolute():
+        manifest_path = ROOT / manifest_path
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        generated_policies = build_generated_family_policies(ROOT, manifest)
+        prior_evidence = merge_generated_policies(prior_evidence, generated_policies)
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        parser.error(f"cannot build family policies from {manifest_path}: {exc}")
     if args.researcher == "llm":
         if args.memory_mode != "distilled_patterns":
             parser.error("--memory-mode ablation currently supports --researcher deterministic")

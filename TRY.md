@@ -322,7 +322,7 @@ Hypothesis
 → pair-error recovery/introduction
 → real gated/ensemble evaluation
 → KEEP / REJECT / REINTERPRET
-→ 记录实验结论
+→ research memory
 ```
 
 ### K. 首个 leakage-safe sequence model
@@ -381,6 +381,32 @@ Random 的 long-view rate 为 **8.06%**，standard 为 **31.33%**。两套 Prima
 
 结论：DeepFM 提供的互补性依赖 standard logging policy。当前冠军仍适用于比赛 standard split，但 FM+BPR 在 policy shift 下更稳健；项目叙事必须明确区分“榜单冠军”和“随机曝光鲁棒性”。
 
+### M. Pairwise Multi-task 严格复现
+
+实现了 `MultiTaskDeepFM` 的新训练路径：long-view 主任务使用同用户 BPR pair，like 仍使用 pointwise BCE 辅助头。推理字段、数据切分和 evaluator 不变，辅助标签只在训练时使用。
+
+第一组只改变主任务 loss：
+
+| 配置 | GAUC | nDCG@5 | Primary | Best epoch |
+|---|---:|---:|---:|---:|
+| Like Multi-task + BCE，k16/aux0.1 | 0.671102 | 0.537699 | **0.604400** | 8 |
+| Like Multi-task + BPR，k16/aux0.1 | 0.669686 | 0.536957 | 0.603322 | 7 |
+
+严格对照 delta 为 **-0.001079**，所以“直接把当前 multi-task 主任务换成 BPR”被拒绝。
+
+随后只做一次外部报告配置复现，不继续扫参数：
+
+```text
+Like Multi-task + BPR
+k = 32
+auxiliary_weight = 0.3
+learning_rate = 0.001
+```
+
+结果 Primary 为 **0.603610**，相对同实现 BCE 仍为 **-0.000791**，相对当前冠军 0.604713 为 **-0.001103**。因此没有复现对方报告的 0.6069；合理解释是双方的 pairwise loss、auxiliary target、采样方式或模型实现并不相同，不能只凭配置名称认为是同一个实验。
+
+结论：保留 pairwise multi-task 的可执行能力和单元测试，但自动 memory 对上述两个精确配置标记 `STOP_DIRECTION`。只有获得对方 loss/target/sampler 代码，或提出实质不同的机制，才重新打开这个方向。
+
 ---
 
 ## 当前资产与状态
@@ -396,6 +422,7 @@ Random 的 long-view rate 为 **8.06%**，standard 为 **31.33%**。两套 Prima
 | Rolling validation | 是 | 新方法稳定性门槛 |
 | Candidate-history causal encoding | 是 | 信号无效，但实现和审计保留 |
 | Auxiliary click/like/completion/log-watch | 是 | 仅 like 有可靠价值 |
+| Pairwise BPR + like auxiliary | 是 | k16/aux0.1 与报告配置 k32/aux0.3 均低于 BCE，拒绝 |
 | Prediction correlation analysis | 是 | 用于判断 ensemble 互补性 |
 | Conditional complementarity | 是 | 分析 user/history/popularity/duration/time 条件差异与 pair error recovery |
 | 自动 placebo controls | 是 | real/constant/shuffled/random same-cardinality；失败则 `REINTERPRET` |
@@ -423,6 +450,7 @@ Random 的 long-view rate 为 **8.06%**，standard 为 **31.33%**。两套 Prima
 更多 user×author/user×tab 显式交叉
 更多 hard-negative pool
 更多 completion/watch-time 变换
+重复当前 pairwise multi-task 两个已测配置
 围绕 0.604713 细扫 ensemble 权重
 挑选表现最好的 seed
 ```
@@ -447,6 +475,10 @@ python scripts/analyze_conditional_complementarity.py
 python scripts/evaluate_history_gated_ensemble.py
 python scripts/run_lightweight_sequence_ablation.py
 python scripts/evaluate_random_exposure_robustness.py
+
+# Pairwise multi-task 严格对照与报告配置复现
+python scripts/run_pairwise_multitask_ablation.py
+python scripts/run_pairwise_multitask_ablation.py --reported-config-only
 
 # DCNv2 与融合互补性
 python scripts/run_dcnv2_ablation.py

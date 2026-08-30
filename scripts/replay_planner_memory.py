@@ -27,6 +27,10 @@ from techjam_agent.config import (  # noqa: E402
     validate_config,
 )
 from techjam_agent.critic import review  # noqa: E402
+from techjam_agent.evidence import (  # noqa: E402
+    build_generated_family_policies,
+    merge_generated_policies,
+)
 from techjam_agent.experiment_planner import (  # noqa: E402
     MEMORY_MODES,
     rank_candidates,
@@ -279,6 +283,9 @@ def main() -> int:
 
     initial_config = _load_json(ROOT / "configs" / "experiment.json")
     prior_evidence = _load_json(ROOT / "configs" / "research_evidence.json")
+    evidence_manifest = _load_json(ROOT / "configs" / "evidence_manifest.json")
+    generated_policies = build_generated_family_policies(ROOT, evidence_manifest)
+    prior_evidence = merge_generated_policies(prior_evidence, generated_policies)
     validate_config(initial_config)
     archive, archive_audit = build_validation_archive(ROOT / "logs", initial_config)
     results = [

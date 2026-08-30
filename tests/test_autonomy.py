@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from techjam_agent.config import apply_changes
+from techjam_agent.config import FEATURE_SCHEMA_VERSION, apply_changes
 from techjam_agent.controller import Controller
 from techjam_agent.experiment_planner import AutonomousExperimentPlanner, rank_candidates
 from techjam_agent.memory import build_structured_research_memory, distill_research_patterns
@@ -260,6 +260,104 @@ class StructuredMemoryTests(unittest.TestCase):
         )
         self.assertTrue(distilled.direction_stopped)
         self.assertFalse(raw.direction_stopped)
+
+    def test_scoped_policy_only_stops_matching_model(self):
+        evidence = {"family_policies": [{
+            "family": "temporal_counts",
+            "policy": "stop_direction",
+            "confidence": 0.9,
+            "applies_to": {
+                "task": "long_view",
+                "feature_schema": FEATURE_SCHEMA_VERSION,
+                "models": ["ensemble"],
+            },
+        }]}
+        fm_temporal = next(
+            row for row in rank_candidates(
+                load_config(), [], prior_evidence=evidence,
+            ) if row.candidate.family == "temporal_counts"
+        )
+        ensemble = apply_changes(load_config(), {
+            "model": "ensemble", "training_objective": "hybrid",
+        })
+        ensemble_temporal = next(
+            row for row in rank_candidates(
+                ensemble, [], prior_evidence=evidence,
+            ) if row.candidate.family == "temporal_counts"
+        )
+        self.assertFalse(fm_temporal.direction_stopped)
+        self.assertTrue(ensemble_temporal.direction_stopped)
+
+    def test_policy_expires_when_feature_schema_changes(self):
+        evidence = {"family_policies": [{
+            "family": "temporal_counts",
+            "policy": "stop_direction",
+            "confidence": 0.9,
+            "applies_to": {
+                "task": "long_view",
+                "feature_schema": "obsolete-schema",
+                "models": ["fm"],
+            },
+        }]}
+        temporal = next(
+            row for row in rank_candidates(
+                load_config(), [], prior_evidence=evidence,
+            ) if row.candidate.family == "temporal_counts"
+        )
+        self.assertFalse(temporal.direction_stopped)
+
+    def test_policy_only_applies_when_scoped_features_are_present(self):
+        evidence = {"family_policies": [{
+            "family": "temporal_counts",
+            "policy": "stop_direction",
+            "confidence": 0.9,
+            "applies_to": {
+                "task": "long_view",
+                "feature_schema": FEATURE_SCHEMA_VERSION,
+                "models": ["ensemble"],
+                "features": {
+                    "user_recent_3d_activity": True,
+                    "item_recent_3d_exposure": True,
+                },
+                "hyperparameters": {"ensemble_deepfm_weight": 0.4},
+            },
+        }]}
+        ensemble = apply_changes(load_config(), {
+            "model": "ensemble", "training_objective": "hybrid",
+        })
+        user_only = next(
+            row for row in rank_candidates(
+                ensemble, [], prior_evidence=evidence,
+            ) if row.candidate.changes == {"user_recent_3d_activity": True}
+        )
+        ensemble_with_user = apply_changes(
+            ensemble, {"user_recent_3d_activity": True}
+        )
+        combined = next(
+            row for row in rank_candidates(
+                ensemble_with_user, [], prior_evidence=evidence,
+            ) if row.candidate.changes == {"item_recent_3d_exposure": True}
+        )
+        self.assertFalse(user_only.direction_stopped)
+        self.assertTrue(combined.direction_stopped)
+
+    def test_generated_evidence_stops_exact_rejected_pairwise_multitask(self):
+        evidence = json.loads(
+            (ROOT / "configs" / "generated_family_policies.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        pairwise = next(
+            row for row in rank_candidates(
+                load_config(), [], prior_evidence=evidence,
+            ) if row.candidate.family == "pairwise_multitask"
+        )
+        self.assertEqual(pairwise.candidate.changes, {
+            "model": "multitask_deepfm",
+            "training_objective": "bpr",
+            "learning_rate": 0.001,
+        })
+        self.assertTrue(pairwise.direction_stopped)
 
 
 if __name__ == "__main__":

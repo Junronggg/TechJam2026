@@ -242,3 +242,85 @@ class MultiTaskDeepFM(DeepFM):
         )
         auxiliary_loss = float((element_loss * auxiliary_mask).sum() / observed)
         return float(main_loss + auxiliary_weight * auxiliary_loss)
+
+    def pairwise_multitask_step(
+        self,
+        positive_x: np.ndarray,
+        negative_x: np.ndarray,
+        positive_auxiliary: np.ndarray,
+        negative_auxiliary: np.ndarray,
+        auxiliary_weight: float,
+        positive_mask: np.ndarray | None = None,
+        negative_mask: np.ndarray | None = None,
+        auxiliary_loss: str = "bce",
+    ) -> float:
+        """Optimize BPR for long-view ranking plus pointwise auxiliary feedback."""
+        expected = (len(positive_x), self.A.shape[1])
+        if positive_auxiliary.shape != expected or negative_auxiliary.shape != expected:
+            raise ValueError("pairwise auxiliary labels have the wrong shape")
+        if positive_mask is None:
+            positive_mask = np.ones_like(positive_auxiliary, dtype=np.float32)
+        if negative_mask is None:
+            negative_mask = np.ones_like(negative_auxiliary, dtype=np.float32)
+        if positive_mask.shape != expected or negative_mask.shape != expected:
+            raise ValueError("pairwise auxiliary masks have the wrong shape")
+
+        positive_logits, positive_cache = self._forward(positive_x)
+        negative_logits, negative_cache = self._forward(negative_x)
+        difference = positive_logits - negative_logits
+        pair_probability = _sigmoid(difference)
+        positive_gradient = (
+            (pair_probability - 1.0) / len(difference)
+        ).astype(np.float32)
+        positive_gradients = self._gradients(positive_cache, positive_gradient)
+        negative_gradients = self._gradients(negative_cache, -positive_gradient)
+        gradients = {
+            name: positive_gradients[name] + negative_gradients[name]
+            for name in positive_gradients
+        }
+        gradients["A"] = np.zeros_like(self.A)
+        gradients["ab"] = np.zeros_like(self.ab)
+
+        observed = max(1.0, float(positive_mask.sum() + negative_mask.sum()))
+        auxiliary_loss_sum = 0.0
+        for cache, labels, mask in (
+            (positive_cache, positive_auxiliary, positive_mask),
+            (negative_cache, negative_auxiliary, negative_mask),
+        ):
+            X, _, _, flattened, hidden_pre, hidden = cache
+            auxiliary_logits = hidden @ self.A + self.ab
+            probabilities = _sigmoid(auxiliary_logits)
+            if auxiliary_loss == "bce":
+                loss_gradient = probabilities - labels
+                element_loss = -(
+                    labels * np.log(probabilities + 1e-9)
+                    + (1 - labels) * np.log(1 - probabilities + 1e-9)
+                )
+            elif auxiliary_loss == "mse":
+                difference_aux = probabilities - labels
+                loss_gradient = 2.0 * difference_aux * probabilities * (
+                    1.0 - probabilities
+                )
+                element_loss = difference_aux * difference_aux
+            else:
+                raise ValueError("auxiliary_loss must be 'bce' or 'mse'")
+            auxiliary_gradient = (
+                auxiliary_weight * loss_gradient * mask / observed
+            ).astype(np.float32)
+            gradients["A"] += hidden.T @ auxiliary_gradient
+            gradients["ab"] += auxiliary_gradient.sum(axis=0)
+            hidden_gradient = auxiliary_gradient @ self.A.T
+            pre_gradient = hidden_gradient * (hidden_pre > 0)
+            gradients["H"] += flattened.T @ pre_gradient
+            gradients["hb"] += pre_gradient.sum(axis=0)
+            embedding_gradient = (pre_gradient @ self.H.T).reshape(
+                len(X), X.shape[1], self.V.shape[1]
+            )
+            auxiliary_v = np.zeros_like(self.V)
+            np.add.at(auxiliary_v, X, embedding_gradient)
+            gradients["V"] += auxiliary_v
+            auxiliary_loss_sum += float((element_loss * mask).sum())
+
+        self._apply(gradients)
+        bpr_loss = float(np.mean(np.logaddexp(0.0, -difference)))
+        return bpr_loss + auxiliary_weight * auxiliary_loss_sum / observed

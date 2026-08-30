@@ -9,8 +9,9 @@
 - Agent 可以从 baseline 自动运行到当前冠军，研究过程默认不读取 test。
 - 首次完整 autonomous run 为 5 个实验、0 人工介入，并按 convergence rule 停止。
 - 短程 memory ablation 中三种模式选择相同，因此不能声称 pattern 在短轨迹上有效。
-- 跨 run replay 中 distilled memory 改变了选择，避免 2 个已被 rolling 否定的 temporal 实验。
-- 当前最大缺口：`family_policies` 已能被 Agent 使用，但仍需自动从 rolling/placebo/multi-seed artifacts 生成，才能进一步减少人工维护。
+- 旧版 broad family policy 在 replay 中避免过 2 个 temporal 实验；精确审计后确认 rolling 只否定“两项同时开启”，当前 scoped policy 只阻止这个已验证组合，不误伤尚未 rolling 的单特征。
+- `family_policies` 现由 validation-only rolling/placebo/paired-seed artifacts 自动生成；每条策略带来源哈希、模型作用域、科学结论和比赛状态。
+- 旧策略只在 task、model、feature schema 仍匹配时生效；artifact 改变后下次运行会重新归因，不再依赖人工同步 JSON 结论。
 
 ## Agent 闭环
 
@@ -95,13 +96,15 @@ python scripts/run_agent.py \
 
 ### Run C：跨 run memory 离线压力测试
 
+这是引入自动 policy 生成前的历史结果；当时使用的是手写、未细分 config scope 的 broad family policy。
+
 命令：
 
 ```bash
 python scripts/replay_planner_memory.py --max-steps 12
 ```
 
-数据来源：26 份历史 `experiment_history.jsonl`、111 条成功 validation 记录、34 个归一化配置。候选被选择前只检查是否有日志支持，不读取结果；test summary 不加载。
+数据来源：27 份历史 `experiment_history.jsonl`、116 条成功 validation 记录、34 个归一化配置。候选被选择前只检查是否有日志支持，不读取结果；test summary 不加载。
 
 | Mode | Replay 实验 | 无效实验 | 最后选择 | 判断 |
 |---|---:|---:|---|---|
@@ -148,6 +151,45 @@ python scripts/run_agent.py \
 
 判断：所有分数精确复现，说明 persistent evidence 接线没有破坏训练和评估。短轨迹在停止前仍未进入 memory 会阻止的 family，因此 action 没有分叉；不能用 Run C 覆盖这个负结果。
 
+### Run E：Artifact → policy 自动归因与 scoped replay
+
+输入清单：`configs/evidence_manifest.json`。生成快照：`configs/generated_family_policies.json`。
+
+```bash
+python scripts/build_family_policies.py \
+  --check-against configs/generated_family_policies.json
+python scripts/replay_planner_memory.py --max-steps 12
+```
+
+自动生成 scoped policies；同一 family 在配置不同时可有多条互不误伤的策略：
+
+| Family | 自动策略 | 科学结论 | 作用模型 | 主要依据 |
+|---|---|---|---|---|
+| heterogeneous ensemble | confirm/exploit | VALIDATED | ensemble | rolling 3/3，均值 +0.001123 |
+| cross network | confirm/exploit | VALIDATED | DCNv2 | rolling 3/3，均值 +0.000248 |
+| global context | gather evidence | UNCERTAIN | FM | rolling 3/3，但 paired-seed 区间跨 0 |
+| global context | gather evidence | UNCERTAIN | ensemble | rolling 3/3，但 official split 为轻微负值 |
+| multitask like-only | confirm/exploit | VALIDATED | multitask DeepFM + BCE | like-only rolling 3/3，均值 +0.000309 |
+| pairwise multitask | stop | REJECTED | BPR + like 的两个精确配置 | 分别 -0.001079 / -0.000791 vs BCE |
+| candidate history | stop | REJECTED | FM | 两个 placebo 失败，count/adjacency 也为 noise |
+| sequence model | stop | REJECTED | sequence DeepFM | -0.000493 且成本高 |
+| temporal counts | stop | REJECTED | ensemble + 两项 temporal 同开 | rolling 1/3，均值 -0.000246 |
+
+最新 scoped replay 得到：`no_memory/raw_history` 跑 6 个实验并依次加入两项 temporal；`distilled_patterns` 跑 5 个实验，只允许第一项单特征，在准备形成已被 rolling 否定的双特征组合时停止。因此少执行 1 个已有直接反证的实验，但 best 仍被单 split 的 `0.604931` 小涨影响。全过程标记 `validation_only=true`、`test_metrics_loaded=false`。
+
+实现判断：这一步把“人阅读 TRY.md 后手写 stop list”改成“Agent 从结构化实验产物更新 planning policy”。同时它揭示了证据粒度缺口：组合实验的失败不能自动推广为每个单特征都失败。下一步应让 slow-confirmation 自动对 `user_recent_3d_activity` 单项做 rolling，再决定是否停止整个 family。它是 evidence-driven policy update，不是 RL，也不代表自动发现了新的模型实现。
+
+### Run F：扩展 action 后验证 pairwise multi-task
+
+Agent action space 新增 `pairwise_multitask`：同一个 MultiTask DeepFM 中用 BPR 学 long-view 用户内排序，并继续用 like BCE 辅助共享表示。
+
+| 配置 | Primary | 相对 like+BCE | 自动结论 |
+|---|---:|---:|---|
+| k16 / aux0.1 / lr0.001 | 0.603322 | -0.001079 | STOP_DIRECTION（精确 scope） |
+| 外部报告 k32 / aux0.3 / lr0.001 | 0.603610 | -0.000791 | STOP_DIRECTION（精确 scope） |
+
+这两条结果已进入 evidence manifest，分别绑定 model、objective、embedding、auxiliary signal/weight 和 learning rate，不会阻止未来采用不同 target 或 sampler 的新 pairwise mechanism。Agent 因此能执行该能力，也能根据自己的 validation 结果停止重复配置。
+
 ## Memory 机制
 
 `research_memory.json` 包含两层：
@@ -170,7 +212,17 @@ research_patterns:
 | `gather_evidence` | 只允许一个便宜单变量实验 |
 | `stop_direction` | 不再重复等价的失败方向 |
 
-Persistent validation memory 位于 `configs/research_evidence.json`。Deterministic 与 LLM Researcher 都会读取其中机器可解析的 `family_policies`；test 指标不能进入规划证据。
+Persistent validation memory 位于 `configs/research_evidence.json`。`scripts/run_agent.py` 每次启动还会读取 `configs/evidence_manifest.json`，从明确列出的 validation artifacts 重新生成 scoped policies，并覆盖相同 family 的旧手写 policy。Deterministic 与 LLM Researcher 使用同一份合并证据；test 指标不能进入规划证据。
+
+每条自动策略包含：
+
+```text
+policy_id
+scientific_verdict / competition_status
+applies_to: task + feature_schema + models
+expires_if
+created_from: artifact path + sha256 + extracted validation result
+```
 
 ## 论文机制迁移
 
@@ -187,10 +239,10 @@ Persistent validation memory 位于 `configs/research_evidence.json`。Determini
 
 优先级：
 
-1. 自动从 rolling、placebo、paired-seed artifacts 生成带 provenance 的 `family_policies`。
-2. 增加 policy schema version 和过期/模型实现变更检查，避免旧结论错误阻止新机制。
-3. 用 fresh autonomous run 验证自动生成的 policy 能减少真实训练次数。
-4. 完成后再比较 cheap one-step lookahead 与当前 greedy planner。
+1. 用 fresh autonomous run 验证自动生成的 policy 能减少真实训练次数；若官方 convergence 更早触发，应如实记录无法观察分叉。
+2. 将 slow confirmation 从 planner 标签升级为可执行的 rolling/paired-seed job，而不是只做优先级加分。
+3. 若要继续 pairwise multi-task，先取得或明确重建对方的 loss、auxiliary target 和 sampler，不能继续猜参数。
+4. 再比较 cheap one-step lookahead 与当前 greedy planner。
 
 暂不宣称：
 
@@ -215,6 +267,10 @@ python scripts/run_memory_ablation.py --max-iterations 5
 
 # 不重新训练的历史 replay
 python scripts/replay_planner_memory.py --max-steps 12
+
+# 验证自动策略快照与当前 artifacts 一致
+python scripts/build_family_policies.py \
+  --check-against configs/generated_family_policies.json
 
 # LLM planner（需要 API key）
 python scripts/run_agent.py --researcher llm --model gpt-4.1-mini
