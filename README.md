@@ -4,6 +4,11 @@ Preparation workspace for TikTok TechJam Task 2 using the organizer-provided
 KuaiRand-Pure starter kit. This repository currently contains environment and
 benchmark configuration and a safe autonomous FM research MVP.
 
+Research logs are separated by purpose:
+
+- [`TRY.md`](TRY.md): model, loss, feature engineering, rolling validation and ensemble experiments.
+- [`AGENT-TRY.md`](AGENT-TRY.md): Agent trajectories, runtime, memory ablations, stopping and intervention audits.
+
 ## Prerequisites
 
 - Windows PowerShell
@@ -207,7 +212,9 @@ found the `0.604713` ensemble at iteration 2, reported zero interventions, and s
 itself with `stop_reason=converged`. Its `memory_influenced_selections` was zero, so that
 short trajectory demonstrates end-to-end autonomy but not a memory benefit. A longer
 logged-validation replay subsequently showed that distilled cross-run policies skipped
-two rolling-rejected temporal trials; a fresh run remains the final confirmation step.
+two rolling-rejected temporal trials. A fresh five-experiment integration run then
+reproduced every validation score, kept test metrics null, and reported zero manual
+interventions; its short trajectory still had no memory-driven choice divergence.
 
 ### Research safety and evidence
 

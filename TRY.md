@@ -1,7 +1,7 @@
-# TechJam 推荐系统研究记录
+# TechJam 模型与 Feature Engineering 实验记录
 
-> 记录已经实际运行的实验、数值变化、判断依据与研究路线变化。  
-> 除 rolling mean 外，分数均为 Validation Primary；研究阶段不根据 Test 结果选择模型。
+> 这里记录推荐模型、loss、feature engineering、multi-task、rolling、ensemble 和稳健性实验。它不只记录 feature engineering，而是完整的 ML 实验账本。
+> 除 rolling mean 外，分数均为 Validation Primary；研究阶段不根据 Test 结果选择模型。Agent 自主运行记录见 [`AGENT-TRY.md`](AGENT-TRY.md)。
 
 ## 一页结论
 
@@ -322,7 +322,7 @@ Hypothesis
 → pair-error recovery/introduction
 → real gated/ensemble evaluation
 → KEEP / REJECT / REINTERPRET
-→ research memory
+→ 记录实验结论
 ```
 
 ### K. 首个 leakage-safe sequence model
@@ -403,224 +403,33 @@ Random 的 long-view rate 为 **8.06%**，standard 为 **31.33%**。两套 Prima
 | Strict last-K sequence tensors | 是 | video/author/behavior/time-gap；same timestamp 不互读 |
 | Lightweight Sequence DeepFM | 是 | 已完成 controlled ablation；分数下降且成本约 25 倍，拒绝 |
 | Random-exposure robustness | 是 | standard ensemble 增益未保持；random 下 FM+BPR 更好 |
-| LLM-compatible evidence memory | 是 | 已记录支持、拒绝、不确定结论 |
 | Full causal self-attention / BST | 否 | 仅在新后端和新假设成立时再做 |
 
-## Agent 自主性升级（代码能力，不是新增分数实验）
+## 下一轮 ML 决策
 
-当前 `python run_agent.py` 已统一进入以下闭环：
+当前不继续堆相似 feature 或做小数点级调参。后续 ML 实验必须提供新的信息来源，并遵循：
 
-```text
-读取 validation-only memory
-→ 生成合法候选池
-→ 按 expected gain / evidence / novelty / cost / redundancy 排序
-→ 自动选择并训练一个候选
-→ overall + fixed slices + error complementarity
-→ KEEP / REJECT / STOP_DIRECTION / ENSEMBLE_ONLY
-→ 必要时自动排队 placebo controls
-→ 更新 research_memory.json
-→ 继续或按 ε / 时间 / 次数停止
-```
+1. 单变量 controlled comparison。
+2. Strict-time / leakage audit。
+3. 小涨必须做 rolling；涉及随机训练时做 paired seeds。
+4. 新 categorical field 必须配 matched placebo。
+5. 新模型进入融合前先检查 prediction correlation 和 pair-error complementarity。
+6. 不根据 test 或表现最好的 seed 选择方案。
 
-- `candidate_selection` 保存前五个候选和各评分项，可审计 Agent 为什么选择该实验。
-- 小幅 categorical history gain 自动运行 constant、shuffled、same-cardinality random；control 永不成为冠军。
-- 若 placebo 超过 real，原结果改为 `REINTERPRET`，冠军自动回滚。
-- `manual_interventions.jsonl` 真实记录 reason/action/avoidable；标准无人干预 run 为 0。
-- 开发 run 默认不计算 test；只有显式 `--finalize-test` 才在研究完成后评估一次。
-- 自动化行为由 `tests/test_autonomy.py` 覆盖，不能只靠文档宣称。
-
-### 首次 Planner memory 真实消融
-
-使用相同初始配置、静态候选先验、数据、seed 和 `max_iterations=5`，分别运行三种模式；三组都不计算 test。
-
-| Mode | Best Primary | Best iteration | 无效候选 | 时间 | 人工干预 | 候选 family 顺序 |
-|---|---:|---:|---:|---:|---:|---|
-| `no_memory` | 0.604713 | 2 | 2/4 | 301.6 秒 | 0 | BPR → ensemble → multitask → DCNv2 |
-| `raw_history` | 0.604713 | 2 | 2/4 | 287.8 秒 | 0 | BPR → ensemble → multitask → DCNv2 |
-| `distilled_patterns` | 0.604713 | 2 | 2/4 | 281.5 秒 | 0 | BPR → ensemble → multitask → DCNv2 |
-
-结论：**当前短程实验没有证明 distilled patterns 带来 downstream value。** 三种模式的选择、最好分数和无效实验数完全相同，运行时间差只能视为系统波动。
-
-原因不是 pattern 计算报错，而是前四个候选依次属于四个从未在本次 run 中试过的 family；pattern 只有在获得同类历史后才能影响排序，而 `ε=0.002, N=3` 的收敛窗口很快结束。当前状态必须表述为：pattern 机制已实现，但有效性尚未被证明。
-
-针对这个负结果，Planner 现在会在每次真实选择时同步记录三种 memory mode 的反事实 top choice：
-
-```text
-counterfactual_choices
-memory_changed_choice
-```
-
-这不会启动额外训练。`summary.json` 中的 `memory_influenced_selections` 将直接报告本次 trajectory 有多少次选择真的因 memory 而改变；只有该值大于 0，才值得进一步讨论 downstream reward。
-
-### 首次完整 autonomous trajectory
-
-命令：
-
-```bash
-python scripts/run_agent.py \
-  --researcher deterministic \
-  --memory-mode distilled_patterns \
-  --max-iterations 50
-```
-
-运行目录：`logs/run_20260830T095900Z`
-
-```text
-Iteration 0  FM+BCE baseline       0.601470  REFERENCE
-Iteration 1  FM+BPR lr=0.0003      0.603963  KEEP_CANDIDATE
-Iteration 2  FM+DeepFM ensemble    0.604713  KEEP_CANDIDATE
-Iteration 3  Like-only Multi-task  0.604400  REJECT
-Iteration 4  DCNv2                 0.604164  REJECT
-```
-
-| 审计项 | 结果 |
-|---|---:|
-| Stop reason | `converged` |
-| Total / candidate experiments | 5 / 4 |
-| Best iteration / Primary | 2 / 0.604713 |
-| Convergence streak | 3 |
-| Wall clock | 280.9 秒 |
-| Manual / avoidable interventions | 0 / 0 |
-| LLM requests / tokens | 0 / 0 |
-| Test metrics | `null` |
-| Memory-influenced selections | 0 |
-
-结论分开报告：
-
-- **端到端 autonomy 已通过真实运行验证**：Agent 从 baseline 出发，自主选择四个实验、更新冠军、拒绝失败候选，并按官方收敛规则停止；过程中没有人指定下一项实验。
-- **Pattern downstream value 未通过本次运行验证**：所有 counterfactual memory mode 的 top choice 相同，因此不能说 distilled patterns 改善了这条 trajectory。
-
-### 跨 run memory 的离线压力测试
-
-短程真实运行尚未让同一 family 被重复选择，因此新增：
-
-```bash
-python scripts/replay_planner_memory.py --max-steps 12
-```
-
-该脚本只读取 26 份历史 `experiment_history.jsonl` 中的 validation 指标，将旧配置归一到当前 schema，并以 34 个有日志支持的配置构造离线 replay。候选被选中前只检查“是否存在日志支持”，不会读取其分数；test summary 不加载。它是 Planner 决策压力测试，不是新的独立训练结果。
-
-| Memory mode | Replay 数 | 无效实验 | 最后保留的配置 | 结果 |
-|---|---:|---:|---:|---|
-| `no_memory` | 6 | 2 | temporal 单 split 0.605010 | 重复进入 rolling 已否定的方向 |
-| `raw_history` | 6 | 2 | temporal 单 split 0.605010 | 与无记忆相同，当前 run 的原始历史不足以阻止它 |
-| `distilled_patterns` | 4 | 2 | 稳健 ensemble 0.604713 | 跳过 2 个已知不稳定 temporal 实验 |
-
-这次结果证明的是“决策质量和效率”，不是更高的单 split 分数：
-
-- 无记忆 Planner 被 `+0.000218`、`+0.000080` 的 temporal 小涨吸引，但已有 rolling 结果为 1/3 folds、平均 `-0.000246`。
-- distilled Planner 读取机器可解析的 `family_policies`，将该 family 标为 `stop_direction`，避免重新采用已被更强证据否定的结论。
-- 因此 memory 确实改变了 trajectory，并节省 2 次实验；代价是放弃表面更高、但更可能过拟合单 validation 的 `0.605010`。
-- 限制：replay 重用了历史日志，不是独立 fresh trials；它验证 Planner 是否使用记忆，不能替代下一次真实 autonomous run。
-
-## 四篇 Agent 推荐论文：我们真正学到的内容
-
-这些论文研究的是 LLM 推荐 Agent 或对话推荐，不是 KuaiRand 上的自动 ML 调参。因此这里只迁移“如何规划、记忆、反思和探索”的机制，不把论文中的推荐分数当成我们模型有效性的证据。这里的自主改进特指：**根据实验历史更新 memory、research pattern 和 planning policy**；当前没有宣称参数级 self-learning 或 RL。
-
-原文：
-
-- [RecMind, NAACL 2024 Findings](https://aclanthology.org/2024.findings-naacl.271/)
-- [TAIRA, arXiv 2506.23485](https://arxiv.org/abs/2506.23485)
-- [STARec, CIKM 2025 / arXiv 2508.18812](https://arxiv.org/abs/2508.18812)
-- [SAPIENT, NAACL 2025](https://aclanthology.org/2025.naacl-long.133/)
-
-| 论文 | 论文中真正有效的机制 | 对本项目的迁移 | 不直接照搬的部分 |
-|---|---|---|---|
-| RecMind | Planning + personalized/world memory + tools；Self-Inspiring 在生成新分支时保留被放弃路径的信息 | 失败实验不能从 memory 消失；候选选择同时读取成功、失败、noise、placebo 和其他分支 | 让 LLM 直接对大量视频名称排序；论文也报告长候选列表的上下文与位置偏差 |
-| TAIRA | Manager 分阶段规划并调用 Executor；把成功经验、修正后的失败经验和专家经验蒸馏成可检索 Thought Pattern；匹配 pattern 后再规划 | 将逐条实验蒸馏为 family-level `research_patterns`；执行前检索同类模式，决定 exploit、stop、ensemble-only 或补证据 | 为当前单机实验拆出多个 LLM Agent；会增加调用成本，现有 Controller/Runner 的职责边界已经足够 |
-| STARec | 快速执行与慢速反思分离；用预测和真实反馈的差异更新 memory | 借鉴 fast/slow separation：Runner 执行实验；Controller 完成 validation、归因和诊断后，结论才进入长期 research memory | 没有声称复现其 memory validation、SFT 或 GRPO；这些需要不同任务和训练资源 |
-| SAPIENT | MCTS 用 selection、expansion、simulation、reward back-propagation 做非贪心规划；UCT 平衡 exploration/exploitation | 只借鉴 exploration/exploitation balancing：使用 cheap value estimate 和小型 tree frontier，真实执行一个候选 | 不照搬 full MCTS；一次真实训练不是便宜 rollout，反复模拟会直接耗尽比赛预算 |
-
-### 已根据论文补进代码的机制
-
-`research_memory.json` 现在同时保存两层内容：
-
-```text
-hypotheses:
-  每次实验的 validation 证据、诊断、结论
-
-research_patterns:
-  按实验 family 蒸馏出的可复用研究策略
-```
-
-每个 pattern 包含：
-
-```text
-task_description
-solution_description
-thought_template
-policy
-evidence:
-  trials / positive / negative_or_noise / failed
-  reinterpreted / slice_or_diversity
-  mean_delta_from_parent / best_delta_from_parent
-```
-
-当前五种自动 policy：
-
-- `exploit_with_confirmation`：有正向证据，但必须再做 rolling 或 paired-seed 确认。
-- `ensemble_only`：overall 不够好，但 slice/diversity 表明可能只适合融合。
-- `retest_with_control`：metric 上涨但归因可疑、control 尚未完成或 coverage 很低；先自动运行 constant、shuffled、same-cardinality controls。
-- `gather_evidence`：证据不足，只允许一个便宜、单变量的验证。
-- `stop_direction`：同一 family 已有至少两次负面/噪声/失败证据且无条件优势，停止重复搜索。
-
-Deterministic 和 LLM Researcher 都会看到这些 patterns；被选候选会记录 `retrieved_pattern`。失败和 `REINTERPRET` 路径不会被删除，placebo control 也不能伪装成正向经验。
-
-这是我们自己的 Controller 设计，组合了四类思想，而不是按四篇论文拼接流程：
-
-- reflective validation（受 STARec fast/slow separation 启发）；
-- full-path memory（受 RecMind Self-Inspiring 启发）；
-- distilled research patterns（受 TAIRA TPD 启发）；
-- budget-aware exploration（受 SAPIENT planning 启发）。
-
-### 论文启发的下一批实验
-
-| 优先级 | 实验 | 要回答的问题 | 通过标准 |
-|---|---|---|---|
-| 完成 | Full autonomous run | 能否无人干预完成观察、选择、执行、反思、停止？ | 已完成：5 次实验后 `converged`，interventions=0，test=null |
-| 完成 | Harder planner replay | 在包含同 family 多个候选的历史中，pattern 是否改变选择？ | 已完成：trajectory 改变，并少做 2 个 rolling 已否定的实验 |
-| 完成 | Cross-run validation memory 接线 | 上一轮的可靠结论能否在新 run 避免已知失败方向？ | Deterministic/LLM 都读取结构化 `family_policies`；test 不进入该文件 |
-| P3 | Memory downstream-value test | 一条 distilled pattern 是否真的改变后续选择并减少浪费？ | 使用 `memory_changed_choice` 和下一实验 reward；无影响的 pattern 删除或降权 |
-| P5 | Budgeted one-step lookahead | cheap value estimate 是否比纯 greedy 更好？ | 最多估计 2–3 个候选，只真实执行一个；不得以 lookahead 为名增加真实训练次数 |
-
-暂不做：LLM 直接替代 FM/DeepFM 排序、GRPO 微调、完整 MCTS、依赖用户模拟器的对话 reward。它们在论文任务上合理，但对当前离线自动研究目标成本高、迁移证据弱。
-
-## 下一轮决策规则
-
-轻量因果 sequence encoder 和 standard-vs-random robustness 均已完成。当前不再扩展新论文机制或堆普通 feature；下一阶段首先证明 Agent 机制确实减少无效实验和人工干预。
-
-顺序固定为：
-
-1. 短程真实 memory ablation 无差异；该负结果保留，不用 replay 覆盖它。
-2. 完整 autonomous trajectory 已完成：人不指定下一模型或 feature，5 次实验后自动收敛。
-3. 历史 replay 已证明跨 run pattern 能改变选择，并阻止重新进入 rolling 已否定方向。
-4. 下一步跑一次接入 persistent evidence 后的 fresh autonomous trajectory，确认执行层行为与 replay 一致。
-5. 只有 fresh run 也证明减少浪费后，才继续做 one-step lookahead。
-
-暂时不继续：
+暂时停止：
 
 ```text
 更多全局 target rate
 更多 user×author/user×tab 显式交叉
 更多 hard-negative pool
 更多 completion/watch-time 变换
-围绕 0.604713 做小数点级 ensemble 权重搜索
+围绕 0.604713 细扫 ensemble 权重
 挑选表现最好的 seed
 ```
 
-## 复现实验入口
+## ML 实验复现入口
 
 ```bash
-# 当前 Agent
-python run_agent.py --researcher deterministic
-
-# Planner memory ablation（必须使用相同 max-iterations / 时间预算）
-python run_agent.py --researcher deterministic --memory-mode no_memory
-python run_agent.py --researcher deterministic --memory-mode raw_history
-python run_agent.py --researcher deterministic --memory-mode distilled_patterns
-python scripts/run_memory_ablation.py --max-iterations 5
-python scripts/replay_planner_memory.py --max-steps 12
-
 # Rolling validation
 python scripts/run_rolling_validation.py
 
@@ -633,7 +442,7 @@ python analysis/candidate_history_audit.py
 python scripts/run_candidate_history_followup.py
 python scripts/run_sequence_placebo.py
 
-# Slice、错误互补性与规则 gate
+# Slice、错误互补性、规则 gate、sequence 与 exposure robustness
 python scripts/analyze_conditional_complementarity.py
 python scripts/evaluate_history_gated_ensemble.py
 python scripts/run_lightweight_sequence_ablation.py
@@ -651,4 +460,6 @@ python scripts/run_global_context_multiseed.py
 python scripts/evaluate_global_context_ensemble.py
 ```
 
-最后更新结论：**冠军不变；现在的优先事项是验证跨 run memory 在真实运行中避免已知失败，而不是继续添加模型或 feature。**
+Agent 自主运行、memory ablation、运行耗时和停止原因单独记录在 [`AGENT-TRY.md`](AGENT-TRY.md)。
+
+最后更新结论：**当前 ML 冠军仍为 0.6 FM+BPR + 0.4 DeepFM+BCE，Validation Primary 0.604713；已知失败 feature 不再重复。**
