@@ -6,7 +6,15 @@ from pathlib import Path
 import numpy as np
 
 
-AUXILIARY_COLUMNS = ("is_click", "is_like")
+AUXILIARY_COLUMNS = ("is_click", "is_like", "completion", "log_capped_watch")
+AUXILIARY_SELECTIONS = {
+    "click": (0,),
+    "like": (1,),
+    "completion": (2,),
+    "click_like": (0, 1),
+    "click_like_completion": (0, 1, 2),
+    "log_watch": (3,),
+}
 LOG_FILES = (
     "log_standard_4_08_to_4_21_pure.csv",
     "log_standard_4_22_to_5_08_pure.csv",
@@ -28,11 +36,22 @@ def _starter_key(row: tuple) -> tuple:
     return (int(row[0]), row[1], row[2], row[4], float(row[5]), int(row[6]))
 
 
-def align_auxiliary_labels(
+def auxiliary_task_count(selection: str) -> int:
+    try:
+        return len(AUXILIARY_SELECTIONS[selection])
+    except KeyError as exc:
+        raise ValueError(f"unknown auxiliary signal selection: {selection}") from exc
+
+
+def align_auxiliary_feedback(
     data_dir: Path,
     splits: dict[str, list[tuple]],
-) -> dict[str, np.ndarray]:
-    """Align click/like labels to starter rows without changing organizer code."""
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """Align training-only click, like, and censored completion targets.
+
+    Completion is min(play_time, duration) / duration. Rows with non-positive
+    duration are masked because their completion ratio is undefined.
+    """
     date_to_split = {}
     for split, rows in splits.items():
         for date in {int(row[0]) for row in rows}:
@@ -41,6 +60,10 @@ def align_auxiliary_labels(
             date_to_split[date] = split
     aligned = {
         split: np.empty((len(rows), len(AUXILIARY_COLUMNS)), dtype=np.float32)
+        for split, rows in splits.items()
+    }
+    masks = {
+        split: np.ones((len(rows), len(AUXILIARY_COLUMNS)), dtype=np.float32)
         for split, rows in splits.items()
     }
     positions = {split: 0 for split in splits}
@@ -55,8 +78,19 @@ def align_auxiliary_labels(
                     splits[split][index]
                 ):
                     raise ValueError(f"auxiliary label alignment failed for {split} row {index}")
-                aligned[split][index] = tuple(
-                    float(row[column]) for column in AUXILIARY_COLUMNS
+                duration = float(row["duration_ms"])
+                play_time = max(0.0, float(row["play_time_ms"]))
+                if duration > 0:
+                    completion = min(play_time, duration) / duration
+                else:
+                    completion = 0.0
+                    masks[split][index, 2:] = 0.0
+                log_capped_watch = np.log1p(min(play_time, max(0.0, duration)))
+                aligned[split][index] = (
+                    float(row["is_click"]),
+                    float(row["is_like"]),
+                    completion,
+                    log_capped_watch,
                 )
                 positions[split] += 1
     for split, rows in splits.items():
@@ -64,4 +98,31 @@ def align_auxiliary_labels(
             raise ValueError(
                 f"missing auxiliary labels for {split}: {positions[split]}/{len(rows)}"
             )
-    return aligned
+    train_observed = masks["train"][:, 3] > 0
+    if not np.any(train_observed):
+        raise ValueError("log-watch auxiliary target has no positive-duration train rows")
+    scale = float(np.quantile(aligned["train"][train_observed, 3], 0.99))
+    scale = max(scale, 1e-6)
+    for split in aligned:
+        aligned[split][:, 3] = np.clip(aligned[split][:, 3] / scale, 0.0, 1.0)
+    return aligned, masks
+
+
+def select_auxiliary_feedback(
+    labels: np.ndarray,
+    masks: np.ndarray,
+    selection: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    try:
+        indices = AUXILIARY_SELECTIONS[selection]
+    except KeyError as exc:
+        raise ValueError(f"unknown auxiliary signal selection: {selection}") from exc
+    return labels[:, indices], masks[:, indices]
+
+
+def align_auxiliary_labels(
+    data_dir: Path,
+    splits: dict[str, list[tuple]],
+) -> dict[str, np.ndarray]:
+    """Compatibility wrapper returning all auxiliary target columns."""
+    return align_auxiliary_feedback(data_dir, splits)[0]

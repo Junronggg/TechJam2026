@@ -166,7 +166,7 @@ class DeepFM:
 
 
 class MultiTaskDeepFM(DeepFM):
-    """DeepFM with shared representations and click/like auxiliary heads."""
+    """DeepFM with shared representations and configurable auxiliary heads."""
 
     def __init__(self, *args, auxiliary_tasks: int = 2, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -185,9 +185,16 @@ class MultiTaskDeepFM(DeepFM):
         long_view_labels: np.ndarray,
         auxiliary_labels: np.ndarray,
         auxiliary_weight: float,
+        auxiliary_mask: np.ndarray | None = None,
+        auxiliary_loss: str = "bce",
     ) -> float:
         if auxiliary_labels.ndim != 2 or auxiliary_labels.shape[1] != self.A.shape[1]:
             raise ValueError("auxiliary_labels has the wrong shape")
+        if auxiliary_mask is None:
+            auxiliary_mask = np.ones_like(auxiliary_labels, dtype=np.float32)
+        if auxiliary_mask.shape != auxiliary_labels.shape:
+            raise ValueError("auxiliary_mask has the wrong shape")
+        observed = max(1.0, float(auxiliary_mask.sum()))
         logits, cache = self._forward(X)
         _, _, _, flattened, hidden_pre, hidden = cache
         main_probabilities = _sigmoid(logits)
@@ -198,10 +205,22 @@ class MultiTaskDeepFM(DeepFM):
 
         auxiliary_logits = hidden @ self.A + self.ab
         auxiliary_probabilities = _sigmoid(auxiliary_logits)
+        if auxiliary_loss == "bce":
+            loss_gradient = auxiliary_probabilities - auxiliary_labels
+            element_loss = -(
+                auxiliary_labels * np.log(auxiliary_probabilities + 1e-9)
+                + (1 - auxiliary_labels) * np.log(1 - auxiliary_probabilities + 1e-9)
+            )
+        elif auxiliary_loss == "mse":
+            difference = auxiliary_probabilities - auxiliary_labels
+            loss_gradient = 2.0 * difference * auxiliary_probabilities * (
+                1.0 - auxiliary_probabilities
+            )
+            element_loss = difference * difference
+        else:
+            raise ValueError("auxiliary_loss must be 'bce' or 'mse'")
         auxiliary_gradient = (
-            auxiliary_weight
-            * (auxiliary_probabilities - auxiliary_labels)
-            / auxiliary_labels.size
+            auxiliary_weight * loss_gradient * auxiliary_mask / observed
         ).astype(np.float32)
         gradients["A"] = hidden.T @ auxiliary_gradient
         gradients["ab"] = auxiliary_gradient.sum(axis=0)
@@ -221,8 +240,5 @@ class MultiTaskDeepFM(DeepFM):
             long_view_labels * np.log(main_probabilities + 1e-9)
             + (1 - long_view_labels) * np.log(1 - main_probabilities + 1e-9)
         )
-        auxiliary_loss = -np.mean(
-            auxiliary_labels * np.log(auxiliary_probabilities + 1e-9)
-            + (1 - auxiliary_labels) * np.log(1 - auxiliary_probabilities + 1e-9)
-        )
+        auxiliary_loss = float((element_loss * auxiliary_mask).sum() / observed)
         return float(main_loss + auxiliary_weight * auxiliary_loss)

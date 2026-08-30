@@ -20,6 +20,13 @@ ALLOWED_VALUES = {
     "hybrid_bpr_weight": (0.25, 0.5, 0.75),
     "ensemble_deepfm_weight": (0.3, 0.4, 0.5),
     "auxiliary_loss_weight": (0.05, 0.1, 0.2, 0.5),
+    "auxiliary_signals": (
+        "click", "like", "completion", "click_like", "click_like_completion",
+        "log_watch"
+    ),
+    "dcn_cross_layers": (1, 2, 3),
+    "dcn_low_rank": (8, 16, 32),
+    "sequence_length": (16, 32),
     "seed": (0, 1, 2, 3, 4),
 }
 FEATURE_KEYS = (
@@ -31,8 +38,16 @@ FEATURE_KEYS = (
     "user_author_cross",
     "user_recent_3d_activity",
     "item_recent_3d_exposure",
+    "prior_video_positive",
+    "author_positive_recency",
+    "prior_video_count",
+    "previous_author_same",
+    "global_context",
 )
-MODELS = ("fm", "deepfm", "multitask_deepfm", "ensemble", "lightgbm")
+MODELS = (
+    "fm", "deepfm", "multitask_deepfm", "sequence_deepfm", "dcnv2",
+    "ensemble", "lightgbm",
+)
 OBJECTIVES = ("bce", "bpr", "hybrid")
 LIGHTGBM_KEYS = {
     "learning_rate", "num_leaves", "n_estimators", "min_child_samples", "subsample",
@@ -55,6 +70,10 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("The FM/DeepFM ensemble requires training_objective='hybrid'")
     if config["model"] == "multitask_deepfm" and config["training_objective"] != "bce":
         raise ValueError("Multi-task DeepFM currently supports only the BCE objective")
+    if config["model"] == "dcnv2" and config["training_objective"] != "bce":
+        raise ValueError("DCNv2 currently supports only the BCE objective")
+    if config["model"] == "sequence_deepfm" and config["training_objective"] != "bce":
+        raise ValueError("Sequence DeepFM currently supports only the BCE objective")
     hp = config.get("hyperparameters")
     if not isinstance(hp, dict):
         raise ValueError("hyperparameters must be an object")
@@ -75,13 +94,18 @@ def validate_config(config: dict[str, Any]) -> None:
     lgb = config.get("lightgbm_hyperparameters")
     if not isinstance(lgb, dict) or set(lgb) != LIGHTGBM_KEYS:
         raise ValueError(f"lightgbm_hyperparameters must contain exactly: {sorted(LIGHTGBM_KEYS)}")
-    if config["model"] in ("fm", "deepfm", "multitask_deepfm") and any(features[key] for key in
+    if config["model"] in ("fm", "deepfm", "multitask_deepfm", "sequence_deepfm", "dcnv2") and any(features[key] for key in
                                                        ("continuous_history_stats", "user_tab_long_view_rate")):
         raise ValueError("continuous statistical features require model='lightgbm'")
     if config["model"] == "lightgbm" and any(features[key] for key in
                                               ("user_tab_cross", "user_author_cross",
                                                "user_recent_3d_activity",
-                                               "item_recent_3d_exposure")):
+                                               "item_recent_3d_exposure",
+                                               "prior_video_positive",
+                                               "author_positive_recency",
+                                               "prior_video_count",
+                                               "previous_author_same",
+                                               "global_context")):
         raise ValueError("categorical crosses and temporal buckets require an FM-family model")
 
 

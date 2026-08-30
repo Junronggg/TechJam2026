@@ -18,7 +18,7 @@ from techjam_agent.rolling import build_rolling_splits
 from techjam_agent.runner import ExperimentRunner
 
 
-def experiment_configs(initial: dict) -> tuple[dict, dict]:
+def experiment_configs(initial: dict, signals: str) -> tuple[dict, dict]:
     deepfm = copy.deepcopy(initial)
     deepfm["model"] = "deepfm"
     deepfm["training_objective"] = "bce"
@@ -26,6 +26,7 @@ def experiment_configs(initial: dict) -> tuple[dict, dict]:
     multitask = copy.deepcopy(deepfm)
     multitask["model"] = "multitask_deepfm"
     multitask["hyperparameters"]["auxiliary_loss_weight"] = 0.1
+    multitask["hyperparameters"]["auxiliary_signals"] = signals
     return deepfm, multitask
 
 
@@ -35,6 +36,14 @@ def main() -> int:
     )
     parser.add_argument("--data-dir", default="data/KuaiRand-Pure/data")
     parser.add_argument("--output-dir", default="runs/rolling_multitask")
+    parser.add_argument(
+        "--signals",
+        default="like",
+        choices=(
+            "click", "like", "completion", "log_watch", "click_like",
+            "click_like_completion",
+        ),
+    )
     args = parser.parse_args()
     data_dir = Path(args.data_dir)
     if not data_dir.is_absolute():
@@ -57,7 +66,7 @@ def main() -> int:
         runner._encoded = runner.data.encode(splits)
         fold_dir = output_dir / fold_name
         fold_dir.mkdir(parents=True, exist_ok=True)
-        deepfm_config, multitask_config = experiment_configs(initial)
+        deepfm_config, multitask_config = experiment_configs(initial, args.signals)
         users, labels, deepfm_scores = train_scores(
             runner, deepfm_config, fold_dir / "deepfm.npz"
         )
@@ -80,7 +89,7 @@ def main() -> int:
         "wins": sum(delta > 0 for delta in deltas),
         "folds": len(deltas),
     }
-    payload = {"folds": results, "aggregate": aggregate}
+    payload = {"auxiliary_signals": args.signals, "folds": results, "aggregate": aggregate}
     print(json.dumps({"aggregate": aggregate}, indent=2))
     (output_dir / "summary.json").write_text(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8"

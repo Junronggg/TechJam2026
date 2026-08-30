@@ -14,10 +14,22 @@ import numpy as np
 
 from .config import validate_config
 from .bpr import bpr_step, build_pair_indices, hybrid_step
+from .causal_sequence import strict_past_sequences
+from .dcnv2 import DCNv2
 from .deepfm import DeepFM, MultiTaskDeepFM
 from .ensemble import blend_scores
-from .feedback import align_auxiliary_labels
+from .feedback import (
+    align_auxiliary_feedback,
+    auxiliary_task_count,
+    select_auxiliary_feedback,
+)
 from .history_features import aggregate, aggregate_pair, smoothed_rate_bucket
+from .sequence_features import (
+    SEQUENCE_FEATURE_DIMS,
+    align_event_times,
+    strict_sequence_categories,
+)
+from .sequence_model import LightweightSequenceDeepFM
 from .temporal_features import bucket_log_counts, strict_past_window_counts
 
 
@@ -45,14 +57,43 @@ class ExperimentRunner:
         self.submit = _load_module("techjam_starter_submit", starter_dir / "submit.py")
         self._splits = None
         self._encoded = None
-        self._auxiliary_labels = None
+        self._auxiliary_feedback = None
+        self._sequence_categories = None
+        self._causal_sequence_cache = {}
 
-    def _auxiliary_for(self) -> dict[str, np.ndarray]:
-        if self._auxiliary_labels is None:
-            self._auxiliary_labels = align_auxiliary_labels(
+    def _auxiliary_for(self, selection: str) -> tuple[np.ndarray, np.ndarray]:
+        if self._auxiliary_feedback is None:
+            self._auxiliary_feedback = align_auxiliary_feedback(
                 self.data_dir, {"train": self._splits["train"]}
             )
-        return self._auxiliary_labels
+        labels, masks = self._auxiliary_feedback
+        return select_auxiliary_feedback(
+            labels["train"], masks["train"], selection
+        )
+
+    def _causal_for(
+        self,
+        sequence_length: int,
+        include_test: bool = False,
+    ) -> dict[str, dict[str, np.ndarray]]:
+        key = (int(sequence_length), bool(include_test))
+        if key not in self._causal_sequence_cache:
+            names = tuple(self._splits) if include_test else ("train", "valid")
+            splits = {name: self._splits[name] for name in names}
+            base = {name: self._encoded[0][name] for name in names}
+            event_times = align_event_times(self.data_dir, splits)
+            self._causal_sequence_cache[key] = strict_past_sequences(
+                splits, event_times, base, max_length=sequence_length
+            )
+        return self._causal_sequence_cache[key]
+
+    @staticmethod
+    def _history_batch(history: dict[str, np.ndarray], selection) -> dict[str, np.ndarray]:
+        return {
+            name: values[selection]
+            for name, values in history.items()
+            if name != "length"
+        }
 
     def verify_evaluator(self) -> None:
         if not self.evaluator_sha256:
@@ -71,7 +112,11 @@ class ExperimentRunner:
         temporal_features = [key for key in
                              ("user_recent_3d_activity", "item_recent_3d_exposure")
                              if config["features"][key]]
-        if not rate_features and not cross_features and not temporal_features:
+        sequence_features = [key for key in SEQUENCE_FEATURE_DIMS
+                             if config["features"][key]]
+        use_global_context = config["features"]["global_context"]
+        if (not rate_features and not cross_features and not temporal_features
+                and not sequence_features and not use_global_context):
             return base, base_dim
         key_indices = {"user_long_view_rate": 1, "item_long_view_rate": 2}
         columns = {}
@@ -116,6 +161,23 @@ class ExperimentRunner:
             for split, values in buckets.items():
                 columns.setdefault(split, []).append(next_offset + values)
             next_offset += dimension
+        if sequence_features:
+            if self._sequence_categories is None:
+                event_times = align_event_times(self.data_dir, self._splits)
+                self._sequence_categories = strict_sequence_categories(
+                    self._splits, event_times
+                )
+            for feature in sequence_features:
+                for split in self._splits:
+                    values = self._sequence_categories[split][feature]
+                    columns.setdefault(split, []).append(next_offset + values)
+                next_offset += SEQUENCE_FEATURE_DIMS[feature]
+        if use_global_context:
+            for split, rows in self._splits.items():
+                columns.setdefault(split, []).append(
+                    np.full(len(rows), next_offset, dtype=np.int32)
+                )
+            next_offset += 1
         encoded = {}
         for split, (X, y, users) in base.items():
             encoded[split] = (np.column_stack([X, *columns[split]]).astype(np.int32), y, users)
@@ -264,7 +326,15 @@ class ExperimentRunner:
         hp = config["hyperparameters"]
         Xtr, ytr, utr = enc["train"]
         Xva, yva, uva = enc["valid"]
+        causal_sequence = (
+            self._causal_for(hp["sequence_length"])
+            if config["model"] == "sequence_deepfm"
+            else None
+        )
         if config["model"] == "multitask_deepfm":
+            auxiliary_train, auxiliary_mask = self._auxiliary_for(
+                hp["auxiliary_signals"]
+            )
             model = MultiTaskDeepFM(
                 dim,
                 Xtr.shape[1],
@@ -273,14 +343,37 @@ class ExperimentRunner:
                 learning_rate=hp["learning_rate"],
                 l2=hp["l2"],
                 seed=hp["seed"],
+                auxiliary_tasks=auxiliary_task_count(hp["auxiliary_signals"]),
             )
-            auxiliary_train = self._auxiliary_for()["train"]
+        elif config["model"] == "sequence_deepfm":
+            model = LightweightSequenceDeepFM(
+                dim,
+                Xtr.shape[1],
+                embedding_dim=hp["embedding_dim"],
+                hidden_dim=hp["deepfm_hidden_dim"],
+                learning_rate=hp["learning_rate"],
+                l2=hp["l2"],
+                seed=hp["seed"],
+                sequence_length=hp["sequence_length"],
+            )
         elif config["model"] == "deepfm":
             model = DeepFM(
                 dim,
                 Xtr.shape[1],
                 embedding_dim=hp["embedding_dim"],
                 hidden_dim=hp["deepfm_hidden_dim"],
+                learning_rate=hp["learning_rate"],
+                l2=hp["l2"],
+                seed=hp["seed"],
+            )
+        elif config["model"] == "dcnv2":
+            model = DCNv2(
+                dim,
+                Xtr.shape[1],
+                embedding_dim=hp["embedding_dim"],
+                hidden_dim=hp["deepfm_hidden_dim"],
+                cross_layers=hp["dcn_cross_layers"],
+                cross_rank=hp["dcn_low_rank"],
                 learning_rate=hp["learning_rate"],
                 l2=hp["l2"],
                 seed=hp["seed"],
@@ -331,16 +424,29 @@ class ExperimentRunner:
                             ytr[batch],
                             auxiliary_train[batch],
                             hp["auxiliary_loss_weight"],
+                            auxiliary_mask[batch],
+                            "mse" if hp["auxiliary_signals"] == "log_watch" else "bce",
+                        )
+                    elif config["model"] == "sequence_deepfm":
+                        model.step(
+                            Xtr[batch],
+                            self._history_batch(causal_sequence["train"], batch),
+                            ytr[batch],
                         )
                     else:
                         model.step(Xtr[batch], ytr[batch])
-            metrics = self.evaluate_mod.evaluate(uva, yva, model.predict(Xva))
+            valid_scores = (
+                model.predict(Xva, causal_sequence["valid"])
+                if config["model"] == "sequence_deepfm"
+                else model.predict(Xva)
+            )
+            metrics = self.evaluate_mod.evaluate(uva, yva, valid_scores)
             print(f"    epoch {epoch:02d} | primary={float(metrics['primary']):.6f}"
                   f" | best={max(best_score, float(metrics['primary'])):.6f}", flush=True)
             if metrics["primary"] > best_score + 1e-5:
                 best_score, bad, best_epoch = metrics["primary"], 0, epoch
                 best_state = (model.state_dict() if config["model"] in
-                              ("deepfm", "multitask_deepfm") else
+                              ("deepfm", "multitask_deepfm", "sequence_deepfm", "dcnv2") else
                               (model.V.copy(), model.W.copy(), np.float32(model.b)))
             else:
                 bad += 1
@@ -348,14 +454,19 @@ class ExperimentRunner:
                     break
         if best_state is None:
             raise RuntimeError("training produced no checkpoint")
-        if config["model"] in ("deepfm", "multitask_deepfm"):
+        if config["model"] in ("deepfm", "multitask_deepfm", "sequence_deepfm", "dcnv2"):
             model.load_state_dict(best_state)
         else:
             model.V, model.W, model.b = best_state
-        valid = self.evaluate_mod.evaluate(uva, yva, model.predict(Xva))
+        valid_scores = (
+            model.predict(Xva, causal_sequence["valid"])
+            if config["model"] == "sequence_deepfm"
+            else model.predict(Xva)
+        )
+        valid = self.evaluate_mod.evaluate(uva, yva, valid_scores)
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         state = (model.state_dict() if config["model"] in
-                 ("deepfm", "multitask_deepfm") else
+                 ("deepfm", "multitask_deepfm", "sequence_deepfm", "dcnv2") else
                  {"V": model.V, "W": model.W, "b": model.b})
         np.savez_compressed(checkpoint, **state, best_epoch=np.asarray(best_epoch))
         return {"GAUC": float(valid["GAUC"]), "nDCG@5": float(valid["nDCG@5"]),
@@ -385,21 +496,58 @@ class ExperimentRunner:
                                         for name in deepfm.state_dict()})
             scores = blend_scores(users, fm.predict(Xtest), deepfm.predict(Xtest),
                                   hp["ensemble_deepfm_weight"])
-        elif config["model"] in ("deepfm", "multitask_deepfm"):
+        elif config["model"] in ("deepfm", "multitask_deepfm", "sequence_deepfm", "dcnv2"):
             hp = config["hyperparameters"]
-            model_class = MultiTaskDeepFM if config["model"] == "multitask_deepfm" else DeepFM
-            model = model_class(
-                dim,
-                Xtest.shape[1],
-                embedding_dim=hp["embedding_dim"],
-                hidden_dim=hp["deepfm_hidden_dim"],
-                learning_rate=hp["learning_rate"],
-                l2=hp["l2"],
-                seed=hp["seed"],
-            )
+            if config["model"] == "dcnv2":
+                model = DCNv2(
+                    dim,
+                    Xtest.shape[1],
+                    embedding_dim=hp["embedding_dim"],
+                    hidden_dim=hp["deepfm_hidden_dim"],
+                    cross_layers=hp["dcn_cross_layers"],
+                    cross_rank=hp["dcn_low_rank"],
+                    learning_rate=hp["learning_rate"],
+                    l2=hp["l2"],
+                    seed=hp["seed"],
+                )
+            elif config["model"] == "sequence_deepfm":
+                model = LightweightSequenceDeepFM(
+                    dim,
+                    Xtest.shape[1],
+                    embedding_dim=hp["embedding_dim"],
+                    hidden_dim=hp["deepfm_hidden_dim"],
+                    learning_rate=hp["learning_rate"],
+                    l2=hp["l2"],
+                    seed=hp["seed"],
+                    sequence_length=hp["sequence_length"],
+                )
+            else:
+                model_class = (
+                    MultiTaskDeepFM
+                    if config["model"] == "multitask_deepfm"
+                    else DeepFM
+                )
+                model = model_class(
+                    dim,
+                    Xtest.shape[1],
+                    embedding_dim=hp["embedding_dim"],
+                    hidden_dim=hp["deepfm_hidden_dim"],
+                    learning_rate=hp["learning_rate"],
+                    l2=hp["l2"],
+                    seed=hp["seed"],
+                    **({"auxiliary_tasks": auxiliary_task_count(hp["auxiliary_signals"])}
+                       if config["model"] == "multitask_deepfm" else {}),
+                )
             with np.load(checkpoint) as state:
                 model.load_state_dict({name: state[name] for name in model.state_dict()})
-            scores = model.predict(Xtest)
+            scores = (
+                model.predict(
+                    Xtest,
+                    self._causal_for(hp["sequence_length"], include_test=True)["test"],
+                )
+                if config["model"] == "sequence_deepfm"
+                else model.predict(Xtest)
+            )
         else:
             hp = config["hyperparameters"]
             model = self.baseline.FM(dim, k=hp["embedding_dim"], lr=hp["learning_rate"],
