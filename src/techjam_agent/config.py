@@ -19,7 +19,7 @@ ALLOWED_VALUES = {
     "deepfm_hidden_dim": (16, 32, 64),
     "hybrid_bpr_weight": (0.25, 0.5, 0.75),
     "ensemble_deepfm_weight": (0.3, 0.4, 0.5),
-    "auxiliary_loss_weight": (0.05, 0.1, 0.2, 0.5),
+    "auxiliary_loss_weight": (0.05, 0.1, 0.2, 0.3, 0.5),
     "auxiliary_signals": (
         "click", "like", "completion", "click_like", "click_like_completion",
         "log_watch"
@@ -27,6 +27,7 @@ ALLOWED_VALUES = {
     "dcn_cross_layers": (1, 2, 3),
     "dcn_low_rank": (8, 16, 32),
     "sequence_length": (16, 32),
+    "feature_control": ("real", "constant", "shuffled", "random_same_cardinality"),
     "seed": (0, 1, 2, 3, 4),
 }
 FEATURE_KEYS = (
@@ -53,6 +54,7 @@ LIGHTGBM_KEYS = {
     "learning_rate", "num_leaves", "n_estimators", "min_child_samples", "subsample",
     "colsample_bytree", "reg_lambda", "early_stopping_rounds",
 }
+FEATURE_SCHEMA_VERSION = "v3"
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -68,8 +70,9 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("LightGBM currently supports only the BCE objective")
     if config["model"] == "ensemble" and config["training_objective"] != "hybrid":
         raise ValueError("The FM/DeepFM ensemble requires training_objective='hybrid'")
-    if config["model"] == "multitask_deepfm" and config["training_objective"] != "bce":
-        raise ValueError("Multi-task DeepFM currently supports only the BCE objective")
+    if (config["model"] == "multitask_deepfm"
+            and config["training_objective"] not in ("bce", "bpr")):
+        raise ValueError("Multi-task DeepFM supports BCE or BPR, but not hybrid")
     if config["model"] == "dcnv2" and config["training_objective"] != "bce":
         raise ValueError("DCNv2 currently supports only the BCE objective")
     if config["model"] == "sequence_deepfm" and config["training_objective"] != "bce":
@@ -91,6 +94,15 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError(f"features must contain exactly: {list(FEATURE_KEYS)}")
     if any(type(features[key]) is not bool for key in FEATURE_KEYS):
         raise ValueError("feature flags must be booleans")
+    if hp["feature_control"] != "real":
+        controlled = [key for key in (
+            "prior_video_positive", "author_positive_recency",
+            "prior_video_count", "previous_author_same",
+        ) if features[key]]
+        if len(controlled) != 1:
+            raise ValueError(
+                "a placebo feature_control requires exactly one supported categorical history feature"
+            )
     lgb = config.get("lightgbm_hyperparameters")
     if not isinstance(lgb, dict) or set(lgb) != LIGHTGBM_KEYS:
         raise ValueError(f"lightgbm_hyperparameters must contain exactly: {sorted(LIGHTGBM_KEYS)}")

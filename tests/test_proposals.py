@@ -418,6 +418,12 @@ class FallbackTests(unittest.TestCase):
 
     def test_controller_falls_back_to_deterministic_after_llm_error(self) -> None:
         class FailingLlm:
+            last_attempts = 3
+            last_token_usage = {
+                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+            }
+            last_error = "HTTP 503"
+
             def propose(self, best, history):
                 raise RuntimeError("LLM proposal failed after 3 attempts: JSONDecodeError")
 
@@ -428,7 +434,7 @@ class FallbackTests(unittest.TestCase):
                 base / "logs", base / "artifacts", base / "submissions",
             )
             with patch("sys.stdout", new=io.StringIO()):
-                controller.run(max_iterations=2)
+                summary = controller.run(max_iterations=2)
             records = sorted((base / "logs").glob("iteration_*.json"))
             self.assertEqual(len(records), 2)
             second = json.loads(records[1].read_text(encoding="utf-8"))
@@ -438,6 +444,10 @@ class FallbackTests(unittest.TestCase):
                 {"training_objective": "bpr", "learning_rate": 0.0003},
             )
             self.assertEqual(second["token_usage"]["total_tokens"], 0)
+            self.assertEqual(summary["llm_requests"], 3)
+            self.assertEqual(summary["llm_failures"], 1)
+            self.assertEqual(summary["llm_fallbacks"][0]["iteration"], 1)
+            self.assertEqual(summary["llm_fallbacks"][0]["provider_error"], "HTTP 503")
 
 
 if __name__ == "__main__":

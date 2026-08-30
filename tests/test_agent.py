@@ -178,6 +178,36 @@ class AgentTests(unittest.TestCase):
         )
         self.assertTrue(np.isfinite(regression_loss))
 
+    def test_pairwise_multitask_improves_ranking_and_auxiliary_head(self):
+        from techjam_agent.deepfm import MultiTaskDeepFM
+
+        positive = np.asarray([[0, 2], [1, 2]], dtype=np.int32)
+        negative = np.asarray([[0, 3], [1, 3]], dtype=np.int32)
+        positive_auxiliary = np.asarray([[1.0], [1.0]], dtype=np.float32)
+        negative_auxiliary = np.asarray([[0.0], [0.0]], dtype=np.float32)
+        model = MultiTaskDeepFM(
+            4, fields=2, embedding_dim=4, hidden_dim=4,
+            learning_rate=0.01, seed=0, auxiliary_tasks=1,
+        )
+        before_margin = float(
+            np.mean(model.predict(positive) - model.predict(negative))
+        )
+        before_head = model.A.copy()
+        for _ in range(20):
+            loss = model.pairwise_multitask_step(
+                positive,
+                negative,
+                positive_auxiliary,
+                negative_auxiliary,
+                auxiliary_weight=0.1,
+            )
+        after_margin = float(
+            np.mean(model.predict(positive) - model.predict(negative))
+        )
+        self.assertTrue(np.isfinite(loss))
+        self.assertGreater(after_margin, before_margin)
+        self.assertFalse(np.array_equal(before_head, model.A))
+
     def test_dcnv2_trains_and_restores(self):
         from techjam_agent.dcnv2 import DCNv2
 
@@ -206,11 +236,13 @@ class AgentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             apply_changes(dcn, {"training_objective": "bpr"})
 
-    def test_multitask_deepfm_requires_bce(self):
+    def test_multitask_deepfm_supports_bce_and_bpr_only(self):
         multi = apply_changes(self.config, {"model": "multitask_deepfm"})
         validate_config(multi)
-        with self.assertRaises(ValueError):
-            apply_changes(multi, {"training_objective": "bpr"})
+        pairwise = apply_changes(multi, {"training_objective": "bpr"})
+        validate_config(pairwise)
+        with self.assertRaisesRegex(ValueError, "not hybrid"):
+            apply_changes(multi, {"training_objective": "hybrid"})
 
     def test_sequence_deepfm_requires_bce(self):
         sequence = apply_changes(self.config, {"model": "sequence_deepfm"})
@@ -276,7 +308,7 @@ class AgentTests(unittest.TestCase):
         )
         validate_config(hybrid)
 
-    def test_researcher_tests_ensemble_before_hybrid_loss(self):
+    def test_researcher_switches_mechanism_after_ensemble_weights_are_exhausted(self):
         bpr = apply_changes(
             self.config, {"training_objective": "bpr", "learning_rate": 0.0003}
         )
@@ -294,10 +326,11 @@ class AgentTests(unittest.TestCase):
                       "ensemble_deepfm_weight": value}
             )})
         proposal = DeterministicResearcher().propose(bpr, history)
-        self.assertEqual(
-            proposal.changes,
-            {"training_objective": "hybrid", "hybrid_bpr_weight": 0.75},
-        )
+        self.assertEqual(proposal.changes, {
+            "model": "multitask_deepfm",
+            "training_objective": "bce",
+            "learning_rate": 0.001,
+        })
 
     def test_ensemble_blend_normalizes_within_user(self):
         try:
@@ -404,7 +437,7 @@ class AgentTests(unittest.TestCase):
             "learning_rate": 0.001,
         })
 
-    def test_researcher_tests_dcnv2_after_multitask(self):
+    def test_researcher_tests_pairwise_multitask_after_pointwise_multitask(self):
         ensemble = apply_changes(
             self.config,
             {"model": "ensemble", "training_objective": "hybrid",
@@ -424,15 +457,46 @@ class AgentTests(unittest.TestCase):
             ],
         )
         self.assertEqual(proposal.changes, {
+            "model": "multitask_deepfm",
+            "training_objective": "bpr",
+            "learning_rate": 0.001,
+        })
+
+    def test_researcher_tests_dcnv2_after_both_multitask_objectives(self):
+        ensemble = apply_changes(
+            self.config,
+            {"model": "ensemble", "training_objective": "hybrid",
+             "ensemble_deepfm_weight": 0.4},
+        )
+        pointwise = apply_changes(
+            ensemble,
+            {"model": "multitask_deepfm", "training_objective": "bce",
+             "learning_rate": 0.001},
+        )
+        pairwise = apply_changes(
+            ensemble,
+            {"model": "multitask_deepfm", "training_objective": "bpr",
+             "learning_rate": 0.001},
+        )
+        proposal = DeterministicResearcher().propose(
+            ensemble,
+            [{"config": self.config}, {"config": ensemble},
+             {"config": pointwise}, {"config": pairwise}],
+        )
+        self.assertEqual(proposal.changes, {
             "model": "dcnv2",
             "training_objective": "bce",
             "learning_rate": 0.001,
         })
 
-    def test_researcher_adds_continuous_stats_after_lightgbm(self):
+    def test_researcher_abandons_rejected_lightgbm_family_for_new_information(self):
         lgb = apply_changes(self.config, {"model": "lightgbm"})
         proposal = DeterministicResearcher().propose(lgb, [{"config": self.config}])
-        self.assertEqual(proposal.changes, {"user_tab_long_view_rate": True})
+        self.assertEqual(proposal.changes, {
+            "model": "multitask_deepfm",
+            "training_objective": "bce",
+            "learning_rate": 0.001,
+        })
 
     def test_user_tab_aggregation_keeps_preferences_separate(self):
         rows = [(0, "u1", "v1", "a", "sports", 1.0, 1),

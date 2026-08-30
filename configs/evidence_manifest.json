@@ -1,0 +1,208 @@
+{
+  "version": 1,
+  "task": "long_view",
+  "feature_schema": "v3",
+  "noise_threshold": 0.0002,
+  "sources": [
+    {
+      "id": "ensemble_rolling_v1",
+      "family": "heterogeneous_ensemble",
+      "kind": "rolling_fold_field",
+      "path": "runs/rolling_validation/summary.json",
+      "pointer": [],
+      "delta_field": "ensemble_delta",
+      "validation_only": true,
+      "applies_to": {
+        "models": ["ensemble"],
+        "training_objectives": ["hybrid"],
+        "hyperparameters": {"ensemble_deepfm_weight": 0.4}
+      }
+    },
+    {
+      "id": "temporal_rolling_v1",
+      "family": "temporal_counts",
+      "kind": "rolling_fold_field",
+      "path": "runs/rolling_validation/summary.json",
+      "pointer": [],
+      "delta_field": "temporal_delta",
+      "validation_only": true,
+      "applies_to": {
+        "models": ["ensemble"],
+        "training_objectives": ["hybrid"],
+        "features": {
+          "user_recent_3d_activity": true,
+          "item_recent_3d_exposure": true
+        },
+        "hyperparameters": {"ensemble_deepfm_weight": 0.4}
+      }
+    },
+    {
+      "id": "like_multitask_rolling_v1",
+      "family": "multitask",
+      "kind": "rolling_aggregate",
+      "path": "runs/rolling_multitask_like/summary.json",
+      "pointer": ["aggregate"],
+      "validation_only": true,
+      "applies_to": {
+        "models": ["multitask_deepfm"],
+        "training_objectives": ["bce"],
+        "hyperparameters": {
+          "auxiliary_signals": "like",
+          "auxiliary_loss_weight": 0.1
+        }
+      }
+    },
+    {
+      "id": "dcnv2_rolling_v1",
+      "family": "cross_network",
+      "kind": "rolling_aggregate",
+      "path": "runs/rolling_dcnv2/summary.json",
+      "pointer": ["aggregate"],
+      "validation_only": true,
+      "applies_to": {
+        "models": ["dcnv2"],
+        "training_objectives": ["bce"],
+        "hyperparameters": {"dcn_cross_layers": 2, "dcn_low_rank": 16}
+      }
+    },
+    {
+      "id": "candidate_video_placebo_v1",
+      "family": "candidate_history",
+      "kind": "placebo_margin",
+      "path": "runs/sequence_placebo/summary.json",
+      "pointer": ["real_minus_constant"],
+      "validation_only": true,
+      "applies_to": {"models": ["fm"], "training_objectives": ["bpr"]}
+    },
+    {
+      "id": "candidate_author_placebo_v1",
+      "family": "candidate_history",
+      "kind": "placebo_margin",
+      "path": "runs/sequence_placebo/summary_author_positive_recency.json",
+      "pointer": ["real_minus_constant"],
+      "validation_only": true,
+      "applies_to": {"models": ["fm"], "training_objectives": ["bpr"]}
+    },
+    {
+      "id": "candidate_video_count_v1",
+      "family": "candidate_history",
+      "kind": "single_delta",
+      "path": "runs/candidate_history_followup/summary.json",
+      "pointer": ["results", "fm_bpr_prior_video_count", "delta_vs_fm_bpr"],
+      "validation_only": true,
+      "applies_to": {"models": ["fm"], "training_objectives": ["bpr"]}
+    },
+    {
+      "id": "candidate_previous_author_v1",
+      "family": "candidate_history",
+      "kind": "single_delta",
+      "path": "runs/candidate_history_followup/summary.json",
+      "pointer": ["results", "fm_bpr_previous_author_same", "delta_vs_fm_bpr"],
+      "validation_only": true,
+      "applies_to": {"models": ["fm"], "training_objectives": ["bpr"]}
+    },
+    {
+      "id": "global_context_rolling_v1",
+      "family": "global_context",
+      "kind": "rolling_aggregate",
+      "path": "runs/rolling_constant_context/summary.json",
+      "pointer": ["aggregate"],
+      "validation_only": true,
+      "applies_to": {
+        "models": ["fm"],
+        "training_objectives": ["bpr"],
+        "features": {"global_context": true}
+      }
+    },
+    {
+      "id": "global_context_multiseed_v1",
+      "family": "global_context",
+      "kind": "paired_seed",
+      "path": "runs/global_context_multiseed/summary.json",
+      "pointer": ["aggregate"],
+      "validation_only": true,
+      "applies_to": {
+        "models": ["fm"],
+        "training_objectives": ["bpr"],
+        "features": {"global_context": true}
+      }
+    },
+    {
+      "id": "global_context_ensemble_rolling_v1",
+      "family": "global_context",
+      "kind": "rolling_aggregate",
+      "path": "runs/global_context_ensemble/summary.json",
+      "pointer": ["rolling_aggregate"],
+      "validation_only": true,
+      "applies_to": {
+        "models": ["ensemble"],
+        "training_objectives": ["hybrid"],
+        "features": {"global_context": true},
+        "hyperparameters": {"ensemble_deepfm_weight": 0.4}
+      }
+    },
+    {
+      "id": "global_context_ensemble_official_v1",
+      "family": "global_context",
+      "kind": "single_delta",
+      "path": "runs/global_context_ensemble/summary.json",
+      "pointer": ["official_validation", "delta"],
+      "validation_only": true,
+      "applies_to": {
+        "models": ["ensemble"],
+        "training_objectives": ["hybrid"],
+        "features": {"global_context": true},
+        "hyperparameters": {"ensemble_deepfm_weight": 0.4}
+      }
+    },
+    {
+      "id": "sequence_ablation_v1",
+      "family": "sequence_model",
+      "kind": "single_delta",
+      "path": "runs/lightweight_sequence_ablation/summary.json",
+      "pointer": ["results", "sequence_deepfm", "delta_vs_deepfm"],
+      "validation_only": true,
+      "applies_to": {
+        "models": ["sequence_deepfm"],
+        "training_objectives": ["bce"],
+        "hyperparameters": {"sequence_length": 16}
+      }
+    },
+    {
+      "id": "pairwise_multitask_controlled_v1",
+      "family": "pairwise_multitask",
+      "kind": "single_delta",
+      "path": "runs/pairwise_multitask_ablation/summary.json",
+      "pointer": ["pairwise_delta_vs_pointwise"],
+      "validation_only": true,
+      "applies_to": {
+        "models": ["multitask_deepfm"],
+        "training_objectives": ["bpr"],
+        "hyperparameters": {
+          "auxiliary_signals": "like",
+          "auxiliary_loss_weight": 0.1,
+          "embedding_dim": 16,
+          "learning_rate": 0.001
+        }
+      }
+    },
+    {
+      "id": "pairwise_multitask_reported_config_v1",
+      "family": "pairwise_multitask",
+      "kind": "single_delta",
+      "path": "runs/pairwise_multitask_ablation/summary.json",
+      "pointer": ["reported_config_delta_vs_pointwise"],
+      "validation_only": true,
+      "applies_to": {
+        "models": ["multitask_deepfm"],
+        "training_objectives": ["bpr"],
+        "hyperparameters": {
+          "auxiliary_signals": "like",
+          "auxiliary_loss_weight": 0.3,
+          "embedding_dim": 32,
+          "learning_rate": 0.001
+        }
+      }
+    }
+  ]
+}

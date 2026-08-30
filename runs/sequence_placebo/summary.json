@@ -1,0 +1,9 @@
+{
+  "test_labels_used": false,
+  "baseline_primary": 0.6039628982543945,
+  "constant_field_primary": 0.6043940782546997,
+  "real_prior_video_primary": 0.6042052507400513,
+  "constant_delta": 0.0004311800003051758,
+  "real_feature_delta": 0.00024235248565673828,
+  "real_minus_constant": -0.0001888275146484375
+}

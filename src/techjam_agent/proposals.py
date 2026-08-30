@@ -9,7 +9,13 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .config import ALLOWED_VALUES, FEATURE_KEYS, MODELS, OBJECTIVES, apply_changes, experiment_key
-from .memory import PLANNER_RECENT_HISTORY, build_memory_summary, collect_tried_keys
+from .experiment_planner import AutonomousExperimentPlanner, rank_candidates
+from .memory import (
+    PLANNER_RECENT_HISTORY,
+    build_memory_summary,
+    collect_tried_keys,
+    distill_research_patterns,
+)
 from .tree import branch_name, node_id_for, select_parent
 
 # One experiment may change 1-3 allow-listed fields. A single field is preferred,
@@ -271,6 +277,8 @@ def build_planner_prompt(
     budget: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the planner context. Does not call an HTTP API."""
+    planning_config = expansion_config or best_config
+    ranked_candidates = rank_candidates(planning_config, history)
     return {
         "objective": (
             "Propose exactly one experiment that can improve validation Primary "
@@ -286,6 +294,8 @@ def build_planner_prompt(
         },
         "allowed_values": allowed_values if allowed_values is not None else default_allowed_values(),
         "remaining": remaining_search_space(expansion_config or best_config),
+        "candidate_ranking": [row.as_dict() for row in ranked_candidates[:5]],
+        "research_patterns": distill_research_patterns(history),
         "prior_evidence": sanitize_prior_evidence(prior_evidence or {}),
         "memory": build_memory_summary(history),
         "global_best": {
@@ -309,9 +319,36 @@ def build_planner_prompt(
 
 
 class DeterministicResearcher:
-    """Safe offline policy; also provides a fallback when an LLM is unavailable."""
+    """Evidence-driven offline policy; also the safe fallback when an LLM is unavailable."""
+
+    def __init__(
+        self,
+        planner_weights: dict[str, float] | None = None,
+        memory_mode: str = "distilled_patterns",
+        prior_evidence: dict[str, Any] | None = None,
+    ) -> None:
+        self.planner = AutonomousExperimentPlanner(
+            planner_weights, memory_mode, prior_evidence
+        )
+        self.last_selection: dict[str, Any] | None = None
+        self._run_context: dict[str, Any] = {}
+
+    def set_run_context(self, context: dict[str, Any]) -> None:
+        self._run_context = dict(context)
 
     def propose(self, best: dict[str, Any], history: list[dict[str, Any]]) -> Proposal:
+        candidate = self.planner.select(best, history)
+        self.last_selection = self.planner.last_selection
+        return Proposal(
+            candidate.hypothesis,
+            candidate.reason,
+            candidate.changes,
+            "deterministic",
+            empty_token_usage(),
+        )
+
+    def _legacy_propose(self, best: dict[str, Any], history: list[dict[str, Any]]) -> Proposal:
+        """Pre-ranking fallback catalog retained for compatibility documentation."""
         tried = set(collect_tried_keys(history))
         hp = best["hyperparameters"]
         if best["model"] == "fm" and best["training_objective"] == "bce":
@@ -550,7 +587,9 @@ class OpenAICompatibleResearcher:
         self._sleep = sleeper
         self.last_token_usage = empty_token_usage()
         self.last_attempts = 0
+        self.last_error: str | None = None
         self._run_context: dict[str, Any] = {}
+        self.last_selection: dict[str, Any] | None = None
 
     def set_run_context(self, context: dict[str, Any]) -> None:
         """Receive deterministic budget context from the Controller before planning."""
@@ -578,13 +617,16 @@ class OpenAICompatibleResearcher:
         accumulated = empty_token_usage()
         self.last_token_usage = empty_token_usage()
         self.last_attempts = 0
+        self.last_error = None
         last_error = "unknown error"
         for attempt in range(1, MAX_LLM_ATTEMPTS + 1):
             self.last_attempts = attempt
             try:
                 payload = self._chat(prompt, repair=(attempt > 1))
             except (urllib.error.URLError, TimeoutError) as exc:
-                last_error = type(exc).__name__
+                status = getattr(exc, "code", None)
+                last_error = type(exc).__name__ if status is None else f"HTTP {status}"
+                self.last_error = last_error
                 if attempt >= MAX_LLM_ATTEMPTS:
                     raise RuntimeError(
                         f"LLM proposal failed after {MAX_LLM_ATTEMPTS} attempts: {last_error}"
@@ -593,6 +635,7 @@ class OpenAICompatibleResearcher:
                 continue
             except ValueError as exc:
                 last_error = type(exc).__name__
+                self.last_error = last_error
                 if attempt >= MAX_LLM_ATTEMPTS:
                     raise RuntimeError(
                         f"LLM proposal failed after {MAX_LLM_ATTEMPTS} attempts: {last_error}"
@@ -608,11 +651,22 @@ class OpenAICompatibleResearcher:
                     raise ValueError("LLM repeated a previous experiment")
             except (json.JSONDecodeError, ValueError, KeyError, IndexError, TypeError) as exc:
                 last_error = type(exc).__name__
+                self.last_error = last_error
                 if attempt >= MAX_LLM_ATTEMPTS:
                     raise RuntimeError(
                         f"LLM proposal failed after {MAX_LLM_ATTEMPTS} attempts: {last_error}"
                     ) from exc
                 continue
+            self.last_selection = {
+                "selected_family": "llm_generated",
+                "selected_score": None,
+                "criteria": (
+                    "LLM selected one legal action after reviewing ranked candidates, "
+                    "validation memory, cost budget, and prior evidence"
+                ),
+                "ranked_candidates": prompt.get("candidate_ranking", []),
+            }
+            self.last_error = None
             return Proposal(
                 proposal.hypothesis,
                 proposal.reason,

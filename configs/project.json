@@ -41,5 +41,19 @@
     "repetition_penalty_weight": 0.001,
     "failed_child_penalty_weight": 0.002,
     "rejected_node_penalty_weight": 0.002
+  },
+  "autonomy": {
+    "noise_threshold": 0.0002,
+    "strong_slice_gain": 0.002,
+    "automatic_placebo": true,
+    "placebo_trigger_delta": 0.002,
+    "candidate_scoring": {
+      "expected_gain": 0.35,
+      "evidence_strength": 0.25,
+      "novelty": 0.2,
+      "compute_cost": 0.1,
+      "redundancy": 0.1,
+      "observed_gain": 80.0
+    }
   }
 }

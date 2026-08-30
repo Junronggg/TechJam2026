@@ -19,6 +19,7 @@
     "dcn_cross_layers": 2,
     "dcn_low_rank": 16,
     "sequence_length": 16,
+    "feature_control": "real",
     "seed": 0
   },
   "features": {
