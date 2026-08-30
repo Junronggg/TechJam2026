@@ -28,6 +28,7 @@ from techjam_agent.proposals import (
     build_planner_prompt,
     DeterministicResearcher,
     extract_token_usage,
+    sanitize_prior_evidence,
     validation_metrics_only,
 )
 
@@ -165,6 +166,22 @@ class PromptTests(unittest.TestCase):
             validation_metrics_only({"GAUC": 1, "nDCG@5": 0, "primary": 0.5, "test": 9}),
             {"GAUC": 1, "nDCG@5": 0, "primary": 0.5},
         )
+
+    def test_prior_evidence_is_included_without_test_metrics(self) -> None:
+        evidence = {
+            "supported": ["ensemble improved 3/3 rolling folds"],
+            "test_metrics": {"primary": 0.999},
+            "nested": {"test_GAUC": 0.998, "validation_delta": 0.001123},
+        }
+        prompt = build_planner_prompt(load_config(), [], prior_evidence=evidence)
+        blob = json.dumps(prompt)
+        self.assertIn("ensemble improved 3/3 rolling folds", blob)
+        self.assertIn("0.001123", blob)
+        self.assertNotIn("0.999", blob)
+        self.assertNotIn("0.998", blob)
+        self.assertNotIn("test_metrics", blob)
+        self.assertNotIn("test_GAUC", blob)
+        self.assertEqual(sanitize_prior_evidence((1, 2)), [1, 2])
 
 
 class ParseContractTests(unittest.TestCase):
@@ -341,6 +358,28 @@ class LlmResearcherTests(unittest.TestCase):
         self.assertNotIn("sk-test-not-real", json.dumps(first_user))
         self.assertNotIn("test_GAUC", json.dumps(first_user))
 
+    def test_persistent_evidence_reaches_llm_prompt(self) -> None:
+        captured = {}
+
+        def capturing_urlopen(request, timeout=None):
+            captured.update(json.loads(request.data.decode()))
+            return FakeHTTPResponse(chat_payload(legal_changes()))
+
+        researcher = OpenAICompatibleResearcher(
+            "gpt-test",
+            api_key="sk-test-not-real",
+            urlopen=capturing_urlopen,
+            prior_evidence={
+                "rolling": "ensemble won 3/3 folds",
+                "final_test_metrics": {"primary": 0.999},
+            },
+        )
+        researcher.propose(load_config(), [])
+        prompt = json.loads(captured["messages"][1]["content"])
+        self.assertEqual(prompt["prior_evidence"]["rolling"], "ensemble won 3/3 folds")
+        self.assertNotIn("final_test_metrics", prompt["prior_evidence"])
+        self.assertIn("multiple rolling folds", captured["messages"][0]["content"])
+
 
 class FallbackTests(unittest.TestCase):
     def test_controller_reports_llm_budget_and_token_accounting(self) -> None:
@@ -394,7 +433,10 @@ class FallbackTests(unittest.TestCase):
             self.assertEqual(len(records), 2)
             second = json.loads(records[1].read_text(encoding="utf-8"))
             self.assertEqual(second["source"], "deterministic")
-            self.assertEqual(second["changes"], {"training_objective": "bpr"})
+            self.assertEqual(
+                second["changes"],
+                {"training_objective": "bpr", "learning_rate": 0.0003},
+            )
             self.assertEqual(second["token_usage"]["total_tokens"], 0)
 
 

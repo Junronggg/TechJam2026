@@ -93,6 +93,29 @@ item, while leaving the model structure, features, split, and official evaluator
 unchanged. The first seed-0 comparison improved validation primary from `0.601470` to
 `0.603396`; this should be repeated across seeds before claiming a stable gain.
 
+The NumPy model suite also includes DeepFM, `multitask_deepfm`, and low-rank DCNv2.
+The multi-task model can isolate click, like, censored completion, and capped
+log-watch targets; the current evidence-backed default is like-only. Auxiliary
+outcomes are training-only targets and are never passed as prediction-time features.
+The FM branch also supports a learned constant `global_context` field; it improved
+all three rolling folds, but won only 3/4 paired seeds and is therefore still a
+candidate. Candidate-history fields failed their matched placebo check. Run the
+reproducible checks with:
+
+```bash
+python scripts/run_rolling_validation.py
+python scripts/run_multitask_rolling.py
+python scripts/run_sequence_rolling.py
+python scripts/run_dcnv2_rolling.py
+python scripts/run_global_context_ablation.py
+python scripts/run_constant_context_rolling.py
+python scripts/run_global_context_multiseed.py
+python scripts/analyze_conditional_complementarity.py
+python scripts/evaluate_history_gated_ensemble.py
+python scripts/run_lightweight_sequence_ablation.py
+python scripts/evaluate_random_exposure_robustness.py
+```
+
 Run the offline deterministic researcher first:
 
 ```powershell
@@ -113,6 +136,11 @@ To let an OpenAI-compatible model choose experiments, set `OPENAI_API_KEY` and r
 ```bash
 python3 scripts/run_agent.py --researcher llm --model gpt-4.1-mini
 ```
+
+The LLM also receives validation-only persistent evidence from
+`configs/research_evidence.json`, including rolling-validation wins and rejected
+mechanisms. Override it with `--evidence-file PATH`. Test-split metric fields are
+removed before the prompt is sent.
 
 The LLM path automatically falls back to the deterministic policy if a proposal is
 invalid, duplicated, or temporarily unavailable. Outputs are written to a timestamped
@@ -149,8 +177,10 @@ new Person 2 work unless the two implementations are deliberately consolidated.
 
 ## Research-agent architecture
 
-The earlier root-level Planner/Critic research loop remains available for architecture
-smoke tests and comparison with the active `src/techjam_agent` implementation.
+The active `src/techjam_agent` Planner/Critic loop and lightweight experiment-tree
+manager include safety checks, persistent evidence memory, budget logic, evidence
+logging, and allow-listed LLM proposals. The earlier root-level implementation remains
+available for architecture smoke tests and comparison.
 See [the architecture document](docs/architecture.md).
 
 Run the architecture smoke test without training a model:
