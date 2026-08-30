@@ -1,7 +1,7 @@
-# TechJam 推荐系统研究记录
+# TechJam 模型与 Feature Engineering 实验记录
 
-> 记录已经实际运行的实验、数值变化、判断依据与研究路线变化。  
-> 除 rolling mean 外，分数均为 Validation Primary；研究阶段不根据 Test 结果选择模型。
+> 这里记录推荐模型、loss、feature engineering、multi-task、rolling、ensemble 和稳健性实验。它不只记录 feature engineering，而是完整的 ML 实验账本。
+> 除 rolling mean 外，分数均为 Validation Primary；研究阶段不根据 Test 结果选择模型。Agent 自主运行记录见 [`AGENT-TRY.md`](AGENT-TRY.md)。
 
 ## 一页结论
 
@@ -381,6 +381,32 @@ Random 的 long-view rate 为 **8.06%**，standard 为 **31.33%**。两套 Prima
 
 结论：DeepFM 提供的互补性依赖 standard logging policy。当前冠军仍适用于比赛 standard split，但 FM+BPR 在 policy shift 下更稳健；项目叙事必须明确区分“榜单冠军”和“随机曝光鲁棒性”。
 
+### M. Pairwise Multi-task 严格复现
+
+实现了 `MultiTaskDeepFM` 的新训练路径：long-view 主任务使用同用户 BPR pair，like 仍使用 pointwise BCE 辅助头。推理字段、数据切分和 evaluator 不变，辅助标签只在训练时使用。
+
+第一组只改变主任务 loss：
+
+| 配置 | GAUC | nDCG@5 | Primary | Best epoch |
+|---|---:|---:|---:|---:|
+| Like Multi-task + BCE，k16/aux0.1 | 0.671102 | 0.537699 | **0.604400** | 8 |
+| Like Multi-task + BPR，k16/aux0.1 | 0.669686 | 0.536957 | 0.603322 | 7 |
+
+严格对照 delta 为 **-0.001079**，所以“直接把当前 multi-task 主任务换成 BPR”被拒绝。
+
+随后只做一次外部报告配置复现，不继续扫参数：
+
+```text
+Like Multi-task + BPR
+k = 32
+auxiliary_weight = 0.3
+learning_rate = 0.001
+```
+
+结果 Primary 为 **0.603610**，相对同实现 BCE 仍为 **-0.000791**，相对当前冠军 0.604713 为 **-0.001103**。因此没有复现对方报告的 0.6069；合理解释是双方的 pairwise loss、auxiliary target、采样方式或模型实现并不相同，不能只凭配置名称认为是同一个实验。
+
+结论：保留 pairwise multi-task 的可执行能力和单元测试，但自动 memory 对上述两个精确配置标记 `STOP_DIRECTION`。只有获得对方 loss/target/sampler 代码，或提出实质不同的机制，才重新打开这个方向。
+
 ---
 
 ## 当前资产与状态
@@ -396,6 +422,7 @@ Random 的 long-view rate 为 **8.06%**，standard 为 **31.33%**。两套 Prima
 | Rolling validation | 是 | 新方法稳定性门槛 |
 | Candidate-history causal encoding | 是 | 信号无效，但实现和审计保留 |
 | Auxiliary click/like/completion/log-watch | 是 | 仅 like 有可靠价值 |
+| Pairwise BPR + like auxiliary | 是 | k16/aux0.1 与报告配置 k32/aux0.3 均低于 BCE，拒绝 |
 | Prediction correlation analysis | 是 | 用于判断 ensemble 互补性 |
 | Conditional complementarity | 是 | 分析 user/history/popularity/duration/time 条件差异与 pair error recovery |
 | 自动 placebo controls | 是 | real/constant/shuffled/random same-cardinality；失败则 `REINTERPRET` |
@@ -403,40 +430,34 @@ Random 的 long-view rate 为 **8.06%**，standard 为 **31.33%**。两套 Prima
 | Strict last-K sequence tensors | 是 | video/author/behavior/time-gap；same timestamp 不互读 |
 | Lightweight Sequence DeepFM | 是 | 已完成 controlled ablation；分数下降且成本约 25 倍，拒绝 |
 | Random-exposure robustness | 是 | standard ensemble 增益未保持；random 下 FM+BPR 更好 |
-| LLM-compatible evidence memory | 是 | 已记录支持、拒绝、不确定结论 |
 | Full causal self-attention / BST | 否 | 仅在新后端和新假设成立时再做 |
 
-## 下一轮决策规则
+## 下一轮 ML 决策
 
-轻量因果 sequence encoder 和 standard-vs-random robustness 均已完成。下一轮不再扩大现有搜索空间；优先把 slice、placebo、policy robustness 和三态决策（KEEP/REJECT/REINTERPRET）正式接入 Agent 的自动实验协议。真正 full attention 需要作为新后端、新成本预算和新结构假设单独立项。
+当前不继续堆相似 feature 或做小数点级调参。后续 ML 实验必须提供新的信息来源，并遵循：
 
-计划必须满足：
+1. 单变量 controlled comparison。
+2. Strict-time / leakage audit。
+3. 小涨必须做 rolling；涉及随机训练时做 paired seeds。
+4. 新 categorical field 必须配 matched placebo。
+5. 新模型进入融合前先检查 prediction correlation 和 pair-error complementarity。
+6. 不根据 test 或表现最好的 seed 选择方案。
 
-1. 每条样本只能读取该用户严格更早的 video/author 行为。
-2. 固定最大历史长度，明确 padding、截断和同 timestamp 处理。
-3. 与相同基础字段的 DeepFM 做单变量模型结构对照。
-4. 先在 official validation 筛选，再运行 3-fold rolling。
-5. 计算 BST 与 FM/DeepFM 的预测相关性。
-6. 只有分数可靠且预测互补，才进入 ensemble；不因模型名字更复杂而接受。
-7. 如果某个 slice 看起来有效，必须实际运行一次固定规则 gate；不从 slice 表直接推断融合收益。
-
-暂时不继续：
+暂时停止：
 
 ```text
 更多全局 target rate
 更多 user×author/user×tab 显式交叉
 更多 hard-negative pool
 更多 completion/watch-time 变换
-围绕 0.604713 做小数点级 ensemble 权重搜索
+重复当前 pairwise multi-task 两个已测配置
+围绕 0.604713 细扫 ensemble 权重
 挑选表现最好的 seed
 ```
 
-## 复现实验入口
+## ML 实验复现入口
 
 ```bash
-# 当前 Agent
-python scripts/run_agent.py --researcher deterministic
-
 # Rolling validation
 python scripts/run_rolling_validation.py
 
@@ -449,11 +470,15 @@ python analysis/candidate_history_audit.py
 python scripts/run_candidate_history_followup.py
 python scripts/run_sequence_placebo.py
 
-# Slice、错误互补性与规则 gate
+# Slice、错误互补性、规则 gate、sequence 与 exposure robustness
 python scripts/analyze_conditional_complementarity.py
 python scripts/evaluate_history_gated_ensemble.py
 python scripts/run_lightweight_sequence_ablation.py
 python scripts/evaluate_random_exposure_robustness.py
+
+# Pairwise multi-task 严格对照与报告配置复现
+python scripts/run_pairwise_multitask_ablation.py
+python scripts/run_pairwise_multitask_ablation.py --reported-config-only
 
 # DCNv2 与融合互补性
 python scripts/run_dcnv2_ablation.py
@@ -467,4 +492,6 @@ python scripts/run_global_context_multiseed.py
 python scripts/evaluate_global_context_ensemble.py
 ```
 
-最后更新结论：**冠军不变；global context 为不确定候选；下一步转向能够产生不同错误模式的因果序列模型。**
+Agent 自主运行、memory ablation、运行耗时和停止原因单独记录在 [`AGENT-TRY.md`](AGENT-TRY.md)。
+
+最后更新结论：**当前 ML 冠军仍为 0.6 FM+BPR + 0.4 DeepFM+BCE，Validation Primary 0.604713；已知失败 feature 不再重复。**

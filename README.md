@@ -4,6 +4,11 @@ Preparation workspace for TikTok TechJam Task 2 using the organizer-provided
 KuaiRand-Pure starter kit. This repository currently contains environment and
 benchmark configuration and a safe autonomous FM research MVP.
 
+Research logs are separated by purpose:
+
+- [`TRY.md`](TRY.md): model, loss, feature engineering, rolling validation and ensemble experiments.
+- [`AGENT-TRY.md`](AGENT-TRY.md): Agent trajectories, runtime, memory ablations, stopping and intervention audits.
+
 ## Prerequisites
 
 - Windows PowerShell
@@ -78,10 +83,23 @@ and the virtual environment out of version control.
 
 ## Autonomous research MVP
 
-The first version uses a constrained experiment space: the researcher proposes a
-validated FM or LightGBM experiment as JSON, while deterministic code trains,
-evaluates, keeps or rejects, logs, checks convergence, and writes the best test
-submission. It never gives an LLM permission to edit the repository.
+The active system is a constrained autonomous research loop. It generates legal
+candidate experiments, scores them by expected gain, evidence strength, novelty,
+compute cost, and redundancy, selects one, trains it, evaluates validation ranking,
+reflects on the result, updates structured memory, and repeats. It never gives an LLM
+permission to edit the repository.
+
+The memory has two levels: per-experiment hypotheses and family-level distilled
+research patterns. Patterns can request confirmation, ensemble-only evaluation,
+matched controls, one cheap evidence-gathering run, or stopping a repeatedly weak
+direction. This updates the planning policy from experiment history; it is not RL or
+parameter-level self-learning.
+
+For categorical history features, a small apparent gain automatically schedules
+constant, shuffled, and same-cardinality random controls. Control runs cannot become
+the champion. Each model also writes validation-only prediction artifacts used for
+fixed cold/warm, history, popularity, duration, and time slices plus conditional error
+complementarity against the current champion.
 
 The LightGBM branch first tests the original five categorical fields, then adds
 continuous train-only user/item long-view rates and log interaction counts. Training
@@ -97,6 +115,11 @@ The NumPy model suite also includes DeepFM, `multitask_deepfm`, and low-rank DCN
 The multi-task model can isolate click, like, censored completion, and capped
 log-watch targets; the current evidence-backed default is like-only. Auxiliary
 outcomes are training-only targets and are never passed as prediction-time features.
+Multi-task DeepFM can also combine a within-user BPR long-view objective with the
+pointwise auxiliary head. In the controlled like-only experiment this scored
+`0.603322` versus `0.604400` for BCE; the externally reported `k=32, aux=0.3`
+configuration scored `0.603610`. Both exact configurations remain reproducible but
+are rejected by scoped evidence rather than advertised as improvements.
 The FM branch also supports a learned constant `global_context` field; it improved
 all three rolling folds, but won only 3/4 paired seeds and is therefore still a
 candidate. Candidate-history fields failed their matched placebo check. Run the
@@ -114,6 +137,7 @@ python scripts/analyze_conditional_complementarity.py
 python scripts/evaluate_history_gated_ensemble.py
 python scripts/run_lightweight_sequence_ablation.py
 python scripts/evaluate_random_exposure_robustness.py
+python scripts/run_pairwise_multitask_ablation.py
 ```
 
 Run the offline deterministic researcher first:
@@ -128,25 +152,98 @@ On macOS or Linux, use:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python3 scripts/run_agent.py --researcher deterministic
+python3 run_agent.py --researcher deterministic
 ```
 
-To let an OpenAI-compatible model choose experiments, set `OPENAI_API_KEY` and run:
+Run the deterministic planner memory ablation with the same experiment budget:
 
 ```bash
-python3 scripts/run_agent.py --researcher llm --model gpt-4.1-mini
+python3 run_agent.py --researcher deterministic --memory-mode no_memory
+python3 run_agent.py --researcher deterministic --memory-mode raw_history
+python3 run_agent.py --researcher deterministic --memory-mode distilled_patterns
 ```
 
-The LLM also receives validation-only persistent evidence from
-`configs/research_evidence.json`, including rolling-validation wins and rejected
-mechanisms. Override it with `--evidence-file PATH`. Test-split metric fields are
-removed before the prompt is sent.
+Each run records `planner_memory_mode` in `run_meta.json` and `summary.json`.
+For a controlled comparison, `no_memory` disables dynamic outcome feedback but
+keeps the same legal candidate catalog, static priors, and duplicate protection.
+Each real selection also records counterfactual top choices for all three modes;
+`memory_influenced_selections` counts how often memory actually changed the action
+without launching extra training runs.
+Run all three modes with one command and a shared experiment cap:
+
+```bash
+python3 scripts/run_memory_ablation.py --max-iterations 5
+```
+
+The validation-only comparison is written to `artifacts/memory_ablation.json`.
+
+Stress-test cross-run planning against previously logged validation outcomes:
+
+```bash
+python3 scripts/replay_planner_memory.py --max-steps 12
+```
+
+This offline replay does not retrain models or load test metrics. In the current log
+archive, `no_memory` and `raw_history` both formed the two-feature temporal combination
+already rejected by rolling validation. The scoped `distilled_patterns` policy allows
+the not-yet-rolled single feature but blocks the second action that would recreate the
+rejected combination, saving one logged experiment. This demonstrates a changed planning
+trajectory and deliberately does not generalize combination evidence to every individual
+feature; it is not a new independent model-score result.
+
+To let an OpenAI-compatible model choose experiments, copy `.env.example` to the
+git-ignored `.env`, set the key locally, and run:
+
+```bash
+python3 scripts/check_llm_connection.py
+python3 scripts/run_agent.py --researcher llm
+```
+
+`scripts/run_agent.py` loads `.env` automatically while preserving values already
+exported by the shell. The example defaults to OpenRouter's OpenAI-compatible endpoint
+and `openai/gpt-4.1-mini`; use `OPENAI_BASE_URL` and `OPENAI_MODEL` to select another
+compatible provider or model. The connection checker reports only status, provider,
+model, and token usage—it never prints the key.
+
+Both the deterministic planner and the LLM receive validation-only persistent evidence from
+`configs/research_evidence.json`. Before every run, `configs/evidence_manifest.json`
+routes selected rolling, placebo, and paired-seed artifacts through the deterministic
+policy builder. Generated policies carry artifact hashes, task/model/schema scope,
+scientific verdicts, and competition status; they override old manual policies only for
+the same family and matching scope. Override the files with `--evidence-file PATH` and
+`--evidence-manifest PATH`. Test-split metric fields are not part of planning evidence
+and are removed before an LLM prompt is sent.
+
+Audit whether the committed policy snapshot still matches the current artifacts:
+
+```bash
+python3 scripts/build_family_policies.py \
+  --check-against configs/generated_family_policies.json
+```
 
 The LLM path automatically falls back to the deterministic policy if a proposal is
-invalid, duplicated, or temporarily unavailable. Outputs are written to a timestamped
+invalid, duplicated, or temporarily unavailable. `summary.json` records each fallback
+and a sanitized provider error such as `HTTP 401`, so a deterministic proposal cannot
+be mistaken for an LLM decision. Outputs are written to a timestamped
 `logs/run_*` directory, `artifacts/best_config.json`, `artifacts/best_model.npz`, and
 `submissions/final.csv`. All ranking metrics still come from the untouched organizer
 `kuairand-starter-kit/evaluate.py`.
+
+Development runs do not evaluate test by default. After the autonomous trajectory is
+finished and frozen, run the one intended final test evaluation with:
+
+```bash
+python3 run_agent.py --researcher llm --finalize-test
+```
+
+A validation-only deterministic reference trajectory completed five experiments,
+found the `0.604713` ensemble at iteration 2, reported zero interventions, and stopped
+itself with `stop_reason=converged`. Its `memory_influenced_selections` was zero, so that
+short trajectory demonstrates end-to-end autonomy but not a memory benefit. A longer
+logged-validation replay subsequently showed that distilled cross-run policies skipped
+two rolling-rejected temporal trials. A fresh five-experiment integration run then
+reproduced every validation score, kept test metrics null, and reported zero manual
+interventions; its short trajectory still had no memory-driven choice divergence.
 
 ### Research safety and evidence
 
@@ -160,6 +257,14 @@ invalid, duplicated, or temporarily unavailable. Outputs are written to a timest
   Primary, exploration, novelty, runtime, repetition, and failed/rejected-branch penalties.
 - Every candidate log records the parent-selection score breakdown; `tree_snapshot.json`
   preserves parent/child lineage and rejected branches as evidence.
+- `research_memory.json` records validation-only hypothesis evidence and distilled
+  research patterns; the planner does not parse `TRY.md` to decide the next experiment.
+- Generated cross-run policies are applicable only when task, model, and feature-schema
+  scope match. Changed artifact hashes regenerate policy identities on the next run.
+- `manual_interventions.jsonl` records intervention id, reason, action, and whether the
+  intervention was avoidable. A normal uninterrupted run reports zero interventions.
+- `candidate_selection` records the top five considered actions and all score components,
+  making each autonomous choice auditable.
 - `summary.json` records LLM request, failure, and token totals, including failed attempts
   that fell back to the deterministic researcher.
 
@@ -170,10 +275,9 @@ python3 -m unittest discover -s tests -v
 python3 -m compileall -q src scripts tests
 ```
 
-The authoritative runnable agent is `scripts/run_agent.py` backed by
-`src/techjam_agent/`. The root-level `run_agent.py`, `agent/`, `experiment/`, and
-`recommender/` modules are an earlier compatibility prototype and should not receive
-new Person 2 work unless the two implementations are deliberately consolidated.
+The authoritative runnable agent is `src/techjam_agent/` through `python run_agent.py`.
+The root command delegates to `scripts/run_agent.py`; its old architecture prototype is
+still available only through explicit `--dry-run` or `--real-run` compatibility flags.
 
 ## Research-agent architecture
 

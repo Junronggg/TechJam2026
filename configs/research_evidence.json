@@ -1,6 +1,62 @@
 {
   "version": 3,
   "scope": "Validation-only and rolling-validation evidence for within-user long_view ranking.",
+  "family_policies": [
+    {
+      "family": "ranking_objective",
+      "policy": "exploit_with_confirmation",
+      "confidence": "high",
+      "evidence": "FM+BPR improved paired seeds 0-3 by mean +0.002344 over BCE."
+    },
+    {
+      "family": "heterogeneous_ensemble",
+      "policy": "exploit_with_confirmation",
+      "confidence": "high",
+      "evidence": "FM+BPR plus DeepFM improved all three rolling folds by mean +0.001123."
+    },
+    {
+      "family": "temporal_counts",
+      "policy": "stop_direction",
+      "confidence": "high",
+      "evidence": "The apparent single-split gain won only one of three rolling folds; mean delta -0.000246."
+    },
+    {
+      "family": "candidate_history",
+      "policy": "stop_direction",
+      "confidence": "high",
+      "evidence": "Matched constant placebo exceeded the real sequence features, and count/adjacency variants were noise."
+    },
+    {
+      "family": "global_target_statistics",
+      "policy": "stop_direction",
+      "confidence": "high",
+      "evidence": "FM categorical and LightGBM continuous representations both reduced validation Primary."
+    },
+    {
+      "family": "target_rate_crosses",
+      "policy": "stop_direction",
+      "confidence": "high",
+      "evidence": "Smoothed user-by-tab target rate reduced validation Primary."
+    },
+    {
+      "family": "explicit_crosses",
+      "policy": "stop_direction",
+      "confidence": "high",
+      "evidence": "User-by-tab, user-by-author, and their combination all reduced validation Primary."
+    },
+    {
+      "family": "sequence_model",
+      "policy": "stop_direction",
+      "confidence": "high",
+      "evidence": "The current strict-causal last-16 implementation was slower and below DeepFM and the champion."
+    },
+    {
+      "family": "tree_model",
+      "policy": "stop_direction",
+      "confidence": "high",
+      "evidence": "LightGBM on base and statistical fields did not beat FM."
+    }
+  ],
   "supported_findings": [
     {
       "mechanism": "FM with pairwise BPR",
