@@ -19,11 +19,13 @@ sys.path.insert(0, str(ROOT / "src"))
 from techjam_agent.config import apply_changes, experiment_key
 from techjam_agent.controller import Controller
 from techjam_agent.memory import (
+    GENERIC_FAILURE_THRESHOLD,
     LESSON_LIMIT,
     PLANNER_RECENT_HISTORY,
     SIGNATURE_LIMIT,
     build_memory_summary,
     collect_tried_keys,
+    evidence_directions,
     is_duplicate_config,
 )
 from techjam_agent.proposals import (
@@ -363,6 +365,122 @@ class DuplicateTests(unittest.TestCase):
             experiment_key(apply_changes(load_config(), {"training_objective": "bpr"})),
             experiment_key(controller.history[1]["config"]),
         )
+
+
+class EvidenceDirectionTests(unittest.TestCase):
+    """Structured evidence only: verdict, error type/message, model, objective, changes."""
+
+    def lightgbm_config(self, **features) -> dict:
+        changes = {"model": "lightgbm", **features}
+        return apply_changes(load_config(), changes)
+
+    def test_missing_dependency_hard_blocks_the_model_after_one_failure(self) -> None:
+        history = [
+            record(0),
+            record(1, config=self.lightgbm_config(), changes={"model": "lightgbm"},
+                   verdict="failed", primary=None, status="error",
+                   error={"type": "RuntimeError",
+                          "message": "LightGBM is required: python -m pip install -r requirements.txt"}),
+        ]
+        directions = evidence_directions(history)
+        self.assertEqual(directions.blocked_models, frozenset({"lightgbm"}))
+        self.assertEqual(directions.soft_models, frozenset())
+        self.assertIsNotNone(directions.hard_block_for(self.lightgbm_config()))
+        self.assertIsNone(directions.soft_reason_for(self.lightgbm_config()))
+
+    def test_import_error_type_alone_is_structural(self) -> None:
+        history = [record(1, config=self.lightgbm_config(), verdict="failed", primary=None,
+                          status="error",
+                          error={"type": "ModuleNotFoundError", "message": "boom"})]
+        self.assertEqual(evidence_directions(history).blocked_models,
+                         frozenset({"lightgbm"}))
+
+    def test_single_timeout_disfavors_nothing(self) -> None:
+        history = [
+            record(0),
+            record(1, config=self.lightgbm_config(), verdict="failed", primary=None,
+                   status="error",
+                   error={"type": "TimeoutError",
+                          "message": "experiment exceeded 900s timeout"}),
+        ]
+        self.assertFalse(evidence_directions(history))
+
+    def test_two_consistent_generic_failures_are_soft_not_hard(self) -> None:
+        failure = {"type": "TimeoutError", "message": "experiment exceeded 900s timeout"}
+        history = [record(0)] + [
+            record(index, config=self.lightgbm_config(), verdict="failed", primary=None,
+                   status="error", error=failure)
+            for index in range(1, GENERIC_FAILURE_THRESHOLD + 1)
+        ]
+        directions = evidence_directions(history)
+        self.assertEqual(directions.soft_models, frozenset({"lightgbm"}))
+        self.assertEqual(directions.blocked_models, frozenset())
+        self.assertIsNone(directions.hard_block_for(self.lightgbm_config()))
+        self.assertIsNotNone(directions.soft_reason_for(self.lightgbm_config()))
+
+    def test_a_structural_failure_outranks_generic_counts(self) -> None:
+        history = [
+            record(1, config=self.lightgbm_config(), verdict="failed", primary=None,
+                   status="error", error={"type": "TimeoutError", "message": "timeout"}),
+            record(2, config=self.lightgbm_config(), verdict="failed", primary=None,
+                   status="error", error={"type": "TimeoutError", "message": "timeout"}),
+            record(3, config=self.lightgbm_config(), verdict="failed", primary=None,
+                   status="error",
+                   error={"type": "RuntimeError", "message": "LightGBM is required: install"}),
+        ]
+        directions = evidence_directions(history)
+        self.assertEqual(directions.blocked_models, frozenset({"lightgbm"}))
+        self.assertEqual(directions.soft_models, frozenset())
+
+    def test_reject_narrows_to_the_mechanism_the_change_introduced(self) -> None:
+        ensemble = apply_changes(bpr_config(), {"model": "ensemble",
+                                                "training_objective": "hybrid"})
+        history = [record(1, config=ensemble, verdict="reject", primary=0.55,
+                          changes={"model": "ensemble", "training_objective": "hybrid"})]
+        directions = evidence_directions(history)
+        self.assertEqual(directions.soft_mechanisms, frozenset({("ensemble", "hybrid")}))
+        self.assertEqual(directions.blocked_models, frozenset())
+        self.assertIsNone(directions.soft_reason_for(bpr_config()))
+        self.assertIsNotNone(directions.soft_reason_for(ensemble))
+        self.assertIsNone(directions.hard_block_for(ensemble))
+
+    def test_reject_on_a_plain_hyperparameter_change_blocks_nothing(self) -> None:
+        tuned = apply_changes(load_config(), {"learning_rate": 0.002})
+        history = [record(1, config=tuned, verdict="reject", primary=0.55,
+                          changes={"learning_rate": 0.002})]
+        directions = evidence_directions(history)
+        self.assertFalse(directions)
+        self.assertIsNone(directions.soft_reason_for(tuned))
+
+    def test_dirty_and_legacy_rows_are_ignored_without_crashing(self) -> None:
+        history = [
+            None,
+            "not a record",
+            {},
+            {"config": "not a dict"},
+            {"config": {"model": 7, "training_objective": None}},
+            {"config": load_config(), "critique": "not a dict", "error": "not a dict"},
+        ]
+        directions = evidence_directions(history)
+        self.assertFalse(directions)
+        self.assertIsNone(directions.hard_block_for(load_config()))
+        self.assertIsNone(directions.soft_reason_for("not a dict"))
+        self.assertEqual(evidence_directions(None).blocked_models, frozenset())
+
+    def test_status_error_without_an_error_payload_counts_as_generic(self) -> None:
+        history = [record(index, primary=None, status="error", verdict=None, error=None)
+                   for index in range(1, GENERIC_FAILURE_THRESHOLD + 1)]
+        self.assertEqual(evidence_directions(history).soft_models, frozenset({"fm"}))
+        self.assertFalse(evidence_directions(history[:1]))
+
+    def test_summary_is_deterministic_for_identical_history(self) -> None:
+        history = [
+            record(0),
+            record(1, config=self.lightgbm_config(), verdict="failed", primary=None,
+                   status="error",
+                   error={"type": "RuntimeError", "message": "LightGBM is required: install"}),
+        ]
+        self.assertEqual(evidence_directions(history), evidence_directions(history))
 
 
 if __name__ == "__main__":
