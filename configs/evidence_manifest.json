@@ -252,6 +252,197 @@
         "models": ["multitask_deepfm"],
         "training_objectives": ["bpr"]
       }
+    },
+    {
+      "id": "coverage_prior_video_positive_v1",
+      "family": "candidate_history",
+      "kind": "feature_coverage",
+      "path": "runs/candidate_history_audit/summary.json",
+      "pointer": ["features", "prior_video_positive"],
+      "validation_only": true,
+      "optional": true,
+      "applies_to": {
+        "features": {"prior_video_positive": true}
+      }
+    },
+    {
+      "id": "coverage_author_positive_recency_v1",
+      "family": "candidate_history",
+      "kind": "feature_coverage",
+      "path": "runs/candidate_history_audit/summary.json",
+      "pointer": ["features", "author_positive_recency"],
+      "validation_only": true,
+      "optional": true,
+      "applies_to": {
+        "features": {"author_positive_recency": true}
+      }
+    },
+    {
+      "id": "coverage_prior_video_count_v1",
+      "family": "candidate_history",
+      "kind": "feature_coverage",
+      "path": "runs/candidate_history_audit/summary.json",
+      "pointer": ["features", "prior_video_count"],
+      "validation_only": true,
+      "optional": true,
+      "applies_to": {
+        "features": {"prior_video_count": true}
+      }
+    },
+    {
+      "id": "coverage_previous_author_same_v1",
+      "family": "candidate_history",
+      "kind": "feature_coverage",
+      "path": "runs/candidate_history_audit/summary.json",
+      "pointer": ["features", "previous_author_same"],
+      "validation_only": true,
+      "optional": true,
+      "applies_to": {
+        "features": {"previous_author_same": true}
+      }
+    },
+    {
+      "id": "leakage_user_long_view_rate_v1",
+      "family": "global_target_statistics",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": ["features", "user_long_view_rate"],
+      "validation_only": true,
+      "applies_to": {
+        "features": {"user_long_view_rate": true}
+      }
+    },
+    {
+      "id": "leakage_item_long_view_rate_v1",
+      "family": "global_target_statistics",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": ["features", "item_long_view_rate"],
+      "validation_only": true,
+      "applies_to": {
+        "features": {"item_long_view_rate": true}
+      }
+    },
+    {
+      "id": "leakage_continuous_history_stats_v1",
+      "family": "global_target_statistics",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": ["features", "continuous_history_stats"],
+      "validation_only": true,
+      "applies_to": {
+        "features": {"continuous_history_stats": true}
+      }
+    },
+    {
+      "id": "leakage_user_tab_long_view_rate_v1",
+      "family": "target_rate_crosses",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": ["features", "user_tab_long_view_rate"],
+      "validation_only": true,
+      "applies_to": {
+        "features": {"user_tab_long_view_rate": true}
+      }
+    },
+    {
+      "id": "leakage_user_tab_cross_v1",
+      "family": "explicit_crosses",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": ["features", "user_tab_cross"],
+      "validation_only": true,
+      "applies_to": {
+        "features": {"user_tab_cross": true}
+      }
+    },
+    {
+      "id": "leakage_user_author_cross_v1",
+      "family": "explicit_crosses",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": ["features", "user_author_cross"],
+      "validation_only": true,
+      "applies_to": {
+        "features": {"user_author_cross": true}
+      }
+    },
+    {
+      "id": "leakage_user_recent_3d_activity_v1",
+      "family": "temporal_counts",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": ["features", "user_recent_3d_activity"],
+      "validation_only": true,
+      "applies_to": {
+        "features": {"user_recent_3d_activity": true}
+      }
+    },
+    {
+      "id": "leakage_item_recent_3d_exposure_v1",
+      "family": "temporal_counts",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": ["features", "item_recent_3d_exposure"],
+      "validation_only": true,
+      "applies_to": {
+        "features": {"item_recent_3d_exposure": true}
+      }
+    },
+    {
+      "id": "leakage_prior_video_positive_v1",
+      "family": "candidate_history",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": ["features", "prior_video_positive"],
+      "validation_only": true,
+      "applies_to": {
+        "features": {"prior_video_positive": true}
+      }
+    },
+    {
+      "id": "leakage_author_positive_recency_v1",
+      "family": "candidate_history",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": ["features", "author_positive_recency"],
+      "validation_only": true,
+      "applies_to": {
+        "features": {"author_positive_recency": true}
+      }
+    },
+    {
+      "id": "leakage_prior_video_count_v1",
+      "family": "candidate_history",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": ["features", "prior_video_count"],
+      "validation_only": true,
+      "applies_to": {
+        "features": {"prior_video_count": true}
+      }
+    },
+    {
+      "id": "leakage_previous_author_same_v1",
+      "family": "candidate_history",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": ["features", "previous_author_same"],
+      "validation_only": true,
+      "applies_to": {
+        "features": {"previous_author_same": true}
+      }
+    },
+    {
+      "id": "leakage_global_context_v1",
+      "family": "global_context",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": ["features", "global_context"],
+      "validation_only": true,
+      "applies_to": {
+        "features": {"global_context": true}
+      }
     }
   ]
 }

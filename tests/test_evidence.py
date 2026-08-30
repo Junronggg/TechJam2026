@@ -5,9 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from techjam_agent.config import FEATURE_KEYS
 from techjam_agent.evidence import (
     DEFAULT_FEASIBILITY_THRESHOLDS,
+    FEASIBILITY_KINDS,
     FEASIBILITY_SCHEMA_VERSION,
+    POLICY_KINDS,
     build_feasibility_evidence,
     build_generated_family_policies,
     collect_artifact_evidence,
@@ -160,13 +163,44 @@ class GeneratedEvidenceTests(unittest.TestCase):
             manifest["feasibility_thresholds"]["low_coverage"],
             DEFAULT_FEASIBILITY_THRESHOLDS["low_coverage"],
         )
+        expected = json.loads(
+            (ROOT / "configs" / "generated_family_policies.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        generated = build_generated_family_policies(ROOT, manifest)
+        self.assertEqual(generated, expected)
         feasibility = build_feasibility_evidence(ROOT, manifest)
         kinds = {record["kind"] for record in feasibility["records"]}
-        self.assertEqual(kinds, {"family_runtime"})
+        self.assertEqual(kinds, {"family_runtime", "leakage_status", "feature_coverage"})
         self.assertTrue(all(len(record["sha256"]) == 64 for record in feasibility["records"]))
-        self.assertNotIn("feature_coverage", kinds)
         self.assertNotIn("prediction_correlation", kinds)
-        self.assertNotIn("leakage_status", kinds)
+        leakage = [
+            record for record in feasibility["records"]
+            if record["kind"] == "leakage_status"
+        ]
+        self.assertEqual(
+            {next(iter(record["applies_to"]["features"])) for record in leakage},
+            set(FEATURE_KEYS),
+        )
+        coverage = [
+            record for record in feasibility["records"]
+            if record["kind"] == "feature_coverage"
+        ]
+        self.assertTrue(coverage)
+        self.assertTrue(all(
+            record["applies_to"]["features"] and record["kind"] in FEASIBILITY_KINDS
+            for record in coverage
+        ))
+        policy_kinds = {
+            source["kind"]
+            for policy in generated["family_policies"]
+            for source in policy["created_from"]
+        }
+        self.assertTrue(policy_kinds)
+        self.assertTrue(policy_kinds <= POLICY_KINDS)
+        self.assertNotIn("feature_coverage", policy_kinds)
+        self.assertFalse(policy_kinds & FEASIBILITY_KINDS)
 
     def test_markdown_source_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

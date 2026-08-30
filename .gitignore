@@ -55,6 +55,9 @@ runs/lightweight_sequence_ablation/*
 !runs/pairwise_multitask_ablation/
 runs/pairwise_multitask_ablation/*
 !runs/pairwise_multitask_ablation/summary.json
+!runs/candidate_history_audit/
+runs/candidate_history_audit/*
+!runs/candidate_history_audit/summary.json
 best/*
 !best/.gitkeep
 
