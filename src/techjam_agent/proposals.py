@@ -325,8 +325,11 @@ class DeterministicResearcher:
         self,
         planner_weights: dict[str, float] | None = None,
         memory_mode: str = "distilled_patterns",
+        prior_evidence: dict[str, Any] | None = None,
     ) -> None:
-        self.planner = AutonomousExperimentPlanner(planner_weights, memory_mode)
+        self.planner = AutonomousExperimentPlanner(
+            planner_weights, memory_mode, prior_evidence
+        )
         self.last_selection: dict[str, Any] | None = None
         self._run_context: dict[str, Any] = {}
 

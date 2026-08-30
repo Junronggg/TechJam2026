@@ -31,7 +31,7 @@ def main() -> int:
     parser.add_argument(
         "--evidence-file",
         default=os.getenv("TECHJAM_RESEARCH_EVIDENCE", "configs/research_evidence.json"),
-        help="Persistent validation-only evidence supplied to the LLM Researcher.",
+        help="Persistent validation-only evidence supplied to the selected Researcher.",
     )
     parser.add_argument("--max-iterations", type=int,
                         help="Maximum total executed experiments including the iteration-0 "
@@ -66,18 +66,18 @@ def main() -> int:
     data_dir = Path(configured)
     if not data_dir.is_absolute():
         data_dir = ROOT / data_dir
+    evidence_path = Path(args.evidence_file)
+    if not evidence_path.is_absolute():
+        evidence_path = ROOT / evidence_path
+    try:
+        prior_evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        parser.error(f"cannot load research evidence from {evidence_path}: {exc}")
+    if not isinstance(prior_evidence, dict):
+        parser.error("research evidence must be a JSON object")
     if args.researcher == "llm":
         if args.memory_mode != "distilled_patterns":
             parser.error("--memory-mode ablation currently supports --researcher deterministic")
-        evidence_path = Path(args.evidence_file)
-        if not evidence_path.is_absolute():
-            evidence_path = ROOT / evidence_path
-        try:
-            prior_evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            parser.error(f"cannot load research evidence from {evidence_path}: {exc}")
-        if not isinstance(prior_evidence, dict):
-            parser.error("research evidence must be a JSON object")
         researcher = OpenAICompatibleResearcher(
             args.model, args.base_url, prior_evidence=prior_evidence
         )
@@ -85,6 +85,7 @@ def main() -> int:
         researcher = DeterministicResearcher(
             project.get("autonomy", {}).get("candidate_scoring"),
             memory_mode=args.memory_mode,
+            prior_evidence=prior_evidence,
         )
     run_id = datetime.now(timezone.utc).strftime("run_%Y%m%dT%H%M%SZ")
     local_runner = ExperimentRunner(ROOT, data_dir, ROOT / project["starter_dir"],

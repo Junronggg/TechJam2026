@@ -166,16 +166,28 @@ python3 scripts/run_memory_ablation.py --max-iterations 5
 
 The validation-only comparison is written to `artifacts/memory_ablation.json`.
 
+Stress-test cross-run planning against previously logged validation outcomes:
+
+```bash
+python3 scripts/replay_planner_memory.py --max-steps 12
+```
+
+This offline replay does not retrain models or load test metrics. In the current log
+archive, `no_memory` and `raw_history` both repeated two temporal experiments already
+rejected by rolling validation, while `distilled_patterns` stopped that family and
+kept the robust `0.604713` ensemble. This demonstrates a changed planning trajectory,
+not a new independent model-score result.
+
 To let an OpenAI-compatible model choose experiments, set `OPENAI_API_KEY` and run:
 
 ```bash
 python3 scripts/run_agent.py --researcher llm --model gpt-4.1-mini
 ```
 
-The LLM also receives validation-only persistent evidence from
+Both the deterministic planner and the LLM receive validation-only persistent evidence from
 `configs/research_evidence.json`, including rolling-validation wins and rejected
 mechanisms. Override it with `--evidence-file PATH`. Test-split metric fields are
-removed before the prompt is sent.
+not part of the machine-readable family policies and are removed before an LLM prompt is sent.
 
 The LLM path automatically falls back to the deterministic policy if a proposal is
 invalid, duplicated, or temporarily unavailable. Outputs are written to a timestamped
@@ -192,9 +204,10 @@ python3 run_agent.py --researcher llm --finalize-test
 
 A validation-only deterministic reference trajectory completed five experiments,
 found the `0.604713` ensemble at iteration 2, reported zero interventions, and stopped
-itself with `stop_reason=converged`. Its `memory_influenced_selections` was zero, so it
-demonstrates end-to-end autonomy but does not yet demonstrate a benefit from distilled
-patterns.
+itself with `stop_reason=converged`. Its `memory_influenced_selections` was zero, so that
+short trajectory demonstrates end-to-end autonomy but not a memory benefit. A longer
+logged-validation replay subsequently showed that distilled cross-run policies skipped
+two rolling-rejected temporal trials; a fresh run remains the final confirmation step.
 
 ### Research safety and evidence
 

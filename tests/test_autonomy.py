@@ -239,6 +239,28 @@ class StructuredMemoryTests(unittest.TestCase):
         )
         self.assertIsInstance(planner.last_selection["memory_changed_choice"], bool)
 
+    def test_persistent_stop_policy_only_affects_distilled_mode(self):
+        evidence = {"family_policies": [{
+            "family": "temporal_counts",
+            "policy": "stop_direction",
+            "confidence": "high",
+            "evidence": "failed rolling validation",
+        }]}
+        distilled = next(
+            row for row in rank_candidates(
+                load_config(), [], memory_mode="distilled_patterns",
+                prior_evidence=evidence,
+            ) if row.candidate.family == "temporal_counts"
+        )
+        raw = next(
+            row for row in rank_candidates(
+                load_config(), [], memory_mode="raw_history",
+                prior_evidence=evidence,
+            ) if row.candidate.family == "temporal_counts"
+        )
+        self.assertTrue(distilled.direction_stopped)
+        self.assertFalse(raw.direction_stopped)
+
 
 if __name__ == "__main__":
     unittest.main()

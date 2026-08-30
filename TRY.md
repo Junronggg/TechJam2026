@@ -490,6 +490,29 @@ Iteration 4  DCNv2                 0.604164  REJECT
 - **端到端 autonomy 已通过真实运行验证**：Agent 从 baseline 出发，自主选择四个实验、更新冠军、拒绝失败候选，并按官方收敛规则停止；过程中没有人指定下一项实验。
 - **Pattern downstream value 未通过本次运行验证**：所有 counterfactual memory mode 的 top choice 相同，因此不能说 distilled patterns 改善了这条 trajectory。
 
+### 跨 run memory 的离线压力测试
+
+短程真实运行尚未让同一 family 被重复选择，因此新增：
+
+```bash
+python scripts/replay_planner_memory.py --max-steps 12
+```
+
+该脚本只读取 26 份历史 `experiment_history.jsonl` 中的 validation 指标，将旧配置归一到当前 schema，并以 34 个有日志支持的配置构造离线 replay。候选被选中前只检查“是否存在日志支持”，不会读取其分数；test summary 不加载。它是 Planner 决策压力测试，不是新的独立训练结果。
+
+| Memory mode | Replay 数 | 无效实验 | 最后保留的配置 | 结果 |
+|---|---:|---:|---:|---|
+| `no_memory` | 6 | 2 | temporal 单 split 0.605010 | 重复进入 rolling 已否定的方向 |
+| `raw_history` | 6 | 2 | temporal 单 split 0.605010 | 与无记忆相同，当前 run 的原始历史不足以阻止它 |
+| `distilled_patterns` | 4 | 2 | 稳健 ensemble 0.604713 | 跳过 2 个已知不稳定 temporal 实验 |
+
+这次结果证明的是“决策质量和效率”，不是更高的单 split 分数：
+
+- 无记忆 Planner 被 `+0.000218`、`+0.000080` 的 temporal 小涨吸引，但已有 rolling 结果为 1/3 folds、平均 `-0.000246`。
+- distilled Planner 读取机器可解析的 `family_policies`，将该 family 标为 `stop_direction`，避免重新采用已被更强证据否定的结论。
+- 因此 memory 确实改变了 trajectory，并节省 2 次实验；代价是放弃表面更高、但更可能过拟合单 validation 的 `0.605010`。
+- 限制：replay 重用了历史日志，不是独立 fresh trials；它验证 Planner 是否使用记忆，不能替代下一次真实 autonomous run。
+
 ## 四篇 Agent 推荐论文：我们真正学到的内容
 
 这些论文研究的是 LLM 推荐 Agent 或对话推荐，不是 KuaiRand 上的自动 ML 调参。因此这里只迁移“如何规划、记忆、反思和探索”的机制，不把论文中的推荐分数当成我们模型有效性的证据。这里的自主改进特指：**根据实验历史更新 memory、research pattern 和 planning policy**；当前没有宣称参数级 self-learning 或 RL。
@@ -555,8 +578,8 @@ Deterministic 和 LLM Researcher 都会看到这些 patterns；被选候选会�
 | 优先级 | 实验 | 要回答的问题 | 通过标准 |
 |---|---|---|---|
 | 完成 | Full autonomous run | 能否无人干预完成观察、选择、执行、反思、停止？ | 已完成：5 次实验后 `converged`，interventions=0，test=null |
-| P1 | Harder planner replay | 在包含同 family 多个候选的历史中，pattern 是否改变选择？ | 使用已经完成的历史结果做离线 replay；不能为证明 memory 而增加真实训练 |
-| P2 | Cross-run validation memory | 上一轮的可靠结论能否在新 run 避免已知失败方向？ | 只加载版本兼容的 validation/rolling 证据；test 永不持久化 |
+| 完成 | Harder planner replay | 在包含同 family 多个候选的历史中，pattern 是否改变选择？ | 已完成：trajectory 改变，并少做 2 个 rolling 已否定的实验 |
+| 完成 | Cross-run validation memory 接线 | 上一轮的可靠结论能否在新 run 避免已知失败方向？ | Deterministic/LLM 都读取结构化 `family_policies`；test 不进入该文件 |
 | P3 | Memory downstream-value test | 一条 distilled pattern 是否真的改变后续选择并减少浪费？ | 使用 `memory_changed_choice` 和下一实验 reward；无影响的 pattern 删除或降权 |
 | P5 | Budgeted one-step lookahead | cheap value estimate 是否比纯 greedy 更好？ | 最多估计 2–3 个候选，只真实执行一个；不得以 lookahead 为名增加真实训练次数 |
 
@@ -568,11 +591,11 @@ Deterministic 和 LLM Researcher 都会看到这些 patterns；被选候选会�
 
 顺序固定为：
 
-1. 短程 memory ablation 已完成且结果为无差异，不宣称 pattern 已有效。
-2. 跑一次按官方收敛规则结束的完整 autonomous trajectory；人不指定下一模型或 feature。
-3. 自动报告 best Primary、无效方向、总成本、manual interventions 和 `memory_influenced_selections`。
-4. 用历史实验做包含重复 family 的 planner replay，再决定是否实现跨 run persistent memory。
-5. 只有 memory 被证明改变选择且下游结果更好，才继续做 one-step lookahead。
+1. 短程真实 memory ablation 无差异；该负结果保留，不用 replay 覆盖它。
+2. 完整 autonomous trajectory 已完成：人不指定下一模型或 feature，5 次实验后自动收敛。
+3. 历史 replay 已证明跨 run pattern 能改变选择，并阻止重新进入 rolling 已否定方向。
+4. 下一步跑一次接入 persistent evidence 后的 fresh autonomous trajectory，确认执行层行为与 replay 一致。
+5. 只有 fresh run 也证明减少浪费后，才继续做 one-step lookahead。
 
 暂时不继续：
 
@@ -596,6 +619,7 @@ python run_agent.py --researcher deterministic --memory-mode no_memory
 python run_agent.py --researcher deterministic --memory-mode raw_history
 python run_agent.py --researcher deterministic --memory-mode distilled_patterns
 python scripts/run_memory_ablation.py --max-iterations 5
+python scripts/replay_planner_memory.py --max-steps 12
 
 # Rolling validation
 python scripts/run_rolling_validation.py
@@ -627,4 +651,4 @@ python scripts/run_global_context_multiseed.py
 python scripts/evaluate_global_context_ensemble.py
 ```
 
-最后更新结论：**冠军不变；global context 为不确定候选；下一步转向能够产生不同错误模式的因果序列模型。**
+最后更新结论：**冠军不变；现在的优先事项是验证跨 run memory 在真实运行中避免已知失败，而不是继续添加模型或 feature。**

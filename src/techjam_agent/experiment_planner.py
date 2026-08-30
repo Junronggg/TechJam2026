@@ -42,6 +42,13 @@ FAMILY_PRIORS = {
     "optimization": (0.25, 0.35, 0.20, 0.20, 0.90),
 }
 MEMORY_MODES = ("no_memory", "raw_history", "distilled_patterns")
+PRIOR_POLICIES = {
+    "exploit_with_confirmation",
+    "ensemble_only",
+    "gather_evidence",
+    "retest_with_control",
+    "stop_direction",
+}
 
 
 @dataclass(frozen=True)
@@ -226,12 +233,37 @@ def _family_observations(history: list[dict[str, Any]], family: str) -> tuple[li
     return deltas, weak, strong_slice_or_diversity
 
 
+def _prior_family_patterns(prior_evidence: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Read only explicit machine-readable policies; never infer policy from prose."""
+    if not isinstance(prior_evidence, dict):
+        return {}
+    rows = prior_evidence.get("family_policies")
+    if not isinstance(rows, list):
+        return {}
+    patterns: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        family, policy = row.get("family"), row.get("policy")
+        if family not in FAMILY_PRIORS or policy not in PRIOR_POLICIES:
+            continue
+        patterns[str(family)] = {
+            "family": str(family),
+            "policy": str(policy),
+            "confidence": row.get("confidence"),
+            "evidence": row.get("evidence"),
+            "source": "persistent_validation_memory",
+        }
+    return patterns
+
+
 def rank_candidates(
     config: dict[str, Any],
     history: list[dict[str, Any]],
     *,
     weights: dict[str, float] | None = None,
     memory_mode: str = "distilled_patterns",
+    prior_evidence: dict[str, Any] | None = None,
 ) -> list[RankedCandidate]:
     """Rank legal, untried experiments by value, evidence, novelty, cost and redundancy."""
     if memory_mode not in MEMORY_MODES:
@@ -246,9 +278,13 @@ def rank_candidates(
         **(weights or {}),
     }
     tried = set(collect_tried_keys(history))
-    patterns = {
+    current_patterns = {
         pattern["family"]: pattern for pattern in distill_research_patterns(history)
     } if memory_mode == "distilled_patterns" else {}
+    prior_patterns = (
+        _prior_family_patterns(prior_evidence)
+        if memory_mode == "distilled_patterns" else {}
+    )
     ranked: list[RankedCandidate] = []
     for candidate in generate_candidates(config):
         changed = apply_changes(config, candidate.changes)
@@ -269,11 +305,16 @@ def rank_candidates(
         )
         if observed is not None:
             score += weights["observed_gain"] * max(-0.005, min(0.005, observed))
-        pattern_policy = patterns.get(candidate.family, {}).get("policy")
+        # Evidence produced in the current run is the freshest signal. Persistent
+        # validation memory fills families that this run has not evaluated yet.
+        pattern = current_patterns.get(candidate.family) or prior_patterns.get(candidate.family, {})
+        pattern_policy = pattern.get("policy")
         if pattern_policy == "exploit_with_confirmation":
             score += 0.08
         elif pattern_policy == "ensemble_only":
             score += 0.03
+        if pattern_policy == "stop_direction":
+            stopped = True
         if stopped:
             score -= 1.0
         ranked.append(RankedCandidate(candidate, score, observed, len(deltas), stopped))
@@ -288,16 +329,19 @@ class AutonomousExperimentPlanner:
         self,
         weights: dict[str, float] | None = None,
         memory_mode: str = "distilled_patterns",
+        prior_evidence: dict[str, Any] | None = None,
     ) -> None:
         if memory_mode not in MEMORY_MODES:
             raise ValueError(f"memory_mode must be one of {MEMORY_MODES}")
         self.weights = weights or {}
         self.memory_mode = memory_mode
+        self.prior_evidence = prior_evidence or {}
         self.last_selection: dict[str, Any] | None = None
 
     def select(self, config: dict[str, Any], history: list[dict[str, Any]]) -> CandidateExperiment:
         ranked = [row for row in rank_candidates(
-            config, history, weights=self.weights, memory_mode=self.memory_mode
+            config, history, weights=self.weights, memory_mode=self.memory_mode,
+            prior_evidence=self.prior_evidence,
         )
                   if not row.direction_stopped]
         if not ranked:
@@ -307,7 +351,8 @@ class AutonomousExperimentPlanner:
         selected_key = experiment_key(apply_changes(config, winner.candidate.changes))
         for mode in MEMORY_MODES:
             mode_ranked = [row for row in rank_candidates(
-                config, history, weights=self.weights, memory_mode=mode
+                config, history, weights=self.weights, memory_mode=mode,
+                prior_evidence=self.prior_evidence,
             ) if not row.direction_stopped]
             if not mode_ranked:
                 counterfactual_choices[mode] = None
@@ -322,9 +367,14 @@ class AutonomousExperimentPlanner:
                 "score": float(alternative.score),
                 "differs_from_selected": alternative_key != selected_key,
             }
-        matching_patterns = {
+        current_patterns = {
             pattern["family"]: pattern for pattern in distill_research_patterns(history)
         } if self.memory_mode == "distilled_patterns" else {}
+        prior_patterns = (
+            _prior_family_patterns(self.prior_evidence)
+            if self.memory_mode == "distilled_patterns" else {}
+        )
+        matching_patterns = {**prior_patterns, **current_patterns}
         self.last_selection = {
             "memory_mode": self.memory_mode,
             "selected_family": winner.candidate.family,
