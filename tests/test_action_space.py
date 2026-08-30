@@ -196,9 +196,13 @@ class HardSoftSelectionTests(unittest.TestCase):
         )
         self.assertTrue(blocked.hard_blocked)
         self.assertFalse(blocked.soft_stopped)
-        self.assertEqual(admissible_candidates(ranked, relax_soft=False),
-                         admissible_candidates(ranked, relax_soft=True))
-        self.assertNotIn(blocked, admissible_candidates(ranked, relax_soft=True))
+        preferred = admissible_candidates(ranked, relax_soft=False)
+        relaxed = admissible_candidates(ranked, relax_soft=True)
+        self.assertNotIn(blocked, preferred)
+        self.assertNotIn(blocked, relaxed)
+        self.assertTrue(all(
+            not row.hard_blocked and not row.soft_stopped for row in preferred
+        ))
 
     def test_soft_evidence_is_skipped_in_pass_one_and_recoverable_in_pass_two(self) -> None:
         history = exhaust(
@@ -275,13 +279,14 @@ class HardSoftSelectionTests(unittest.TestCase):
             if row.candidate.changes == {"user_recent_3d_activity": True}
         )
         self.assertFalse(fm_user.hard_blocked)
-        self.assertFalse(fm_user.soft_stopped)
+        self.assertIn("missing_leakage_evidence", fm_user.evidence_reasons)
         ensemble_user = next(
             row for row in rank_candidates(
                 ensemble_config(), [], prior_evidence=evidence,
             ) if row.candidate.changes == {"user_recent_3d_activity": True}
         )
         self.assertFalse(ensemble_user.hard_blocked)
+        self.assertIn("missing_leakage_evidence", ensemble_user.evidence_reasons)
         parent = apply_changes(ensemble_config(), {"user_recent_3d_activity": True})
         combined = next(
             row for row in rank_candidates(parent, [], prior_evidence=evidence)

@@ -3,6 +3,15 @@
   "task": "long_view",
   "feature_schema": "v3",
   "noise_threshold": 0.0002,
+  "feasibility_schema_version": 1,
+  "feasibility_thresholds": {
+    "low_coverage": 0.01,
+    "high_correlation": 0.99,
+    "high_correlation_effect": "soft_stop",
+    "runtime_reference_seconds": 60.0,
+    "runtime_cost_min": 0.05,
+    "runtime_cost_max": 2.0
+  },
   "sources": [
     {
       "id": "ensemble_rolling_v1",
@@ -202,6 +211,46 @@
           "embedding_dim": 32,
           "learning_rate": 0.001
         }
+      }
+    },
+    {
+      "id": "sequence_runtime_v1",
+      "family": "sequence_model",
+      "kind": "family_runtime",
+      "path": "runs/lightweight_sequence_ablation/summary.json",
+      "pointer": ["results", "sequence_deepfm"],
+      "runtime_key": "runtime_seconds",
+      "validation_only": true,
+      "applies_to": {
+        "models": ["sequence_deepfm"],
+        "training_objectives": ["bce"]
+      }
+    },
+    {
+      "id": "dcnv2_runtime_v1",
+      "family": "cross_network",
+      "kind": "family_runtime",
+      "path": "runs/rolling_dcnv2/summary.json",
+      "pointer": ["folds"],
+      "runtime_key": "runtime_seconds",
+      "runtime_model": "dcnv2",
+      "validation_only": true,
+      "applies_to": {
+        "models": ["dcnv2"],
+        "training_objectives": ["bce"]
+      }
+    },
+    {
+      "id": "pairwise_multitask_runtime_v1",
+      "family": "pairwise_multitask",
+      "kind": "family_runtime",
+      "path": "runs/pairwise_multitask_ablation/summary.json",
+      "pointer": ["results", "multitask_like_bpr", "metrics"],
+      "runtime_key": "runtime_seconds",
+      "validation_only": true,
+      "applies_to": {
+        "models": ["multitask_deepfm"],
+        "training_objectives": ["bpr"]
       }
     }
   ]
