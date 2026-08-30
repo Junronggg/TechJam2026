@@ -74,8 +74,10 @@ class CandidatePlanningTests(unittest.TestCase):
         })
         payload = ranked[0].as_dict()
         for key in ("expected_gain", "evidence_strength", "novelty",
-                    "compute_cost", "redundancy", "score"):
+                    "compute_cost", "redundancy", "score", "action_type",
+                    "hard_blocked", "soft_stopped"):
             self.assertIn(key, payload)
+        self.assertEqual(ranked[0].candidate.action_type, "TRY_MODEL")
 
     def test_repeated_noise_stops_a_direction_without_slice_or_diversity_gain(self):
         history = []
@@ -94,6 +96,8 @@ class CandidatePlanningTests(unittest.TestCase):
             if row.candidate.family == "global_context"
         )
         self.assertTrue(global_context.direction_stopped)
+        self.assertFalse(global_context.hard_blocked)
+        self.assertTrue(global_context.soft_stopped)
         no_memory = next(
             row for row in rank_candidates(
                 load_config(), history, memory_mode="no_memory"

@@ -21,10 +21,12 @@ from techjam_agent.controller import Controller
 from techjam_agent.memory import (
     GENERIC_FAILURE_THRESHOLD,
     LESSON_LIMIT,
+    PATTERN_LIMIT,
     PLANNER_RECENT_HISTORY,
     SIGNATURE_LIMIT,
     build_memory_summary,
     collect_tried_keys,
+    distill_research_patterns,
     evidence_directions,
     is_duplicate_config,
 )
@@ -481,6 +483,27 @@ class EvidenceDirectionTests(unittest.TestCase):
                    error={"type": "RuntimeError", "message": "LightGBM is required: install"}),
         ]
         self.assertEqual(evidence_directions(history), evidence_directions(history))
+
+
+class PatternLimitRegressionTests(unittest.TestCase):
+    def test_pattern_limit_is_defined_and_truncates_distilled_families(self) -> None:
+        self.assertIsInstance(PATTERN_LIMIT, int)
+        self.assertGreaterEqual(PATTERN_LIMIT, 1)
+        history = []
+        for index, family in enumerate(
+            f"family_{index}" for index in range(PATTERN_LIMIT + 3)
+        ):
+            history.append({
+                "iteration": index + 1,
+                "status": "success",
+                "decision": "REJECT",
+                "candidate_selection": {"selected_family": family},
+                "critique": {"verdict": "reject"},
+                "diagnostics": {},
+                "delta_from_parent": -0.001,
+            })
+        patterns = distill_research_patterns(history)
+        self.assertEqual(len(patterns), PATTERN_LIMIT)
 
 
 if __name__ == "__main__":

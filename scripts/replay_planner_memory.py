@@ -33,6 +33,7 @@ from techjam_agent.evidence import (  # noqa: E402
 )
 from techjam_agent.experiment_planner import (  # noqa: E402
     MEMORY_MODES,
+    choose_ranked,
     rank_candidates,
 )
 
@@ -187,12 +188,10 @@ def replay_mode(
     support_skips = 0
 
     for iteration in range(1, max_steps + 1):
-        ranked = [
-            row for row in rank_candidates(
-                best_config, history, memory_mode=mode,
-                prior_evidence=prior_evidence,
-            ) if not row.direction_stopped
-        ]
+        ranked = choose_ranked(rank_candidates(
+            best_config, history, memory_mode=mode,
+            prior_evidence=prior_evidence,
+        ))
         supported = []
         for ranked_row in ranked:
             candidate_config = apply_changes(
