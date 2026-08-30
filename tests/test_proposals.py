@@ -6,6 +6,7 @@ import io
 import json
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -85,6 +86,8 @@ class ScriptedUrlOpen:
         if not self.payloads:
             raise AssertionError("unexpected extra urlopen call")
         item = self.payloads.pop(0)
+        if isinstance(item, Exception):
+            raise item
         return FakeHTTPResponse(item)
 
 
@@ -127,6 +130,8 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(prompt["official_baseline_primary"], OFFICIAL_BASELINE_PRIMARY)
         self.assertEqual(prompt["epsilon"], CONVERGENCE_EPSILON)
         self.assertEqual(prompt["epsilon"], 0.002)
+        self.assertIn("budget", prompt)
+        self.assertIn("remaining_seconds", prompt["budget"])
         self.assertIn("training_objective", prompt["allowed_values"])
         self.assertIn("model", prompt["allowed_values"])
         self.assertEqual(prompt["allowed_values"]["max_change_fields"], MAX_CHANGE_FIELDS)
@@ -216,6 +221,7 @@ class LlmResearcherTests(unittest.TestCase):
         opener = ScriptedUrlOpen(payloads)
         researcher = OpenAICompatibleResearcher(
             "gpt-test", api_key="sk-test-not-real", urlopen=opener,
+            retry_backoff_seconds=0,
         )
         return researcher, opener
 
@@ -229,6 +235,7 @@ class LlmResearcherTests(unittest.TestCase):
         self.assertEqual(proposal.changes, {"training_objective": "bpr"})
         self.assertEqual(proposal.token_usage["total_tokens"], 15)
         self.assertEqual(proposal.source, "llm")
+        self.assertEqual(proposal.llm_attempts, 1)
 
     def test_invalid_then_valid_succeeds_after_retry(self) -> None:
         researcher, opener = self._researcher([
@@ -241,6 +248,61 @@ class LlmResearcherTests(unittest.TestCase):
         self.assertEqual(proposal.token_usage["prompt_tokens"], 12)
         self.assertEqual(proposal.token_usage["completion_tokens"], 3)
         self.assertEqual(proposal.token_usage["total_tokens"], 15)
+        self.assertEqual(proposal.llm_attempts, 2)
+
+    def test_timeout_then_valid_response_retries(self) -> None:
+        researcher, opener = self._researcher([
+            TimeoutError("mock timeout"),
+            chat_payload(legal_changes(), {"total_tokens": 7}),
+        ])
+        proposal = researcher.propose(load_config(), [])
+        self.assertEqual(len(opener.calls), 2)
+        self.assertEqual(proposal.llm_attempts, 2)
+        self.assertEqual(proposal.token_usage["total_tokens"], 7)
+
+    def test_network_errors_exhaust_all_attempts(self) -> None:
+        researcher, opener = self._researcher([
+            urllib.error.URLError("offline") for _ in range(MAX_LLM_ATTEMPTS)
+        ])
+        with self.assertRaises(RuntimeError) as raised:
+            researcher.propose(load_config(), [])
+        self.assertIn("after 3 attempts", str(raised.exception))
+        self.assertNotIn("sk-test-not-real", str(raised.exception))
+        self.assertEqual(len(opener.calls), MAX_LLM_ATTEMPTS)
+
+    def test_illegal_change_then_valid_response_retries(self) -> None:
+        researcher, opener = self._researcher([
+            chat_payload({**legal_changes(), "changes": {"dropout": 0.5}}),
+            chat_payload(legal_changes()),
+        ])
+        proposal = researcher.propose(load_config(), [])
+        self.assertEqual(len(opener.calls), 2)
+        self.assertEqual(proposal.changes, {"training_objective": "bpr"})
+
+    def test_duplicate_change_then_new_change_retries(self) -> None:
+        bpr = json.loads(json.dumps(load_config()))
+        bpr["training_objective"] = "bpr"
+        researcher, opener = self._researcher([
+            chat_payload(legal_changes()),
+            chat_payload({
+                "hypothesis": "Tune the FM learning rate.",
+                "reason": "Test one legal optimization variable.",
+                "changes": {"learning_rate": 0.002},
+            }),
+        ])
+        proposal = researcher.propose(load_config(), [{"config": bpr}])
+        self.assertEqual(len(opener.calls), 2)
+        self.assertEqual(proposal.changes, {"learning_rate": 0.002})
+
+    def test_ten_mocked_calls_return_legal_structured_proposals(self) -> None:
+        for _ in range(10):
+            researcher, opener = self._researcher([chat_payload(legal_changes())])
+            proposal = researcher.propose(load_config(), [])
+            self.assertEqual(len(opener.calls), 1)
+            self.assertEqual(proposal.changes, {"training_objective": "bpr"})
+            self.assertEqual(set(proposal.as_dict()), {
+                "hypothesis", "reason", "changes", "source", "token_usage", "llm_attempts",
+            })
 
     def test_three_invalid_responses_raise_clear_error(self) -> None:
         payloads = [
@@ -286,6 +348,7 @@ class LlmResearcherTests(unittest.TestCase):
 
         researcher = OpenAICompatibleResearcher(
             "gpt-test", api_key="sk-test-not-real", urlopen=capturing_urlopen,
+            retry_backoff_seconds=0,
         )
         researcher.propose(load_config(), [])
         self.assertEqual(len(opener.bodies[0]["messages"]), 2)
@@ -319,6 +382,40 @@ class LlmResearcherTests(unittest.TestCase):
 
 
 class FallbackTests(unittest.TestCase):
+    def test_controller_reports_llm_budget_and_token_accounting(self) -> None:
+        class AccountedLlm:
+            def __init__(self):
+                self.last_attempts = 2
+                self.last_token_usage = {
+                    "prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15,
+                }
+                self.context = None
+
+            def set_run_context(self, context):
+                self.context = context
+
+            def propose(self, best, history):
+                return Proposal(
+                    legal_changes()["hypothesis"], legal_changes()["reason"],
+                    legal_changes()["changes"], "llm", self.last_token_usage, 2,
+                )
+
+        researcher = AccountedLlm()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            controller = Controller(
+                FakeRunner(), researcher, load_config(), load_project(),
+                base / "logs", base / "artifacts", base / "submissions",
+            )
+            with patch("sys.stdout", new=io.StringIO()):
+                summary = controller.run(max_iterations=2)
+        self.assertEqual(summary["llm_requests"], 2)
+        self.assertEqual(summary["llm_tokens"]["total_tokens"], 15)
+        self.assertEqual(summary["llm_failures"], 0)
+        self.assertEqual(researcher.context["remaining_iterations"], 1)
+        self.assertGreater(researcher.context["remaining_seconds"], 0)
+        self.assertEqual(researcher.context["estimated_next_experiment_seconds"], 900.0)
+
     def test_controller_falls_back_to_deterministic_after_llm_error(self) -> None:
         class FailingLlm:
             def propose(self, best, history):
