@@ -8,6 +8,7 @@ from typing import Any
 from .config import experiment_key
 
 LESSON_LIMIT = 5
+PATTERN_LIMIT = 8
 SIGNATURE_LIMIT = 10
 PLANNER_RECENT_HISTORY = 5
 VALIDATION_METRIC_KEYS = ("GAUC", "nDCG@5", "primary")

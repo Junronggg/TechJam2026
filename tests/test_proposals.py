@@ -142,6 +142,10 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(prompt["history"][0]["critique"]["observation"], "Validation Primary=0.601500")
         self.assertEqual(prompt["history"][0]["decision"], "KEEP")
         self.assertIn("remaining", prompt)
+        self.assertIn("research_patterns", prompt)
+        self.assertIsInstance(prompt["research_patterns"], list)
+        import techjam_agent.proposals as proposals_mod
+        self.assertTrue(hasattr(proposals_mod, "distill_research_patterns"))
         self.assertIn("bpr", prompt["remaining"]["training_objectives"])
 
     def test_prompt_excludes_test_metrics(self) -> None:
