@@ -93,14 +93,27 @@ item, while leaving the model structure, features, split, and official evaluator
 unchanged. The first seed-0 comparison improved validation primary from `0.601470` to
 `0.603396`; this should be repeated across seeds before claiming a stable gain.
 
-The NumPy model suite also includes DeepFM and `multitask_deepfm`. The multi-task
-variant shares embeddings and its MLP across `long_view`, click, and like losses;
-click/like are training-only auxiliary labels and are never passed as prediction-time
-features. Run the reproducible rolling comparisons with:
+The NumPy model suite also includes DeepFM, `multitask_deepfm`, and low-rank DCNv2.
+The multi-task model can isolate click, like, censored completion, and capped
+log-watch targets; the current evidence-backed default is like-only. Auxiliary
+outcomes are training-only targets and are never passed as prediction-time features.
+The FM branch also supports a learned constant `global_context` field; it improved
+all three rolling folds, but won only 3/4 paired seeds and is therefore still a
+candidate. Candidate-history fields failed their matched placebo check. Run the
+reproducible checks with:
 
 ```bash
 python scripts/run_rolling_validation.py
 python scripts/run_multitask_rolling.py
+python scripts/run_sequence_rolling.py
+python scripts/run_dcnv2_rolling.py
+python scripts/run_global_context_ablation.py
+python scripts/run_constant_context_rolling.py
+python scripts/run_global_context_multiseed.py
+python scripts/analyze_conditional_complementarity.py
+python scripts/evaluate_history_gated_ensemble.py
+python scripts/run_lightweight_sequence_ablation.py
+python scripts/evaluate_random_exposure_robustness.py
 ```
 
 Run the offline deterministic researcher first:

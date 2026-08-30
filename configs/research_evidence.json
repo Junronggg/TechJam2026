@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 3,
   "scope": "Validation-only and rolling-validation evidence for within-user long_view ranking.",
   "supported_findings": [
     {
@@ -9,6 +9,14 @@
     {
       "mechanism": "FM+BPR and DeepFM+BCE ensemble with DeepFM weight 0.4",
       "evidence": "Improved over FM+BPR in all 3 rolling folds; mean Primary delta was +0.001123."
+    },
+    {
+      "mechanism": "Like-only auxiliary task on multi-task DeepFM",
+      "evidence": "Improved all 3 rolling folds over DeepFM with mean Primary delta +0.000309; official validation delta was +0.000538."
+    },
+    {
+      "mechanism": "Low-rank DCNv2 with 2 cross layers and rank 16",
+      "evidence": "Improved all 3 rolling folds over DeepFM with mean Primary delta +0.000248; official validation delta was +0.000302."
     }
   ],
   "rejected_findings": [
@@ -31,45 +39,72 @@
     {
       "mechanism": "Hybrid BCE+BPR loss",
       "evidence": "Weights 0.25, 0.50, and 0.75 did not beat pure BPR."
+    },
+    {
+      "mechanism": "Censored completion ratio as the only auxiliary task",
+      "evidence": "Official validation delta versus DeepFM was only +0.000014, consistent with duplicating the long_view definition rather than adding information."
+    },
+    {
+      "mechanism": "Capped log watch-time regression as the only auxiliary task",
+      "evidence": "Official validation delta versus DeepFM was only +0.000029, so the observational watch-time relationship did not translate into useful auxiliary supervision."
+    },
+    {
+      "mechanism": "Candidate-specific positive-history interpretation",
+      "evidence": "prior_video_positive and author_positive_recency appeared to add +0.000242 and +0.000236, but the matched constant-field placebo added +0.000431. Validation coverage was only 0.0304% and 0.7269%, respectively; the behavioral attribution is rejected."
+    },
+    {
+      "mechanism": "Prior same-video count and immediately previous same-author indicator",
+      "evidence": "Official validation deltas versus FM+BPR were -0.000027 and +0.000046, respectively. The latter is below normal run-level variation and is not treated as a gain."
+    },
+    {
+      "mechanism": "Adding DCNv2 to the FM+DeepFM ensemble",
+      "evidence": "DeepFM/DCNv2 prediction correlation was 0.9925-0.9963. DCNv2 replacement won 1/3 rolling folds (mean -0.000244); the three-model blend won 0/3 (mean -0.000272)."
+    },
+    {
+      "mechanism": "Replacing ensemble DeepFM with like-only multi-task DeepFM",
+      "evidence": "Won only 1/3 rolling folds with mean Primary delta -0.000276 despite improving DeepFM alone."
+    },
+    {
+      "mechanism": "Rule gate that adds 50% DCNv2 for history_len <= 2",
+      "evidence": "The cold slice initially showed DCNv2 +0.009087 versus the champion, but the actual gate reduced official validation by 0.000017 and won only 2/3 rolling folds with mean +0.000012. Slice superiority alone is not ensemble evidence."
+    },
+    {
+      "mechanism": "Leakage-safe last-16 candidate-attention Sequence DeepFM",
+      "evidence": "Scored 0.603369 versus 0.603862 for the controlled DeepFM and took 813.4 versus 32.7 seconds. It was 0.001344 below the champion; a predeclared 10% sequence blend was also -0.000023. Do not sweep K or blend weights for this implementation."
     }
   ],
   "uncertain_findings": [
     {
-      "mechanism": "Multi-task DeepFM with click and like auxiliary BCE at weight 0.1",
-      "evidence": "Improved the official validation split by 0.000397 and 2 of 3 rolling folds; rolling mean delta versus DeepFM was +0.000198, with fold 3 at -0.000050. Keep the implementation but do not sweep the weight yet."
+      "mechanism": "FM+BPR with a learned global_context field",
+      "evidence": "Official validation delta was +0.000431 and rolling improved 3/3 folds (mean +0.000810). Across paired seeds 0-3, however, it won 3/4 with mean +0.000333 and an approximate 95% interval [-0.000427, +0.001092], so the gain is promising but not statistically confirmed."
+    },
+    {
+      "mechanism": "Using global-context FM inside the FM+DeepFM ensemble",
+      "evidence": "Won all 3 rolling folds with mean delta +0.000460, but reduced official validation Primary by 0.000039. Keep as a candidate pending paired-seed checks, not the champion."
+    },
+    {
+      "mechanism": "Conditional complementarity of like-only DeepFM and DCNv2",
+      "evidence": "Like-only was +0.001340 on short videos and DCNv2 was +0.009087 on cold-history rows, but both were below the champion overall and slice-derived gating did not produce a stable gain. Treat slices as hypothesis generators only."
+    },
+    {
+      "mechanism": "FM+BPR plus DeepFM ensemble under random exposure",
+      "evidence": "The ensemble was +0.000750 over FM+BPR on standard exposure but -0.000155 on development-only random exposure, a relative-gain change of -0.000905. The ensemble is a standard-policy champion, while FM+BPR was more robust to exposure-policy shift."
     }
   ],
-  "rolling_validation": {
-    "folds": [
-      {
-        "valid_dates": "2022-04-15..2022-04-17",
-        "fm_bpr_primary": 0.610742,
-        "ensemble_primary": 0.611392,
-        "ensemble_temporal_primary": 0.611736
-      },
-      {
-        "valid_dates": "2022-04-18..2022-04-20",
-        "fm_bpr_primary": 0.580129,
-        "ensemble_primary": 0.581429,
-        "ensemble_temporal_primary": 0.580824
-      },
-      {
-        "valid_dates": "2022-04-21..2022-04-23",
-        "fm_bpr_primary": 0.586890,
-        "ensemble_primary": 0.588308,
-        "ensemble_temporal_primary": 0.587830
-      }
-    ],
-    "decision": "Keep the non-temporal ensemble and reject the temporal increment."
-  },
   "research_policy": [
     "Prefer a new mechanism or information source over fine-grained parameter sweeps.",
     "Do not repeat rejected mechanisms without a materially different representation or objective.",
     "Use rolling-fold consistency when judging stability.",
-    "Never request or use official test metrics during research."
+    "Never request or use official test metrics during research.",
+    "Do not add a model to an ensemble until prediction complementarity is measured.",
+    "Require constant, shuffled, and same-cardinality random controls before attributing a categorical-feature gain.",
+    "Use fixed slices to generate hypotheses, then evaluate the complete gated ranking before deciding."
   ],
-  "roadmap_not_current_actions": [
-    "DCNv2 as one stronger interaction model",
-    "ensemble expansion only after measuring prediction complementarity"
+  "next_actions": [
+    "If global_context is studied further, predeclare additional paired seeds and never select the best seed.",
+    "Integrate fixed slices, placebo verdicts, and exposure-policy robustness into the Agent's structured experiment report.",
+    "Keep the strict last-K tensors, but revisit sequence modeling only with a materially different efficient backend and architecture.",
+    "Require a matched constant-field placebo when evaluating any newly appended categorical FM feature.",
+    "Keep the original FM+BPR plus DeepFM ensemble as the current champion."
   ]
 }

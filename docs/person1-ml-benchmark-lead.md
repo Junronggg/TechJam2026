@@ -11,15 +11,15 @@ For the detailed model, parameter, feature, and optimization inventory, see [`mo
 | Task | Status | Current evidence | Main gap |
 |---|---|---|---|
 | P1.1 Benchmark ownership | ✅ Mostly complete | Official FM reproduced; metrics and splits documented | Clean-environment reproduction record |
-| P1.2 Stable training interface | 🟡 Partial | `src/techjam_agent/runner.py` runs FM and LightGBM | `recommender/train.py` is not connected; two frameworks remain |
-| P1.3 Feature registry | 🟡 Partial | Two encoders support multiple safe features | Missing cache keys, unified fit/transform contract, and temporal features |
-| P1.4 Item historical features | ✅ Minimum accepted | Popularity and item rate/count | No gain yet; recency and author priors remain |
+| P1.2 Stable training interface | 🟡 Partial | Runner executes FM, LightGBM, DeepFM, multi-task/sequence DeepFM, DCNv2, and ensemble | `recommender/train.py` is not connected; two frameworks remain |
+| P1.3 Feature registry | 🟡 Partial | Includes strict-past temporal and candidate-history features | Missing cache keys and one unified fit/transform contract |
+| P1.4 Item historical features | ✅ Audited | Candidate-history gains failed the matched placebo check | Sequence-order model remains |
 | P1.5 Personalization | ✅ Minimum accepted | User activity/rate and user×tab/tag features | Real user×tag experiment remains |
-| P1.6 Objectives | ✅ Complete | BCE/BPR are configurable with a controlled comparison | Multi-seed BPR and sampling parameters |
-| P1.7 Model registry | 🟡 Partial | FM and LightGBM run | Registry status mismatch; DeepFM not implemented |
+| P1.6 Objectives | ✅ Complete | BCE/BPR plus selectable multi-task targets | Final candidate paired-seed report |
+| P1.7 Model registry | ✅ Runnable suite | FM, LightGBM, DeepFM, multi-task DeepFM, DCNv2, ensemble | Unify the secondary registry |
 | P1.8 Legal parameters | ✅ Mostly complete | Config allowlists and validator | Seed/BPR/smoothing spaces need expansion |
-| P1.9 Leakage audit | 🟡 Partial | LOO, test isolation, evaluator hash | Temporal audit and multi-seed report |
-| P1.10 Sanity experiments | ✅ Complete | Seven controlled experiments | Package as final submission evidence |
+| P1.9 Leakage audit | ✅ Core complete | LOO, millisecond strict-past order, rolling validation, test isolation | Final clean-environment audit |
+| P1.10 Sanity experiments | ✅ Complete | Controlled ablations plus 3-fold rolling checks | Package as final submission evidence |
 
 ### 2. P1.1 — Benchmark Note
 
@@ -122,7 +122,12 @@ cache_key, leakage_rule, implemented
 | `user_tag_affinity` | Target-derived | Encoder implemented | Pair → global prior; real run pending |
 | `user_tab_long_view_rate` | Target-derived | Executed | Train LOO; unseen → global prior |
 | `continuous_history_stats` | Continuous bundle | Executed | Train LOO; LightGBM only |
-| `temporal_recency` | Temporal | Not implemented | Must use strict past windows |
+| `user/item_recent_3d_*` | Temporal counts | Executed; rejected | Strict earlier days only |
+| `prior_video_positive` | Candidate history | Executed; behavior claim rejected by placebo | Earlier millisecond timestamps only; 0.0304% validation coverage |
+| `author_positive_recency` | Candidate-author history | Executed; behavior claim rejected by placebo | Frozen train positive history for validation |
+| `prior_video_count` | Candidate exposure history | Executed; rejected | Strictly earlier timestamps |
+| `previous_author_same` | One-step author adjacency | Executed; rejected | Target-free and strictly causal |
+| `global_context` | Learned constant FM field | Executed; uncertain candidate | Rolling 3/3; paired seeds 3/4, mean +0.000333, interval crosses 0 |
 
 Expensive statistics are currently recomputed in each child process. Recommended cache key:
 
@@ -133,7 +138,7 @@ dataset_digest + train_range + feature_name + feature_version
 
 No cache may contain validation or test labels.
 
-**Acceptance:** more than 4–6 configurable features exist. The two registries/encoders, caching, and temporal features still need unification.
+**Acceptance:** safe target-rate, temporal, and candidate-history features are configurable. Registry/encoder unification and persistent caching remain.
 
 ### 5. P1.4 — Item-side Features
 
@@ -188,17 +193,22 @@ Current BPR pairs examples within the same user, samples one negative per positi
 
 Result: Primary improved from `0.601470` to `0.603396`, so the agent selected KEEP.
 
-Next parameters: `pairs_per_positive` 1/2/4, BPR-specific learning rate, max pairs per user, uniform-user weighting, hard negatives, margin, and temperature.
+Completed checks: paired seeds 0–3, BPR learning rates, 1/2/4 pairs per positive, and semi-hard negatives. Remaining materially different options are uniform-user weighting, margin, and temperature.
 
-**Acceptance:** objective switch, mathematical definition, controlled comparison, and reproducible execution are complete. Multi-seed validation remains.
+**Acceptance:** objective switch, mathematical definition, controlled comparison, and paired multi-seed validation are complete.
 
 ### 8. P1.7 — Model Registry
 
 | Model | Actually runnable | Objective | Best Primary | Note |
 |---|---|---|---:|---|
-| FM | ✅ | BCE/BPR | **0.603396** | Current best |
+| FM | ✅ | BCE/BPR | 0.603963 | Strong pairwise component |
+| FM + global context | ✅ | BPR | 0.604394 | Candidate; rolling 3/3, paired seeds 3/4 |
 | LightGBM | ✅ | Binary BCE | 0.599817 | Stable but below FM |
-| DeepFM | ❌ | Planned BCE/BPR | — | Registry placeholder only |
+| DeepFM | ✅ | BCE/BPR | 0.603862 | Ensemble component |
+| Multi-task DeepFM | ✅ | BCE | 0.604400 | Like-only; 3/3 rolling wins |
+| Lightweight Sequence DeepFM | ✅ | BCE | 0.603369 | Rejected; below DeepFM and ~25x runtime |
+| Low-rank DCNv2 | ✅ | BCE | 0.604164 | 3/3 rolling wins over DeepFM |
+| FM + DeepFM ensemble | ✅ | BPR + BCE | **0.604713** | Current champion |
 
 `recommender/models/__init__.py` still marks all models as `implemented=False`, which does not match the real `src/techjam_agent` capability. It should be corrected when the unified Trainer is connected.
 
@@ -211,7 +221,7 @@ save_checkpoint(path)
 load_checkpoint(path)
 ```
 
-**Acceptance:** FM and a second model, LightGBM, run end to end. Registry unification and DeepFM remain.
+**Acceptance:** all listed models run end to end through `ExperimentRunner`. Secondary-registry unification remains.
 
 ### 9. P1.8 — Legal Parameters and Compatibility
 
@@ -275,12 +285,12 @@ All operators finish training, produce finite aligned predictions, use the offic
 
 ### 12. Next Work Order
 
-#### P0 — BPR multi-seed
+#### P0 — Agent decision protocol
 
-1. Expand seed allowlist to 0–4.
-2. Run BCE and BPR for every seed.
-3. Report paired-delta mean, standard deviation, and confidence interval.
-4. Decide whether BPR is a stable improvement.
+1. Attach fixed slices and pair-error recovery to experiment reports.
+2. Run constant/shuffled/random controls for new categorical fields.
+3. Distinguish standard-policy score from random-exposure robustness.
+4. Keep the current NumPy sequence implementation rejected.
 
 #### P1 — Unified training interface
 
@@ -298,12 +308,10 @@ All operators finish training, produce finite aligned predictions, use the offic
 
 #### P2 — New research capability
 
-1. `pairs_per_positive` 1/2/4.
-2. Strictly historical recent exposure/activity.
-3. LightGBM LambdaRank.
-4. Minimal DeepFM BCE.
-5. DeepFM+BPR.
-6. Click/like multi-task learning.
+1. Add one causal sequence-order model, preferably a lightweight BST.
+2. Compare prediction correlation with FM/DeepFM before ensemble use.
+3. Keep a constant-field placebo beside every new categorical FM feature.
+4. Feed supported/rejected evidence to the LLM Researcher.
 
 ### 13. Person 1 Deliverables
 
@@ -336,15 +344,15 @@ Person 1 is complete not when the repository contains the largest possible numbe
 | 任务 | 状态 | 当前证据 | 主要缺口 |
 |---|---|---|---|
 | P1.1 Benchmark | ✅ 基本完成 | 官方 FM 已复现，指标/split 已文档化 | clean-environment 复现记录 |
-| P1.2 统一训练接口 | 🟡 部分完成 | `src/techjam_agent/runner.py` 可运行 FM/LightGBM | `recommender/train.py` 尚未接通，双框架待统一 |
-| P1.3 Feature registry | 🟡 部分完成 | 两套 encoder 支持多种安全 feature | 缺 cache key、统一 fit/transform、temporal feature |
-| P1.4 Item 历史特征 | ✅ 完成最小验收 | popularity、item rate/count | 未提分；recency/author prior 未做 |
+| P1.2 统一训练接口 | 🟡 部分完成 | Runner 可运行 FM、LightGBM、DeepFM、Multi-task/Sequence DeepFM、DCNv2、ensemble | `recommender/train.py` 尚未接通，双框架待统一 |
+| P1.3 Feature registry | 🟡 部分完成 | 已有严格过去 temporal 与候选历史 feature | 缺 cache key 和统一 fit/transform contract |
+| P1.4 Item 历史特征 | ✅ 已审计 | 候选历史的小涨未通过匹配 placebo 检查 | 仍缺序列顺序模型 |
 | P1.5 Personalization | ✅ 完成最小验收 | user activity/rate、user×tab/tag | user×tag 尚需真实实验 |
-| P1.6 Objective | ✅ 完成 | BCE/BPR 可配置且有公平对照 | BPR 多 seed、负采样参数 |
-| P1.7 Model registry | 🟡 部分完成 | FM 与 LightGBM 可运行 | registry 状态不一致；DeepFM 未实现 |
+| P1.6 Objective | ✅ 完成 | BCE/BPR 与可选择 multi-task target | 最终候选 paired-seed 报告 |
+| P1.7 Model registry | ✅ 可运行套件 | FM、LightGBM、DeepFM、Multi-task DeepFM、DCNv2、ensemble | 统一 secondary registry |
 | P1.8 参数兼容规则 | ✅ 基本完成 | config 白名单与 validator | seed/BPR/smoothing 参数待扩展 |
-| P1.9 Leakage audit | 🟡 部分完成 | LOO、test 隔离、evaluator hash | temporal audit、多 seed 报告 |
-| P1.10 Sanity experiments | ✅ 完成 | 7 个受控实验 | 整理成最终提交证据 |
+| P1.9 Leakage audit | ✅ 核心完成 | LOO、毫秒级严格过去顺序、rolling、test 隔离 | 最终 clean-environment audit |
+| P1.10 Sanity experiments | ✅ 完成 | 受控消融与 3-fold rolling | 整理成最终提交证据 |
 
 ### 2. P1.1 — Benchmark Note
 
@@ -459,7 +467,12 @@ cache_key, leakage_rule, implemented
 | `user_tag_affinity` | target-derived | encoder 已实现 | pair → global prior；待真实实验 |
 | `user_tab_long_view_rate` | target-derived | 已运行 | train LOO；unseen → global prior |
 | `continuous_history_stats` | continuous bundle | 已运行 | train LOO；仅 LightGBM |
-| `temporal_recency` | temporal | 未实现 | 必须严格过去窗口 |
+| `user/item_recent_3d_*` | temporal count | 已运行；拒绝 | 只统计更早日期 |
+| `prior_video_positive` | 候选视频历史 | 已运行；行为结论被 placebo 否定 | 只读取更早毫秒时间戳；validation 覆盖 0.0304% |
+| `author_positive_recency` | 候选作者历史 | 已运行；行为结论被 placebo 否定 | validation 冻结 train 正反馈历史 |
+| `prior_video_count` | 候选视频曝光历史 | 已运行；拒绝 | 只读严格更早时间戳 |
+| `previous_author_same` | 相邻曝光是否同作者 | 已运行；拒绝 | 无 target 且严格因果 |
+| `global_context` | 可学习的 FM 常量字段 | 已运行；不确定候选 | rolling 3/3；paired seeds 3/4，平均 +0.000333，区间跨 0 |
 
 昂贵统计当前会在子进程重复计算。建议 cache key：
 
@@ -470,7 +483,7 @@ dataset_digest + train_range + feature_name + feature_version
 
 缓存不得包含 validation/test labels。
 
-**验收：** 已有 4–6 个以上 feature 可配置；尚需合并两套 registry/encoder、增加 cache 与 temporal feature。
+**验收：** target-rate、temporal 和候选历史 feature 均已安全可配置；仍需统一 registry/encoder 与持久 cache。
 
 ### 5. P1.4 — Item-side Features
 
@@ -551,17 +564,22 @@ LightGBM + user×tab 的 Primary 为 `0.597528`，低于纯 LightGBM `0.599817`�
 
 结果：Primary `0.601470 → 0.603396`，Agent KEEP。
 
-下一步参数：`pairs_per_positive` 1/2/4、BPR 专用 lr、max pairs/user、uniform-user weighting、hard negative、margin/temperature。
+已完成：paired seeds 0–3、BPR 学习率、每个正样本 1/2/4 个 pair、semi-hard negatives。仍有信息增量的选项主要是 uniform-user weighting、margin 和 temperature。
 
-**验收：** objective config switch、数学定义、公平对照与可复现运行已完成；多 seed 未完成。
+**验收：** objective config switch、数学定义、公平对照与 paired multi-seed 验证均已完成。
 
 ### 8. P1.7 — Model Registry
 
 | Model | 真实可运行 | Objective | 当前最好 Primary | 说明 |
 |---|---|---|---:|---|
-| FM | ✅ | BCE/BPR | **0.603396** | 当前最佳 |
+| FM | ✅ | BCE/BPR | 0.603963 | 强 pairwise 组件 |
+| FM + global context | ✅ | BPR | 0.604394 | 候选；rolling 3/3，paired seeds 3/4 |
 | LightGBM | ✅ | binary BCE | 0.599817 | 稳定但不如 FM |
-| DeepFM | ❌ | 规划 BCE/BPR | — | registry 占位，未实现 |
+| DeepFM | ✅ | BCE/BPR | 0.603862 | ensemble 组件 |
+| Multi-task DeepFM | ✅ | BCE | 0.604400 | like-only；rolling 3/3 提升 |
+| 轻量 Sequence DeepFM | ✅ | BCE | 0.603369 | 已拒绝；低于 DeepFM 且耗时约 25 倍 |
+| 低秩 DCNv2 | ✅ | BCE | 0.604164 | 相对 DeepFM rolling 3/3 提升 |
+| FM + DeepFM ensemble | ✅ | BPR + BCE | **0.604713** | 当前冠军 |
 
 注意：`recommender/models/__init__.py` 目前仍把所有 model 标为 `implemented=False`，与 `src/techjam_agent` 的真实能力不一致，需要修正并接入统一 Trainer。
 
@@ -574,7 +592,7 @@ save_checkpoint(path)
 load_checkpoint(path)
 ```
 
-**验收：** FM 与第二模型 LightGBM 可用；registry 和通用接口未完全统一；DeepFM 需等 pipeline 稳定再做。
+**验收：** FM、LightGBM、DeepFM、Multi-task DeepFM、DCNv2 和 ensemble 均可通过 runner 运行；registry 与通用接口仍需统一。
 
 ### 9. P1.8 — Legal Parameters / Compatibility
 
@@ -644,12 +662,12 @@ reg_lambda=1e-4, early_stopping_rounds=30
 
 ### 12. 下一步工作顺序
 
-### P0：BPR multi-seed
+### P0：Agent 决策协议
 
-1. seed 白名单扩展到 0–4
-2. 每个 seed 分别运行 BCE/BPR
-3. 输出 paired delta mean/std/confidence interval
-4. 决定 BPR 是否为稳定提升
+1. 每个实验报告加入固定 slices 和 pair-error recovery
+2. 新 categorical field 自动运行 constant/shuffled/random controls
+3. 区分 standard-policy 分数与 random-exposure robustness
+4. 当前 NumPy sequence 实现保持拒绝
 
 ### P1：统一训练接口
 
@@ -665,14 +683,12 @@ reg_lambda=1e-4, early_stopping_rounds=30
 3. 加入 dataset/version-aware cache
 4. 输出 distribution/unseen/NaN audit
 
-### P2：新增研究能力
+### P2：下一项研究能力
 
-1. `pairs_per_positive` 1/2/4
-2. 严格时间滚动的 recent exposure/activity
-3. LightGBM LambdaRank
-4. 最小 DeepFM BCE
-5. DeepFM+BPR
-6. click/like multi-task
+1. 加入一个因果序列顺序模型，优先轻量 BST
+2. 加入 ensemble 前先比较它与 FM/DeepFM 的预测相关性
+3. 每个新增 FM 类别字段同时跑 constant-field placebo
+4. 把支持/拒绝证据提供给 LLM Researcher
 
 ### 13. Person 1 交付文件
 

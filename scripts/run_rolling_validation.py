@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from techjam_agent.deepfm import DeepFM, MultiTaskDeepFM
 from techjam_agent.ensemble import blend_scores
+from techjam_agent.feedback import auxiliary_task_count
 from techjam_agent.rolling import build_rolling_splits
 from techjam_agent.runner import ExperimentRunner
 
@@ -57,6 +58,8 @@ def train_scores(runner, config, checkpoint):
             dimension, Xvalid.shape[1], embedding_dim=hp["embedding_dim"],
             hidden_dim=hp["deepfm_hidden_dim"], learning_rate=hp["learning_rate"],
             l2=hp["l2"], seed=hp["seed"],
+            **({"auxiliary_tasks": auxiliary_task_count(hp["auxiliary_signals"])}
+               if config["model"] == "multitask_deepfm" else {}),
         )
         with np.load(checkpoint) as state:
             model.load_state_dict({name: state[name] for name in model.state_dict()})

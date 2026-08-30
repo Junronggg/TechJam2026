@@ -10,9 +10,12 @@
 | Item popularity | Smoothed train item rate | Organizer reference only | Below FM |
 | FM | BCE | Ready | 0.601470 |
 | FM | BPR / hybrid | Ready | BPR 0.603963 (seed 0) |
+| FM + `global_context` | BPR | Candidate; rolling 3/3, paired seeds 3/4 | 0.604394 |
 | LightGBM | Binary BCE | Ready; rejected | 0.599817 |
 | DeepFM | BCE/BPR | Implemented in NumPy | BCE best 0.603862; BPR 0.603530 |
-| Multi-task DeepFM | long_view + click/like auxiliary BCE | PROMISING; 2/3 rolling folds improved | 0.604259 |
+| Multi-task DeepFM | long_view + selectable auxiliary BCE | KEEP standalone; like-only improved 3/3 rolling folds | 0.604400 |
+| Lightweight Sequence DeepFM | BCE + last-16 candidate attention | REJECT; -0.000493 vs DeepFM and ~25x runtime | 0.603369 |
+| Low-rank DCNv2 | BCE; 2 cross layers, rank 16 | KEEP standalone; improved 3/3 rolling folds | 0.604164 |
 | FM+DeepFM ensemble | BPR FM + BCE DeepFM | KEEP; 3/3 rolling folds improved | **0.604713** |
 | Ensemble + temporal | Same ensemble + strict-past counts | REJECT; 1/3 rolling folds improved | 0.605010 single split |
 
@@ -29,6 +32,10 @@
 | `seed` | 0 | 0, 1, 2, 3, 4 |
 | `deepfm_hidden_dim` | 32 | 16, 32, 64 |
 | `auxiliary_loss_weight` | 0.1 | 0.05, 0.1, 0.2, 0.5 |
+| `auxiliary_signals` | like | click, like, completion, log_watch, click_like, click_like_completion |
+| `dcn_cross_layers` | 2 | 1, 2, 3 |
+| `dcn_low_rank` | 16 | 8, 16, 32 |
+| `sequence_length` | 16 | 16, 32 |
 
 ### BPR Parameters
 
@@ -90,6 +97,11 @@ Two feature sets currently coexist:
 | `user_tag_affinity` | Smoothed LOO bucket | FM | Encoder ready; run pending |
 | `user_recent_3d_activity` | Strict-past 3-day count | FM/DeepFM/ensemble | Implemented; rolling REJECT |
 | `item_recent_3d_exposure` | Strict-past 3-day count | FM/DeepFM/ensemble | Implemented; rolling REJECT |
+| `prior_video_positive` | Strict-past candidate history | FM/DeepFM/DCNv2/ensemble | REJECT behavioral attribution; 0.0304% validation coverage and constant placebo performed better |
+| `author_positive_recency` | Time since last positive for candidate author | FM/DeepFM/DCNv2/ensemble | REJECT behavioral attribution; constant placebo performed better |
+| `prior_video_count` | Strict-past candidate exposure count | FM/DeepFM/DCNv2/ensemble | REJECT; -0.000027 vs FM+BPR |
+| `previous_author_same` | Previous impression has same author | FM/DeepFM/DCNv2/ensemble | REJECT; +0.000046 is noise-sized and observed rate is lower, not higher |
+| `global_context` | Learned constant categorical field | FM/DeepFM/DCNv2/ensemble | Candidate; +0.000431, rolling mean +0.000810, paired-seed mean +0.000333 with interval crossing 0 |
 
 ### Optimizable Functions
 
@@ -105,6 +117,10 @@ Two feature sets currently coexist:
 | `_quantile_edges()` | Numeric-to-category buckets | Tune bucket count, monotonic/fixed bins, robust quantiles |
 | `aggregate()` / `aggregate_pair()` | Current pipeline aggregates | Cache, vectorize, temporal cutoffs, fallback hierarchy |
 | `smoothed_rate_bucket()` | LOO rate bucket | Tune prior/buckets; compare continuous representation |
+| `align_event_times()` / `strict_sequence_categories()` | Millisecond-safe candidate history | Cache alignment, add new causal sequence states |
+| `align_auxiliary_feedback()` | Click/like/completion/log-watch training targets | Add masks, task balancing, robust transforms, new training-only outcomes |
+| `strict_past_sequences()` | Last-K video/author/behavior/time-gap tensors | Cache/vectorize construction; preserve same-time isolation |
+| `conditional_complementarity()` | Slice and pair-error diagnostics | Add predeclared slices; never infer gate gains without full evaluation |
 
 #### Model and objective functions
 
@@ -116,6 +132,9 @@ Two feature sets currently coexist:
 | `FM.predict()` | Batched scoring | Batch size, memory mapping, parallel scoring |
 | `build_pair_indices()` | Same-user BPR pairs | Multiple negatives, user-balanced pairs, hard negatives |
 | `bpr_step()` | Pairwise BPR gradient | BPR lr/L2, margin, temperature, weighting, clipping |
+| `MultiTaskDeepFM.multitask_step()` | Shared main/auxiliary gradients | Per-task weights, imbalance handling, gradient conflict control |
+| `LightweightSequenceDeepFM.step()` | Candidate attention over strict last-K history | Efficient backend or materially different attention; do not sweep current K |
+| `DCNv2._forward()` / `_gradients()` | Low-rank explicit cross network | Layer/rank ablation, mixture-of-experts, normalization |
 | `_run_lightgbm()` | Binary LightGBM training | LambdaRank, group-by-user, custom ranking metric, parameter search |
 | `_lightgbm_matrices()` | Categorical + continuous matrix | Feature selection, categorical encoding, cached matrices |
 | `run_validation_fm()` | Validation-only FM adapter | Multi-seed, pairs/positive, feature smoothing/buckets |
@@ -141,7 +160,9 @@ Official functions that must not be behaviorally modified: `evaluate()`, `auc()`
 - BPR and hybrid: FM and DeepFM.
 - Continuous history and user×tab continuous features: LightGBM only.
 - DeepFM: BCE and BPR available.
-- Multi-task DeepFM: BCE only; click/like are training-only auxiliary labels, never inference features.
+- Multi-task DeepFM: BCE main task; click/like/completion use auxiliary BCE and `log_watch` uses masked MSE. They are training-only targets, never inference features.
+- Lightweight Sequence DeepFM: BCE only; strict last-K inputs, same-time isolation, and no validation/test labels in history.
+- DCNv2: BCE only; low-rank cross-layer count and rank are configurable.
 - Unknown/out-of-range parameters: reject before training.
 - Historical target features: train LOO; validation/test use train only.
 - Test metrics: never returned to the research loop.
@@ -171,7 +192,18 @@ Official functions that must not be behaviorally modified: `evaluate()`, `auc()`
 | DeepFM+BCE, lr=0.001 | 0.603862 | REJECT; close to best |
 | DeepFM+BCE, lr=0.002 | 0.603637 | REJECT |
 | DeepFM+BPR, lr=0.0003 | 0.603530 | REJECT |
-| Multi-task DeepFM, click+like weight=0.1 | 0.604259 | PROMISING; rolling check required |
+| Multi-task DeepFM, like-only weight=0.1 | 0.604400 | KEEP standalone; rolling 3/3 |
+| Multi-task DeepFM, completion-only | 0.603876 | REJECT; redundant with long_view |
+| FM+BPR + prior-video-positive | 0.604205 | REJECT behavioral attribution; constant-field placebo scored 0.604394 |
+| FM+BPR + author-positive-recency | 0.604199 | REJECT behavioral attribution; constant-field placebo scored 0.604394 |
+| FM+BPR + prior-video-count | 0.603936 | REJECT |
+| FM+BPR + previous-author-same | 0.604009 | REJECT; noise-sized delta |
+| FM+BPR + global-context | 0.604394 | Candidate; rolling 3/3 but paired seeds only 3/4 |
+| Multi-task DeepFM, capped log-watch | 0.603891 | REJECT; +0.000029 vs DeepFM |
+| Lightweight Sequence DeepFM, K=16 | 0.603369 | REJECT; -0.000493 vs DeepFM, 813s vs 33s |
+| 90% champion + 10% sequence | 0.604690 | REJECT; -0.000023 vs champion |
+| DCNv2+BCE | 0.604164 | KEEP standalone; rolling 3/3 |
+| FM+DeepFM+DCNv2 ensemble | 0.604616 | REJECT; rolling 0/3 |
 | FM hybrid, BPR weight=0.75 | 0.603962 | REJECT; tied with pure BPR |
 | FM hybrid, BPR weight=0.50 | 0.603912 | REJECT |
 | FM hybrid, BPR weight=0.25 | 0.603507 | REJECT |
@@ -195,17 +227,17 @@ Official functions that must not be behaviorally modified: `evaluate()`, `auc()`
 | 04/21–04/23 | 0.586890 | 0.588308 | 0.587830 | +0.001418 | -0.000477 |
 | Mean | 0.592587 | **0.593710** | 0.593463 | **+0.001123** | -0.000246 |
 
-Decision: keep the 0.4-weight FM+DeepFM ensemble because it improved 3/3 folds. Reject the temporal addition because it improved only 1/3 folds and regressed on the official test.
+Decision: keep the 0.4-weight FM+DeepFM ensemble because it improved 3/3 folds. Reject the temporal addition because it improved only 1/3 folds; test feedback is not used for research selection.
 
-Multi-task DeepFM versus DeepFM on the same rolling folds: `+0.000204`, `+0.000440`, `-0.000050`; mean `+0.000198`, wins 2/3. Keep the implementation as promising but do not promote it to the best model or sweep its weight.
+New rolling evidence: global-context FM improved 3/3 folds (mean `+0.000810`), but its paired-seed result was 3/4 wins with mean `+0.000333` and an interval crossing zero, so it remains a candidate. Like-only multi-task DeepFM improved 3/3 (mean `+0.000309`), and DCNv2 improved 3/3 over DeepFM (mean `+0.000248`). The earlier prior-video/author gains are not behavioral evidence because a matched constant-field placebo performed better. DCNv2 is not added to the ensemble because its predictions correlate `0.9925–0.9963` with DeepFM and the three-model blend lost all 3 folds.
 
 ### Optimization Order
 
-1. Feed the rolling evidence and failed-direction memory to the LLM Researcher.
-2. Implement one stronger interaction model: DCNv2.
-3. Test DCNv2 complementarity before adding it to the ensemble.
-4. Revisit multi-task only if DCNv2 provides a stronger shared representation.
-5. Validate the final ensemble across seeds without choosing the best seed.
+1. Keep the original FM+BPR + DeepFM ensemble as the champion.
+2. Keep `global_context` as uncertain; add only predeclared paired seeds, never select the highest seed.
+3. Keep like-only multi-task DeepFM and DCNv2 as standalone candidates.
+4. Keep the current NumPy sequence implementation rejected; revisit only with a materially different efficient backend/architecture.
+5. Integrate slices, placebo verdicts, pair-error recovery, and random-exposure robustness into Agent reports.
 
 ### Code Extension Points
 
@@ -248,9 +280,12 @@ Multi-task DeepFM versus DeepFM on the same rolling folds: `+0.000204`, `+0.0004
 | Item popularity | 平滑 train item rate | 官方参考 | 低于 FM |
 | FM | BCE | 可用 | 0.601470 |
 | FM | BPR / hybrid | 可用 | BPR 0.603963（seed 0） |
+| FM + `global_context` | BPR | 候选；rolling 3/3，paired seeds 3/4 | 0.604394 |
 | LightGBM | Binary BCE | 可用；已拒绝 | 0.599817 |
 | DeepFM | BCE/BPR | NumPy 已实现 | BCE 最佳 0.603862；BPR 0.603530 |
-| Multi-task DeepFM | long_view + click/like 辅助 BCE | PROMISING；rolling 2/3 提升 | 0.604259 |
+| Multi-task DeepFM | long_view + 可选择辅助 BCE | 单模型 KEEP；like-only rolling 3/3 提升 | 0.604400 |
+| 轻量 Sequence DeepFM | BCE + last-16 candidate attention | REJECT；相对 DeepFM -0.000493，耗时约 25 倍 | 0.603369 |
+| 低秩 DCNv2 | BCE；2 层 cross、rank 16 | 单模型 KEEP；rolling 3/3 提升 | 0.604164 |
 | FM+DeepFM ensemble | BPR FM + BCE DeepFM | KEEP；rolling 3/3 提升 | **0.604713** |
 | Ensemble + temporal | 同一 ensemble + 严格过去计数 | REJECT；rolling 仅 1/3 提升 | 单切分 0.605010 |
 
@@ -267,6 +302,10 @@ Multi-task DeepFM versus DeepFM on the same rolling folds: `+0.000204`, `+0.0004
 | `seed` | 0 | 0、1、2、3、4 |
 | `deepfm_hidden_dim` | 32 | 16、32、64 |
 | `auxiliary_loss_weight` | 0.1 | 0.05、0.1、0.2、0.5 |
+| `auxiliary_signals` | like | click、like、completion、log_watch、click_like、click_like_completion |
+| `dcn_cross_layers` | 2 | 1、2、3 |
+| `dcn_low_rank` | 16 | 8、16、32 |
+| `sequence_length` | 16 | 16、32 |
 
 ### BPR 参数
 
@@ -328,6 +367,11 @@ Main validator 还允许连续范围：`k: 4–128`、`lr: 1e-5–0.1`、`epochs
 | `user_tag_affinity` | 平滑 LOO 分桶 | FM | Encoder 可用；待运行 |
 | `user_recent_3d_activity` | 严格过去 3 天计数 | FM/DeepFM/ensemble | 已实现；rolling REJECT |
 | `item_recent_3d_exposure` | 严格过去 3 天计数 | FM/DeepFM/ensemble | 已实现；rolling REJECT |
+| `prior_video_positive` | 严格过去的候选视频历史 | FM/DeepFM/DCNv2/ensemble | REJECT 行为归因；validation 覆盖仅 0.0304%，constant placebo 更高 |
+| `author_positive_recency` | 距上次正反馈当前作者的时间 | FM/DeepFM/DCNv2/ensemble | REJECT 行为归因；constant placebo 更高 |
+| `prior_video_count` | 严格过去的候选视频曝光次数 | FM/DeepFM/DCNv2/ensemble | REJECT；相对 FM+BPR -0.000027 |
+| `previous_author_same` | 上一条曝光是否同作者 | FM/DeepFM/DCNv2/ensemble | REJECT；+0.000046 属于噪声量级，观察 rate 反而更低 |
+| `global_context` | 可学习的常量类别字段 | FM/DeepFM/DCNv2/ensemble | 候选；+0.000431，rolling 平均 +0.000810；paired-seed 平均 +0.000333 但区间跨 0 |
 
 ### 可优化的 Function
 
@@ -343,6 +387,10 @@ Main validator 还允许连续范围：`k: 4–128`、`lr: 1e-5–0.1`、`epochs
 | `_quantile_edges()` | 连续值分桶 | bucket 数、固定/单调桶、robust quantile |
 | `aggregate()` / `aggregate_pair()` | 当前 pipeline 聚合 | Cache、向量化、时间 cutoff、fallback hierarchy |
 | `smoothed_rate_bucket()` | LOO rate 分桶 | prior/bucket 调参；对比连续表示 |
+| `align_event_times()` / `strict_sequence_categories()` | 毫秒级安全候选历史 | 缓存对齐、增加新的因果 sequence state |
+| `align_auxiliary_feedback()` | click/like/completion/log-watch 训练目标 | mask、任务平衡、稳健变换、新训练期 outcome |
+| `strict_past_sequences()` | last-K video/author/behavior/time-gap 张量 | 缓存/向量化；保持同时间戳隔离 |
+| `conditional_complementarity()` | slice 与 pair-error 诊断 | 固定 slice；未评完整 gate 前不推断融合收益 |
 
 #### 模型与 Objective 函数
 
@@ -354,6 +402,9 @@ Main validator 还允许连续范围：`k: 4–128`、`lr: 1e-5–0.1`、`epochs
 | `FM.predict()` | 分批预测 | Batch size、memory map、并行打分 |
 | `build_pair_indices()` | 同用户 BPR 配对 | 多负样本、user-balanced、hard negative |
 | `bpr_step()` | BPR 梯度 | BPR lr/L2、margin、temperature、weight、clipping |
+| `MultiTaskDeepFM.multitask_step()` | 主任务/辅助任务共享梯度 | 分任务权重、不平衡处理、梯度冲突控制 |
+| `LightweightSequenceDeepFM.step()` | 对严格 last-K 历史做 candidate attention | 换高效后端或不同 attention；不扫描当前 K |
+| `DCNv2._forward()` / `_gradients()` | 低秩显式 cross network | 层数/rank、mixture-of-experts、normalization |
 | `_run_lightgbm()` | Binary LightGBM | LambdaRank、user group、自定义 ranking metric、参数搜索 |
 | `_lightgbm_matrices()` | 类别+连续矩阵 | Feature selection、类别编码、矩阵 cache |
 | `run_validation_fm()` | Validation-only FM adapter | Multi-seed、pairs/positive、smoothing/buckets |
@@ -379,7 +430,9 @@ Main validator 还允许连续范围：`k: 4–128`、`lr: 1e-5–0.1`、`epochs
 - BPR 和 hybrid 支持 FM、DeepFM。
 - 连续历史统计和 user×tab 连续特征只支持 LightGBM。
 - DeepFM 已支持 BCE 和 BPR。
-- Multi-task DeepFM 仅支持 BCE；click/like 只作为训练辅助标签，不是推理特征。
+- Multi-task DeepFM 主任务使用 BCE；click/like/completion 辅助目标使用 BCE，`log_watch` 使用 masked MSE。它们只在训练时使用，不是推理特征。
+- Lightweight Sequence DeepFM 仅支持 BCE；严格 last-K、同时间戳隔离，validation/test label 不进入 history。
+- DCNv2 仅支持 BCE；可配置低秩 cross 层数和 rank。
 - 未知/越界参数训练前拒绝。
 - Target 历史特征：train LOO；validation/test 只用 train。
 - Test 指标不反馈给研究循环。
@@ -409,7 +462,18 @@ Main validator 还允许连续范围：`k: 4–128`、`lr: 1e-5–0.1`、`epochs
 | DeepFM+BCE，lr=0.001 | 0.603862 | REJECT；接近 best |
 | DeepFM+BCE，lr=0.002 | 0.603637 | REJECT |
 | DeepFM+BPR，lr=0.0003 | 0.603530 | REJECT |
-| Multi-task DeepFM，click+like 权重=0.1 | 0.604259 | PROMISING；需 rolling 验证 |
+| Multi-task DeepFM，like-only 权重=0.1 | 0.604400 | 单模型 KEEP；rolling 3/3 |
+| Multi-task DeepFM，completion-only | 0.603876 | REJECT；与 long_view 重复 |
+| FM+BPR + prior-video-positive | 0.604205 | REJECT 行为归因；constant-field placebo 为 0.604394 |
+| FM+BPR + author-positive-recency | 0.604199 | REJECT 行为归因；constant-field placebo 为 0.604394 |
+| FM+BPR + prior-video-count | 0.603936 | REJECT |
+| FM+BPR + previous-author-same | 0.604009 | REJECT；增量属于噪声量级 |
+| FM+BPR + global-context | 0.604394 | 候选；rolling 3/3，但 paired seeds 仅 3/4 |
+| Multi-task DeepFM，capped log-watch | 0.603891 | REJECT；相对 DeepFM +0.000029 |
+| Lightweight Sequence DeepFM，K=16 | 0.603369 | REJECT；相对 DeepFM -0.000493，813s vs 33s |
+| 90% champion + 10% sequence | 0.604690 | REJECT；相对 champion -0.000023 |
+| DCNv2+BCE | 0.604164 | 单模型 KEEP；rolling 3/3 |
+| FM+DeepFM+DCNv2 ensemble | 0.604616 | REJECT；rolling 0/3 |
 | FM hybrid，BPR 权重=0.75 | 0.603962 | REJECT；与纯 BPR 持平 |
 | FM hybrid，BPR 权重=0.50 | 0.603912 | REJECT |
 | FM hybrid，BPR 权重=0.25 | 0.603507 | REJECT |
@@ -433,17 +497,17 @@ Main validator 还允许连续范围：`k: 4–128`、`lr: 1e-5–0.1`、`epochs
 | 04/21–04/23 | 0.586890 | 0.588308 | 0.587830 | +0.001418 | -0.000477 |
 | 平均 | 0.592587 | **0.593710** | 0.593463 | **+0.001123** | -0.000246 |
 
-决策：保留 DeepFM 权重 0.4 的 FM+DeepFM ensemble，因为它在 3/3 folds 都提升。拒绝 temporal 增量，因为它只在 1/3 folds 提升，且官方 test 也回落。
+决策：保留 DeepFM 权重 0.4 的 FM+DeepFM ensemble，因为它在 3/3 folds 都提升。拒绝 temporal 增量，因为它只在 1/3 folds 提升；研究选择不使用 test feedback。
 
-Multi-task DeepFM 相对普通 DeepFM 的 rolling 增量为：`+0.000204`、`+0.000440`、`-0.000050`；平均 `+0.000198`，2/3 folds 提升。保留实现并标记为 promising，但不升级为当前最佳，也不继续扫权重。
+新增 rolling 证据：global-context FM 在 3/3 folds 提升（平均 `+0.000810`），但 paired seeds 只在 3/4 提升，平均 `+0.000333` 且区间跨 0，因此仍是候选。like-only Multi-task DeepFM 在 3/3 提升（平均 `+0.000309`）；DCNv2 相对 DeepFM 在 3/3 提升（平均 `+0.000248`）。此前 prior-video/author 的小涨不能解释成行为历史有效，因为匹配的 constant-field placebo 更高。DCNv2 不加入 ensemble，因为它与 DeepFM 的预测相关系数为 `0.9925–0.9963`，三模型融合在 0/3 folds 提升。
 
 ### 优化顺序
 
-1. 把 rolling 证据和失败方向记忆输入 LLM Researcher。
-2. 只实现一个更强交互模型：DCNv2。
-3. 先验证 DCNv2 的预测互补性，再决定是否加入 ensemble。
-4. 只有 DCNv2 提供更强共享表示时，再回头研究 multi-task。
-5. 不挑最高 seed，验证最终 ensemble 的多 seed 稳定性。
+1. 保留原始 FM+BPR + DeepFM ensemble 作为当前冠军。
+2. `global_context` 暂列不确定；若增加 seeds 必须预先固定，不能挑最高 seed。
+3. 保留 like-only Multi-task DeepFM 和 DCNv2 为单模型候选。
+4. 当前 NumPy sequence 实现保持拒绝；只有高效后端或显著不同结构才重启。
+5. 将 slices、placebo verdict、pair-error recovery 和 random-exposure robustness 接入 Agent 报告。
 
 ### 代码扩展位置
 

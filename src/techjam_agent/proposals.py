@@ -309,9 +309,21 @@ class DeterministicResearcher:
             candidate = apply_changes(best, changes)
             if experiment_key(candidate) not in tried:
                 return Proposal(
-                    "Train DeepFM jointly on long_view, click, and like.",
-                    "Auxiliary feedback may improve shared user-item representations without becoming inference features.",
+                    "Train DeepFM jointly on long_view and like.",
+                    "Like-only auxiliary supervision improved all three rolling folds without becoming an inference feature.",
                     changes, "deterministic", empty_token_usage(),
+                )
+            dcn_changes = {
+                "model": "dcnv2",
+                "training_objective": "bce",
+                "learning_rate": 0.001,
+            }
+            dcn_candidate = apply_changes(best, dcn_changes)
+            if experiment_key(dcn_candidate) not in tried:
+                return Proposal(
+                    "Test low-rank DCNv2 with two explicit cross layers.",
+                    "DCNv2 beat DeepFM in all three rolling folds, while keeping the same base fields and BCE objective.",
+                    dcn_changes, "deterministic", empty_token_usage(),
                 )
             for value in (0.4, 0.3, 0.5):
                 if value == hp["ensemble_deepfm_weight"]:
