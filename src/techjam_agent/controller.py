@@ -17,6 +17,7 @@ from .tree import (
     ExperimentTree,
     TreePolicyConfig,
     TreeSearchPolicy,
+    node_id_for,
 )
 
 
@@ -89,8 +90,11 @@ class Controller:
         """Run one experiment against an explicit parent; global best stays a separate concept."""
         checkpoint = self.run_dir / "checkpoints" / f"iteration_{iteration:03d}.npz"
         global_best_before = None if self.best_score == float("-inf") else self.best_score
+        global_best_node_id = node_id_for(self.best_iteration)
         parent_id = None if parent is None else parent.node_id
         parent_primary = None if parent is None else parent.primary
+        # Node identity, not score equality: two nodes can share a Primary value.
+        expanded_global_best = parent_id is not None and parent_id == global_best_node_id
         item = {"iteration": iteration, "timestamp": datetime.now(timezone.utc).isoformat(),
                 **proposal.as_dict(),
                 "parent_id": parent_id,
@@ -98,6 +102,8 @@ class Controller:
                 # Pre-P2.6 name for parent_primary. Kept so old readers stay valid.
                 "parent_score": parent_primary,
                 "global_best_primary_before": global_best_before,
+                "global_best_node_id_before": global_best_node_id,
+                "expanded_global_best": expanded_global_best,
                 "config": config, "manual_intervention": False}
         if (self._pending_parent_selection is not None and
                 self._pending_parent_selection.get("parent_id") == parent_id):
@@ -124,7 +130,8 @@ class Controller:
                 history=self.history, changes=proposal.changes,
             )
             if iteration > 0:
-                self._update_convergence_streak(score, global_best_before)
+                self._update_convergence_streak(
+                    score, global_best_before, expanded_global_best=expanded_global_best)
             if decision == "KEEP":
                 self.best_score, self.best_config, self.best_checkpoint = score, config, checkpoint
                 self.best_iteration = iteration
@@ -146,15 +153,23 @@ class Controller:
         self._record(item, parent_id)
         self._pending_parent_selection = None
 
-    def _update_convergence_streak(self, score: Any, parent_score: Any) -> None:
-        """Only a finite candidate comparison is convergence evidence; failures leave it as is."""
-        candidate, parent = _as_float(score), _as_float(parent_score)
-        if candidate is None or parent is None:
+    def _update_convergence_streak(self, score: Any, global_best_before: Any, *,
+                                   expanded_global_best: bool) -> None:
+        """Track how long the search has gone without moving the global best forward.
+
+        A real improvement clears the streak whichever parent produced it, because a new
+        global best is progress even when it came from an explored side branch. Only a
+        flat attempt against the leading node counts as evidence of a stall; expanding a
+        weaker branch is a deliberate search decision, and unusable results say nothing,
+        so both leave the streak alone.
+        """
+        candidate, best = _as_float(score), _as_float(global_best_before)
+        if candidate is None or best is None:
             return
         epsilon = float(self.project["run_limits"]["convergence_epsilon"])
-        if candidate - parent > epsilon:
+        if candidate - best > epsilon:
             self.convergence_streak = 0
-        else:
+        elif expanded_global_best:
             self.convergence_streak += 1
 
     def _converged(self) -> bool:
