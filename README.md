@@ -183,6 +183,10 @@ logging, and allow-listed LLM proposals. The earlier root-level implementation r
 available for architecture smoke tests and comparison.
 See [the architecture document](docs/architecture.md).
 
+The published work that informed this design, the paper-to-component mapping, and the
+mechanisms we deliberately did not implement are recorded in
+[the research foundations document](docs/research_foundations.md).
+
 Run the architecture smoke test without training a model:
 
 ```powershell
