@@ -32,6 +32,15 @@ def branch_name(changes: dict[str, Any]) -> str:
         "item_long_view_rate",
         "continuous_history_stats",
         "user_tab_long_view_rate",
+        "user_tab_cross",
+        "user_author_cross",
+        "user_recent_3d_activity",
+        "item_recent_3d_exposure",
+        "prior_video_positive",
+        "author_positive_recency",
+        "prior_video_count",
+        "previous_author_same",
+        "global_context",
     }
     if feature_keys.intersection(changes):
         return "features"
@@ -111,7 +120,8 @@ def select_parent(history: list[dict[str, Any]] | None) -> ExperimentParent | No
     """
     best: ExperimentParent | None = None
     for item in history or []:
-        if not isinstance(item, dict) or item.get("status") != "success":
+        if (not isinstance(item, dict) or item.get("status") != "success"
+                or item.get("decision") == "CONTROL"):
             continue
         primary = _finite_primary(item)
         config = item.get("config")
@@ -129,7 +139,8 @@ def select_parent(history: list[dict[str, Any]] | None) -> ExperimentParent | No
 def _successful_parents(history: list[dict[str, Any]] | None) -> list[ExperimentParent]:
     parents: list[ExperimentParent] = []
     for item in history or []:
-        if not isinstance(item, dict) or item.get("status") != "success":
+        if (not isinstance(item, dict) or item.get("status") != "success"
+                or item.get("decision") == "CONTROL"):
             continue
         primary = _finite_primary(item)
         config = item.get("config")

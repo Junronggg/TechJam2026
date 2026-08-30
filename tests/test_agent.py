@@ -276,7 +276,7 @@ class AgentTests(unittest.TestCase):
         )
         validate_config(hybrid)
 
-    def test_researcher_tests_ensemble_before_hybrid_loss(self):
+    def test_researcher_switches_mechanism_after_ensemble_weights_are_exhausted(self):
         bpr = apply_changes(
             self.config, {"training_objective": "bpr", "learning_rate": 0.0003}
         )
@@ -294,10 +294,11 @@ class AgentTests(unittest.TestCase):
                       "ensemble_deepfm_weight": value}
             )})
         proposal = DeterministicResearcher().propose(bpr, history)
-        self.assertEqual(
-            proposal.changes,
-            {"training_objective": "hybrid", "hybrid_bpr_weight": 0.75},
-        )
+        self.assertEqual(proposal.changes, {
+            "model": "multitask_deepfm",
+            "training_objective": "bce",
+            "learning_rate": 0.001,
+        })
 
     def test_ensemble_blend_normalizes_within_user(self):
         try:
@@ -429,10 +430,14 @@ class AgentTests(unittest.TestCase):
             "learning_rate": 0.001,
         })
 
-    def test_researcher_adds_continuous_stats_after_lightgbm(self):
+    def test_researcher_abandons_rejected_lightgbm_family_for_new_information(self):
         lgb = apply_changes(self.config, {"model": "lightgbm"})
         proposal = DeterministicResearcher().propose(lgb, [{"config": self.config}])
-        self.assertEqual(proposal.changes, {"user_tab_long_view_rate": True})
+        self.assertEqual(proposal.changes, {
+            "model": "multitask_deepfm",
+            "training_objective": "bce",
+            "learning_rate": 0.001,
+        })
 
     def test_user_tab_aggregation_keeps_preferences_separate(self):
         rows = [(0, "u1", "v1", "a", "sports", 1.0, 1),

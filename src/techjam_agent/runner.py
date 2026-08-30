@@ -24,6 +24,11 @@ from .feedback import (
     select_auxiliary_feedback,
 )
 from .history_features import aggregate, aggregate_pair, smoothed_rate_bucket
+from .research_diagnostics import (
+    build_slice_values,
+    categorical_placebos,
+    strict_history_lengths,
+)
 from .sequence_features import (
     SEQUENCE_FEATURE_DIMS,
     align_event_times,
@@ -60,6 +65,36 @@ class ExperimentRunner:
         self._auxiliary_feedback = None
         self._sequence_categories = None
         self._causal_sequence_cache = {}
+        self._validation_slices = None
+
+    @staticmethod
+    def validation_artifact_path(checkpoint: Path) -> Path:
+        return checkpoint.with_name(checkpoint.stem + "_validation.npz")
+
+    def _save_validation_artifact(
+        self,
+        checkpoint: Path,
+        users,
+        labels: np.ndarray,
+        scores: np.ndarray,
+    ) -> None:
+        """Persist validation-only predictions and target-free slices for diagnostics."""
+        if self._validation_slices is None:
+            event_times = align_event_times(self.data_dir, self._splits)
+            lengths = strict_history_lengths(self._splits, event_times)
+            self._validation_slices = build_slice_values(
+                self._splits, lengths, split="valid"
+            )
+        payload = {
+            "users": np.asarray(users, dtype=str),
+            "labels": np.asarray(labels, dtype=np.float32),
+            "scores": np.asarray(scores, dtype=np.float32),
+        }
+        payload.update({
+            f"slice_{name}": np.asarray(values, dtype=str)
+            for name, values in self._validation_slices.items()
+        })
+        np.savez_compressed(self.validation_artifact_path(checkpoint), **payload)
 
     def _auxiliary_for(self, selection: str) -> tuple[np.ndarray, np.ndarray]:
         if self._auxiliary_feedback is None:
@@ -167,9 +202,26 @@ class ExperimentRunner:
                 self._sequence_categories = strict_sequence_categories(
                     self._splits, event_times
                 )
+            control = config["hyperparameters"]["feature_control"]
+            if control != "real":
+                if len(sequence_features) != 1:
+                    raise ValueError("placebo control requires exactly one sequence feature")
+                feature = sequence_features[0]
+                cardinality = SEQUENCE_FEATURE_DIMS[feature]
+                controlled = {}
+                for split_index, split in enumerate(self._splits):
+                    variants = categorical_placebos(
+                        self._sequence_categories[split][feature],
+                        cardinality,
+                        seed=config["hyperparameters"]["seed"] + split_index,
+                    )
+                    controlled[split] = {feature: variants[control]}
+                sequence_categories = controlled
+            else:
+                sequence_categories = self._sequence_categories
             for feature in sequence_features:
                 for split in self._splits:
-                    values = self._sequence_categories[split][feature]
+                    values = sequence_categories[split][feature]
                     columns.setdefault(split, []).append(next_offset + values)
                 next_offset += SEQUENCE_FEATURE_DIMS[feature]
         if use_global_context:
@@ -255,6 +307,7 @@ class ExperimentRunner:
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         model.booster_.save_model(str(checkpoint.with_suffix(".txt")))
         np.savez_compressed(checkpoint, best_iteration=np.asarray(model.best_iteration_))
+        self._save_validation_artifact(checkpoint, uva, yva, valid_scores)
         return {**self._metrics(valid),
                 "best_iteration": int(model.best_iteration_),
                 "runtime_seconds": float(time.monotonic() - started)}
@@ -311,6 +364,7 @@ class ExperimentRunner:
                               hp["ensemble_deepfm_weight"])
         metrics = self.evaluate_mod.evaluate(users, labels, scores)
         np.savez_compressed(checkpoint, **fm_state, **deepfm_state)
+        self._save_validation_artifact(checkpoint, users, labels, scores)
         return {**self._metrics(metrics), "best_epoch": 0,
                 "runtime_seconds": float(time.monotonic() - started)}
 
@@ -469,6 +523,7 @@ class ExperimentRunner:
                  ("deepfm", "multitask_deepfm", "sequence_deepfm", "dcnv2") else
                  {"V": model.V, "W": model.W, "b": model.b})
         np.savez_compressed(checkpoint, **state, best_epoch=np.asarray(best_epoch))
+        self._save_validation_artifact(checkpoint, uva, yva, valid_scores)
         return {"GAUC": float(valid["GAUC"]), "nDCG@5": float(valid["nDCG@5"]),
                 "primary": float(valid["primary"]),
                 "best_epoch": int(best_epoch),

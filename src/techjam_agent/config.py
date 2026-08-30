@@ -27,6 +27,7 @@ ALLOWED_VALUES = {
     "dcn_cross_layers": (1, 2, 3),
     "dcn_low_rank": (8, 16, 32),
     "sequence_length": (16, 32),
+    "feature_control": ("real", "constant", "shuffled", "random_same_cardinality"),
     "seed": (0, 1, 2, 3, 4),
 }
 FEATURE_KEYS = (
@@ -91,6 +92,15 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError(f"features must contain exactly: {list(FEATURE_KEYS)}")
     if any(type(features[key]) is not bool for key in FEATURE_KEYS):
         raise ValueError("feature flags must be booleans")
+    if hp["feature_control"] != "real":
+        controlled = [key for key in (
+            "prior_video_positive", "author_positive_recency",
+            "prior_video_count", "previous_author_same",
+        ) if features[key]]
+        if len(controlled) != 1:
+            raise ValueError(
+                "a placebo feature_control requires exactly one supported categorical history feature"
+            )
     lgb = config.get("lightgbm_hyperparameters")
     if not isinstance(lgb, dict) or set(lgb) != LIGHTGBM_KEYS:
         raise ValueError(f"lightgbm_hyperparameters must contain exactly: {sorted(LIGHTGBM_KEYS)}")

@@ -1,9 +1,11 @@
-"""Single entry point for simulated or real validation research runs."""
+"""Single entry point; defaults to the active src/techjam_agent autonomous loop."""
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,6 +27,16 @@ from experiment.validator import ExperimentValidator
 
 
 ROOT = Path(__file__).resolve().parent
+
+
+def _run_active_agent() -> int:
+    path = ROOT / "scripts" / "run_agent.py"
+    spec = importlib.util.spec_from_file_location("techjam_active_run_agent", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load active agent entry point: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return int(module.main())
 
 
 def load_agent_config() -> dict[str, object]:
@@ -211,6 +223,8 @@ def print_summary(manager: ResearchManager, summary: object, real_run: bool) -> 
 
 
 def main() -> int:
+    if not any(flag in sys.argv[1:] for flag in ("--dry-run", "--real-run")):
+        return _run_active_agent()
     args = parse_args()
     if not args.dry_run and not args.real_run:
         print(
