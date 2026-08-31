@@ -24,7 +24,7 @@ Rolling mean delta      +0.001123（相对 FM+BPR）
 | Low-rank DCNv2 | 0.604164 | rolling 3/3，平均 +0.000248 vs DeepFM | 有效单模型，但不适合当前融合 |
 | FM+BPR + `global_context` | 0.604394 | rolling 3/3；paired seeds 3/4 | 有希望，但统计区间跨 0 |
 
-已有充分负面证据的路线：全局 target rate、稀疏显式交叉、更多随机负样本、当前 semi-hard negative、BCE+BPR hybrid、3-day temporal counts、candidate-history 标量、completion/log-watch auxiliary，以及把 DCNv2 直接塞进现有 ensemble。
+已有充分负面证据的路线：全局 target rate、稀疏显式交叉、更多随机负样本、当前 semi-hard negative、BCE+BPR hybrid、3-day temporal counts、candidate-history 标量、简单 completion/capped-log-watch auxiliary、已测 pairwise censored-watch，以及把 DCNv2 直接塞进现有 ensemble。Pointwise censored-watch 仅为证据不足，不等于整个 watch-time 研究方向被否定。
 
 稳健性提醒：`0.604713` 是 standard-exposure validation 冠军；在开发期 random exposure 上，ensemble 比 FM+BPR 低 `0.000155`，不能把它描述成对曝光策略变化也稳定。
 
@@ -70,6 +70,8 @@ Rolling mean delta      +0.001123（相对 FM+BPR）
 | 13 | 正式 `global_context` | 0.604394 | +0.000431 | 候选；rolling 3/3、平均 +0.000810，但 paired seeds 仅 3/4 |
 | 13 | `global_context` paired seeds 0–3 | mean +0.000333 | 3/4 seeds 为正 | 区间 [-0.000427, +0.001092] 跨 0，不能宣称已统计确认 |
 | 13 | Global-context FM + DeepFM | 0.604674 | -0.000039 vs champion | rolling 3/3、平均 +0.000460；暂列候选，不替换冠军 |
+| 14 | DeepFM + one-sided censored watch-time | 0.603939 | +0.000077 vs DeepFM | INSUFFICIENT；机制不同于 capped MSE，但增量仍是噪声量级 |
+| 14 | BPR + one-sided censored watch-time | 0.602523 | -0.001339 vs DeepFM | REJECT exact config；pairwise 主任务进一步下降 |
 
 ## 评价口径
 
@@ -192,7 +194,7 @@ DeepFM+BCE 在相同基础字段上得到 `0.603862`。它没有超过 FM+BPR，
 
 EDA 中 watch ratio 与互动强相关，但相关性不等于辅助监督一定有效。这里 completion 和 log-watch 都与主标签高度耦合，真正提供不同信息的是稀疏的 like 行为。
 
-结论：保留 like-only Multi-task DeepFM；不继续堆 watch-time 变换或组合辅助任务。
+结论：保留 like-only Multi-task DeepFM；简单 completion 与 capped log-watch 不再继续扫。真正的 one-sided censored objective 在后续独立对照中验证。
 
 ### G. 审计 candidate-specific history
 
@@ -407,6 +409,20 @@ learning_rate = 0.001
 
 结论：保留 pairwise multi-task 的可执行能力和单元测试，但自动 memory 对上述两个精确配置标记 `STOP_DIRECTION`。只有获得对方 loss/target/sampler 代码，或提出实质不同的机制，才重新打开这个方向。
 
+### N. One-sided censored watch-time 对照
+
+这次补测的不是 `min(play_time, duration)` 的普通 MSE。对未播完样本使用精确的 `log1p(play_time)`；对播完样本只知道真实兴趣时长至少达到视频长度，因此使用 `log1p(duration)` 下界，并且只在预测低于下界时惩罚。目标按 train P99 缩放，反馈只参与训练，不进入推理字段。
+
+| 配置 | GAUC | nDCG@5 | Primary | 相对 DeepFM |
+|---|---:|---:|---:|---:|
+| DeepFM+BCE 对照 | 0.670187 | 0.537537 | 0.603862 | — |
+| BCE + censored-watch auxiliary | 0.670416 | 0.537462 | 0.603939 | +0.000077 |
+| BPR + censored-watch auxiliary | 0.668208 | 0.536837 | 0.602523 | -0.001339 |
+
+Pointwise 版本的 GAUC 略升但 nDCG 略降，最终 Primary 只增加 `0.000077`，不足以支持 rolling 或替换 like-only；科学状态记为 `INSUFFICIENT`，提交状态记为 `RESEARCH_ONLY`。Pairwise 版本明确下降，当前精确配置记为 `REJECTED / NOT_ELIGIBLE`。
+
+路线变化：不能再说“censored watch-time 没测过”，也不能把微小正值写成有效提升。只在提出不同的 survival likelihood、共享结构或经过预声明的强假设时才重开，不继续扫辅助权重。
+
 ---
 
 ## 当前资产与状态
@@ -421,7 +437,7 @@ learning_rate = 0.001
 | 0.6 FM + 0.4 DeepFM ensemble | 是 | 当前冠军 |
 | Rolling validation | 是 | 新方法稳定性门槛 |
 | Candidate-history causal encoding | 是 | 信号无效，但实现和审计保留 |
-| Auxiliary click/like/completion/log-watch | 是 | 仅 like 有可靠价值 |
+| Auxiliary click/like/completion/log-watch/censored-watch | 是 | 仅 like 有可靠价值；pointwise censored-watch 证据不足 |
 | Pairwise BPR + like auxiliary | 是 | k16/aux0.1 与报告配置 k32/aux0.3 均低于 BCE，拒绝 |
 | Prediction correlation analysis | 是 | 用于判断 ensemble 互补性 |
 | Conditional complementarity | 是 | 分析 user/history/popularity/duration/time 条件差异与 pair error recovery |
@@ -449,7 +465,7 @@ learning_rate = 0.001
 更多全局 target rate
 更多 user×author/user×tab 显式交叉
 更多 hard-negative pool
-更多 completion/watch-time 变换
+重复简单 completion、capped log-watch 或当前 pairwise censored-watch
 重复当前 pairwise multi-task 两个已测配置
 围绕 0.604713 细扫 ensemble 权重
 挑选表现最好的 seed
@@ -464,6 +480,7 @@ python scripts/run_rolling_validation.py
 # Multi-task 辅助信号拆解
 python scripts/run_auxiliary_ablation.py
 python scripts/run_multitask_rolling.py
+python scripts/run_censored_watchtime_ablation.py
 
 # Candidate history、placebo 与数据覆盖
 python analysis/candidate_history_audit.py

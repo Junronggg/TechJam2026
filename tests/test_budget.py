@@ -138,11 +138,14 @@ def build(runner, researcher, tmp: Path, clock=None, project=None, controller_cl
 
 
 def run_controller(runner, researcher, max_iterations=None, clock=None, project=None,
-                   controller_cls=Controller):
+                   controller_cls=Controller, research_after_convergence=False):
     with tempfile.TemporaryDirectory() as tmp:
         controller = build(runner, researcher, Path(tmp), clock, project, controller_cls)
         with patch("sys.stdout", new=io.StringIO()):
-            summary = controller.run(max_iterations)
+            summary = controller.run(
+                max_iterations,
+                research_after_convergence=research_after_convergence,
+            )
         return controller, summary
 
 
@@ -199,6 +202,65 @@ class ConvergenceTests(unittest.TestCase):
         self.assertEqual(runner.calls, 4)
         self.assertEqual(summary["candidate_experiments"], 3)
         self.assertTrue(all(row["expanded_global_best"] for row in controller.history[1:]))
+
+    def test_research_mode_records_competition_convergence_but_keeps_exploring(self) -> None:
+        runner = ScriptedRunner([0.6015, 0.6016, 0.6016, 0.6016, 0.6017])
+        controller, summary = run_controller(
+            runner,
+            SweepResearcher(),
+            max_iterations=5,
+            controller_cls=GlobalBestParentController,
+            research_after_convergence=True,
+        )
+        self.assertEqual(runner.calls, 5)
+        self.assertEqual(summary["stop_reason"], "max_iterations")
+        self.assertTrue(summary["competition_converged"])
+        self.assertEqual(summary["competition_converged_at"], 3)
+        self.assertTrue(summary["research_after_convergence"])
+        self.assertEqual(summary["competition_best_at_convergence"]["iteration"], 1)
+
+    def test_convergence_reached_on_final_iteration_is_still_recorded(self) -> None:
+        runner = ScriptedRunner([0.6015, 0.6016, 0.6016, 0.6016])
+        _, summary = run_controller(
+            runner,
+            SweepResearcher(),
+            max_iterations=4,
+            controller_cls=GlobalBestParentController,
+            research_after_convergence=True,
+        )
+        self.assertEqual(summary["stop_reason"], "max_iterations")
+        self.assertTrue(summary["competition_converged"])
+        self.assertEqual(summary["competition_converged_at"], 3)
+
+    def test_summary_writes_separate_submission_candidate_pool(self) -> None:
+        runner = ScriptedRunner([0.6015, 0.6018])
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            controller = build(runner, SweepResearcher(), base)
+            with patch("sys.stdout", new=io.StringIO()):
+                summary = controller.run(max_iterations=2)
+            candidates = json.loads(
+                Path(summary["submission_candidates"]).read_text(encoding="utf-8")
+            )
+        self.assertEqual(summary["submission_candidate_count"], 2)
+        self.assertEqual(candidates[0]["submission_status"], "ALLOW")
+        self.assertIn("scientific_status", candidates[0])
+        self.assertIn("competition_status", candidates[0])
+
+    def test_unscoped_rejected_experiment_is_not_a_submission_candidate(self) -> None:
+        runner = ScriptedRunner([0.6015, 0.5900])
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            controller = build(runner, SweepResearcher(), base)
+            with patch("sys.stdout", new=io.StringIO()):
+                summary = controller.run(max_iterations=2)
+            candidates = json.loads(
+                Path(summary["submission_candidates"]).read_text(encoding="utf-8")
+            )
+        self.assertEqual(summary["submission_candidate_count"], 1)
+        by_iteration = {row["iteration"]: row for row in candidates}
+        self.assertEqual(by_iteration[0]["submission_status"], "ALLOW")
+        self.assertEqual(by_iteration[1]["submission_status"], "EXCLUDE")
 
     def test_meaningful_delta_resets_the_streak(self) -> None:
         runner = ScriptedRunner([0.6015, 0.6016, 0.6016, 0.6500, 0.6501])

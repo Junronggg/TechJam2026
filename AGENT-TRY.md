@@ -12,6 +12,8 @@
 - 旧版 broad family policy 在 replay 中避免过 2 个 temporal 实验；精确审计后确认 rolling 只否定“两项同时开启”，当前 scoped policy 只阻止这个已验证组合，不误伤尚未 rolling 的单特征。
 - `family_policies` 现由 validation-only rolling/placebo/paired-seed artifacts 自动生成；每条策略带来源哈希、模型作用域、科学结论和比赛状态。
 - 旧策略只在 task、model、feature schema 仍匹配时生效；artifact 改变后下次运行会重新归因，不再依赖人工同步 JSON 结论。
+- 官方 convergence 与内部研究探索已分开：默认仍按 `epsilon=0.002, rounds=3` 停止；显式研究模式会记录官方收敛点后继续探索，不能改写该收敛事实。
+- LLM 现在只能原样选择 deterministic top-5 候选中的完整 `changes`，不能漏掉学习率或自行拼配置；prompt 同时获得 train-only dataset facts 与方法适用条件。
 
 ## Agent 闭环
 
@@ -39,6 +41,7 @@
 | `memory_changed_choice` | memory 是否真的改变本轮 action |
 | `manual_interventions.jsonl` | 人工介入原因、动作及是否可避免 |
 | `summary.json` | 时间、停止原因、实验数、token、人工介入和最终冠军 |
+| `submission_candidates.json` | 科学结论与提交资格分离；被否定或 control 配置不会因一次分数进入提交池 |
 
 ## Agent 运行记录
 
@@ -175,7 +178,7 @@ python scripts/replay_planner_memory.py --max-steps 12
 | sequence model | stop | REJECTED | sequence DeepFM | -0.000493 且成本高 |
 | temporal counts | stop | REJECTED | ensemble + 两项 temporal 同开 | rolling 1/3，均值 -0.000246 |
 
-最新 scoped replay 得到：`no_memory/raw_history` 跑 6 个实验并依次加入两项 temporal；`distilled_patterns` 跑 5 个实验，只允许第一项单特征，在准备形成已被 rolling 否定的双特征组合时停止。因此少执行 1 个已有直接反证的实验，但 best 仍被单 split 的 `0.604931` 小涨影响。全过程标记 `validation_only=true`、`test_metrics_loaded=false`。
+加入新日志后重新 replay：archive 包含 30 份 history、159 行、128 条成功 validation 记录和 37 个归一化配置。`no_memory` 跑 7 个、`raw_history` 跑 6 个，二者都会形成两项 temporal 同开的 `0.605010`；`distilled_patterns` 跑 6 个，只允许第一项 temporal，随后选择已有日志支持的 DCNv2 分支，并阻止形成 rolling 已否定的双 temporal 配置。Distilled best 仍会被单 split 的 `0.604931` 小涨影响，因此这只证明 scoped memory 改变路径、避开一个已知坏组合，不证明它自动找到更高冠军。全过程标记 `validation_only=true`、`test_metrics_loaded=false`。
 
 实现判断：这一步把“人阅读 TRY.md 后手写 stop list”改成“Agent 从结构化实验产物更新 planning policy”。同时它揭示了证据粒度缺口：组合实验的失败不能自动推广为每个单特征都失败。下一步应让 slow-confirmation 自动对 `user_recent_3d_activity` 单项做 rolling，再决定是否停止整个 family。它是 evidence-driven policy update，不是 RL，也不代表自动发现了新的模型实现。
 
@@ -217,6 +220,91 @@ LLM 读取结构化 validation memory、合法 action space、候选评分和剩
 
 首次受限网络运行 `logs/run_20260830T141747Z` 发生 1 次 LLM failure 后自动回退到 deterministic。随后增加了安全连接检查和 `llm_fallbacks` 审计字段，使网络/API 故障不再被误认为 LLM 自主选择。
 
+### Run H：LLM 长程自主运行与双层收敛
+
+命令：
+
+```bash
+python scripts/run_agent.py \
+  --researcher llm \
+  --max-iterations 8 \
+  --research-after-convergence
+```
+
+运行目录：`logs/run_20260830T144609Z`。全程 validation-only，未计算 test，未记录人工介入。
+
+| Iteration | 来源 | 动作 | Primary | 相对当前冠军的结果 |
+|---:|---|---|---:|---|
+| 0 | system | FM+BCE baseline | 0.601470 | reference |
+| 1 | LLM | FM+BPR, lr=0.0003 | 0.603963 | 新冠军 |
+| 2 | LLM | 0.6/0.4 ensemble | **0.604713** | 新冠军 |
+| 3 | LLM | Like Multi-task，但沿用父节点 lr=0.0003 | 0.603831 | reject |
+| 4 | deterministic fallback | Like Multi-task, lr=0.001 | 0.604400 | reject |
+| 5 | LLM | BPR + user recent activity | 0.604419 | 低于冠军 |
+| 6 | LLM | temporal parent + DCNv2 | 0.604332 | stop exact direction |
+| 7 | LLM | temporal parent + ensemble weight 0.5 | 0.604694 | 低于冠军 0.000019 |
+
+| 审计项 | 结果 |
+|---|---:|
+| Official competition convergence | iteration 4，冠军仍为 iteration 2 |
+| Research after convergence | 继续执行 iteration 5–7 |
+| Stop reason | `max_iterations` |
+| LLM requests / failures / fallback | 11 / 1 / 1 |
+| Prompt / completion / total tokens | 122139 / 1433 / 123572 |
+| Wall clock | 809.7 秒 |
+| Manual interventions | 0 |
+| Test metrics | `null` |
+
+这次运行证明 Agent 能在官方收敛点后，按预设研究预算继续选择和执行分支；额外三轮没有超过冠军，所以不能把“继续研究”写成涨分。它也暴露出旧 LLM contract 的缺陷：iteration 3 选择了 Like 机制，却漏掉证据配置中的 `learning_rate=0.001`，随后三次修复失败并触发 fallback。
+
+Run H 之后做了两项代码修正：
+
+1. LLM 必须原样返回 ranked candidate 的完整 `changes`；任何增删字段都会自动重试。
+2. `submission_candidates.json` 默认只允许 reference/KEEP/ENSEMBLE_ONLY；只有带明确 `competition_status=ELIGIBLE` 的 scoped evidence 才能让科学上未确认的配置进入候选池。Run H 旧文件中宽松的 candidate count 不作为最终提交策略证据。
+
+因此，Run H 是真实长程轨迹和缺陷发现记录，不能倒推声称旧轨迹当时已具有这些保护。修正后另做 live smoke run：`logs/run_20260831T010826Z`。LLM 用 1 次请求原样选择 `training_objective=bpr + learning_rate=0.0003`，无失败、无 fallback、0 人工介入，Primary 复现 `0.603963`，test 为 `null`；prompt/completion/total tokens 为 `10497 / 94 / 10591`。这验证了新 contract 的真实 API 路径。
+
+### Run I：自动 Evidence Escalator
+
+这次升级解决的是 Agent 工作流缺口，不是新增模型或 feature，因此不记入 `TRY.md` 的排行榜。过去 planner 只能把候选标成“需要 rolling / paired seeds”；现在 Controller 可以把确认要求转成真实可执行 action：
+
+```text
+single-split discovery
+→ matched placebo（若该 feature 需要归因控制）
+→ 3-fold expanding-window rolling
+→ paired seeds 0/1/2/3
+→ VALIDATED / UNCERTAIN / REJECTED
+```
+
+启动方式：
+
+```bash
+python scripts/run_agent.py \
+  --researcher llm \
+  --research-after-convergence \
+  --auto-confirm
+```
+
+固定规则：
+
+- 普通小增益低于 `0.0002` 时不浪费 confirmation 预算；高 novelty 或已有 diversity advantage 可进入确认。
+- rolling 至少 3 folds、其中至少 2 folds 上涨且平均 delta 为正，才进入 paired seeds。
+- paired-seed 均值或多数 seed 不为正则 `REJECTED`；均值为正但区间跨 0 为 `UNCERTAIN + ELIGIBLE`；区间完全为正才为 `VALIDATED + ELIGIBLE`。
+- confirmation 不更新冠军 checkpoint，也不重置官方 convergence streak；它单独记录 action 数、底层 training-run 数和用时。
+- 所有确认必须显式返回 `test_labels_used=false`，生产路径仍校验官方 evaluator hash。
+
+真实数据 smoke check 使用通用 confirmation executor 对 `FM+BPR` 与 `FM+BPR+global_context` 做了 rolling 对照：
+
+| 项目 | 结果 |
+|---|---:|
+| Rolling wins | 3 / 3 |
+| Mean delta | **+0.000810** |
+| Training runs | 6 |
+| Runtime | 232.1 秒 |
+| Test labels | 未使用 |
+
+它与已有专用脚本结果一致，证明通用执行器能正确执行任意合法 config 的 reference/candidate 对照；这不是新的 `0.604713` 以上结果。自动化测试覆盖 discovery 筛选、rolling 失败停止、rolling 后 paired seeds、区间跨 0 的双状态、已有 artifact 去重、预算计数和提交池状态。当前全套测试为 187 项。
+
 ## Memory 机制
 
 `research_memory.json` 包含两层：
@@ -240,6 +328,8 @@ research_patterns:
 | `stop_direction` | 不再重复等价的失败方向 |
 
 Persistent validation memory 位于 `configs/research_evidence.json`。`scripts/run_agent.py` 每次启动还会读取 `configs/evidence_manifest.json`，从明确列出的 validation artifacts 重新生成 scoped policies，并覆盖相同 family 的旧手写 policy。Deterministic 与 LLM Researcher 使用同一份合并证据；test 指标不能进入规划证据。
+
+`configs/research_context.json` 另外提供 train-only 数据事实和 method conditions。例如 BPR 只在同用户存在正负样本且按用户排序时优先；censored watch-time 明确区分 exact observation 与 completed-play lower bound。这是有来源范围的研究上下文，不是把人工答案或 test 结果硬编码进 prompt。
 
 每条自动策略包含：
 
@@ -266,10 +356,10 @@ created_from: artifact path + sha256 + extracted validation result
 
 优先级：
 
-1. 用 fresh autonomous run 验证自动生成的 policy 能减少真实训练次数；若官方 convergence 更早触发，应如实记录无法观察分叉。
-2. 将 slow confirmation 从 planner 标签升级为可执行的 rolling/paired-seed job，而不是只做优先级加分。
-3. 若要继续 pairwise multi-task，先取得或明确重建对方的 loss、auxiliary target 和 sampler，不能继续猜参数。
-4. 再比较 cheap one-step lookahead 与当前 greedy planner。
+1. 建立显式 `Capability Registry`，区分已实现、可生成、仅有想法和已否定的 experiment family。
+2. 让 planner 在现有动作不足时先输出结构化 `capability_need`，再由受限 builder 生成 schema / runner / smoke test；暂不允许 LLM 任意改代码。
+3. 优先增加真正不同的信息源：leakage-safe lightweight sequence encoder，其次是 LightGCN；不要把旧参数换名当作新 family。
+4. 做 planner replay 的 pre/post contract 对照，并比较 budgeted one-step lookahead 与当前 greedy planner。
 
 暂不宣称：
 
@@ -302,6 +392,12 @@ python scripts/build_family_policies.py \
 # LLM planner（先在 git-ignored .env 配置 API key）
 python scripts/check_llm_connection.py
 python scripts/run_agent.py --researcher llm
+
+# 记录官方收敛点后继续使用剩余研究预算；最终比赛演示需预先声明该模式
+python scripts/run_agent.py --researcher llm --research-after-convergence
+
+# 同时让 promising discovery 自动执行 rolling → paired-seed confirmation
+python scripts/run_agent.py --researcher llm --research-after-convergence --auto-confirm
 ```
 
 ## 对应提交

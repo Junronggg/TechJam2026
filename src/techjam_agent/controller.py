@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from .config import apply_changes, validate_config
 from .critic import review
+from .evidence_escalator import ConfirmationAction, EvidenceEscalator
 from .interventions import InterventionLogger
 from .memory import build_structured_research_memory, is_duplicate_config
 from .proposals import DeterministicResearcher, Proposal
@@ -79,6 +80,12 @@ class Controller:
         self.llm_requests = 0
         self.llm_failures = 0
         self.llm_fallbacks: list[dict[str, Any]] = []
+        self.competition_converged_at: int | None = None
+        self.competition_best_at_convergence: dict[str, Any] | None = None
+        self.evidence_escalator = EvidenceEscalator.from_project(project)
+        self.auto_confirm = False
+        self._confirmation_queue: list[ConfirmationAction] = []
+        self.confirmations: list[dict[str, Any]] = []
         self._research_context: dict[str, Any] = {}
         self._pending_candidate_selection: dict[str, Any] | None = None
         self._pending_diagnostic: dict[str, Any] | None = None
@@ -235,6 +242,15 @@ class Controller:
                 self._record_placebo_control(item)
             else:
                 self._maybe_schedule_placebos(item, checkpoint)
+                diagnostics = item.get("diagnostics")
+                waiting_for_placebo = bool(
+                    isinstance(diagnostics, dict)
+                    and diagnostics.get("placebo_status") == "scheduled"
+                )
+                if not waiting_for_placebo:
+                    self._maybe_schedule_confirmation(
+                        item, None if parent is None else parent.config
+                    )
         self._pending_parent_selection = None
         self._pending_candidate_selection = None
         self._pending_diagnostic = None
@@ -297,6 +313,125 @@ class Controller:
         _write_json(self.run_dir / f"iteration_{item['iteration']:03d}.json", item)
         _write_json(self.run_dir / "research_memory.json", build_structured_research_memory(self.history))
 
+    def _maybe_schedule_confirmation(
+        self,
+        item: dict[str, Any],
+        reference_config: dict[str, Any] | None,
+    ) -> None:
+        if not self.auto_confirm:
+            return
+        decision = self.evidence_escalator.plan_discovery(item, reference_config)
+        if not isinstance(item.get("diagnostics"), dict):
+            item["diagnostics"] = {}
+        item["diagnostics"]["evidence_escalation"] = decision.as_dict()
+        action = decision.next_action
+        if action is not None:
+            known = {
+                queued.action_id for queued in self._confirmation_queue
+            } | {
+                str(row.get("action", {}).get("action_id"))
+                for row in self.confirmations
+            }
+            if action.action_id not in known:
+                self._confirmation_queue.append(action)
+        _write_json(self.run_dir / f"iteration_{item['iteration']:03d}.json", item)
+        _write_json(
+            self.run_dir / "research_memory.json",
+            build_structured_research_memory(self.history),
+        )
+
+    def _execute_confirmation(
+        self,
+        action_iteration: int,
+        action: ConfirmationAction,
+    ) -> None:
+        output_dir = self.run_dir / "confirmations" / action.action_id
+        record: dict[str, Any] = {
+            "action_iteration": action_iteration,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "action_type": "confirmation",
+            "action": action.as_dict(),
+            "manual_intervention": False,
+        }
+        print(
+            f"\nAction {action_iteration}: confirm={action.kind} "
+            f"target=iteration_{action.target_iteration:03d}",
+            flush=True,
+        )
+        target = next(
+            (row for row in self.history
+             if row.get("iteration") == action.target_iteration),
+            None,
+        )
+        try:
+            confirm = getattr(self.runner, "confirm", None)
+            if not callable(confirm):
+                raise RuntimeError("runner does not implement confirmation actions")
+            result = confirm(action, output_dir)
+            if result.get("test_labels_used") is not False:
+                raise ValueError("confirmation result must explicitly exclude test labels")
+            decision = self.evidence_escalator.evaluate(action, result)
+            record.update({
+                "status": "success",
+                "result": result,
+                "decision": decision.as_dict(),
+                "error": None,
+            })
+            if decision.next_action is not None:
+                self._confirmation_queue.append(decision.next_action)
+            if isinstance(target, dict):
+                if not isinstance(target.get("diagnostics"), dict):
+                    target["diagnostics"] = {}
+                confirmations = target["diagnostics"].setdefault("confirmations", [])
+                confirmations.append({
+                    "action_id": action.action_id,
+                    "kind": action.kind,
+                    "result": result,
+                    "decision": decision.as_dict(),
+                })
+                target["diagnostics"]["scientific_status"] = decision.scientific_status
+                target["diagnostics"]["competition_status"] = decision.competition_status
+                target["diagnostics"]["confirmation_status"] = (
+                    "scheduled" if decision.next_action is not None else "complete"
+                )
+                if decision.scientific_status == "REJECTED":
+                    target["research_decision"] = "STOP_DIRECTION"
+                elif decision.scientific_status in {"VALIDATED", "UNCERTAIN"}:
+                    target["research_decision"] = "KEEP_CANDIDATE"
+                _write_json(
+                    self.run_dir / f"iteration_{target['iteration']:03d}.json",
+                    target,
+                )
+            print(
+                f"  Confirmation: scientific={decision.scientific_status} "
+                f"competition={decision.competition_status}",
+                flush=True,
+            )
+        except Exception as exc:
+            record.update({
+                "status": "error",
+                "result": None,
+                "decision": None,
+                "error": {"type": type(exc).__name__, "message": str(exc)},
+            })
+            if isinstance(target, dict):
+                if not isinstance(target.get("diagnostics"), dict):
+                    target["diagnostics"] = {}
+                target["diagnostics"]["confirmation_status"] = "failed"
+            print(f"  Confirmation error: {type(exc).__name__}: {exc}", flush=True)
+        self.confirmations.append(record)
+        _write_json(
+            self.run_dir / f"confirmation_{action_iteration:03d}.json", record
+        )
+        with (self.run_dir / "confirmation_history.jsonl").open(
+            "a", encoding="utf-8"
+        ) as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, default=_json_default) + "\n")
+        _write_json(
+            self.run_dir / "research_memory.json",
+            build_structured_research_memory(self.history),
+        )
+
     def _record_placebo_control(self, item: dict[str, Any]) -> None:
         metadata = item.get("diagnostic_group")
         if not isinstance(metadata, dict):
@@ -352,6 +487,9 @@ class Controller:
         with (self.run_dir / "diagnostic_events.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(group, ensure_ascii=False, default=_json_default) + "\n")
         _write_json(self.run_dir / "research_memory.json", build_structured_research_memory(self.history))
+        if verdict["verdict"] == "KEEP_CANDIDATE":
+            previous_config = group["previous_best"].get("config")
+            self._maybe_schedule_confirmation(real_item, previous_config)
 
     def _update_convergence_streak(self, score: Any, global_best_before: Any, *,
                                    expanded_global_best: bool) -> None:
@@ -374,6 +512,77 @@ class Controller:
 
     def _converged(self) -> bool:
         return self.convergence_streak >= int(self.project["run_limits"]["convergence_rounds"])
+
+    def _record_competition_convergence(self) -> None:
+        if self.competition_converged_at is not None or not self.history:
+            return
+        latest_research = next(
+            (row for row in reversed(self.history)
+             if not self._is_control(row["config"])),
+            self.history[-1],
+        )
+        self.competition_converged_at = int(latest_research["iteration"])
+        self.competition_best_at_convergence = {
+            "iteration": self.best_iteration,
+            "primary": self.best_score,
+        }
+
+    def _submission_candidates(self) -> list[dict[str, Any]]:
+        """Separate scientific confidence from validation-based submission eligibility."""
+        rows: list[dict[str, Any]] = []
+        for item in self.history:
+            if item.get("status") != "success" or self._is_control(item["config"]):
+                continue
+            selection = item.get("candidate_selection")
+            pattern = (
+                selection.get("retrieved_pattern")
+                if isinstance(selection, dict) else None
+            )
+            if not isinstance(pattern, dict):
+                pattern = {}
+            diagnostics = (
+                item.get("diagnostics")
+                if isinstance(item.get("diagnostics"), dict) else {}
+            )
+            research = str(item.get("research_decision", "UNKNOWN"))
+            scientific = (
+                diagnostics.get("scientific_status")
+                or pattern.get("scientific_verdict")
+                or {
+                    "REFERENCE": "REFERENCE",
+                    "KEEP_CANDIDATE": "PROMISING",
+                    "ENSEMBLE_ONLY": "PROMISING",
+                    "STOP_DIRECTION": "NOT_CONFIRMED",
+                    "REJECT": "REJECTED",
+                    "REINTERPRET": "REINTERPRETED",
+                }.get(research, "NOT_CONFIRMED")
+            )
+            competition = (
+                diagnostics.get("competition_status")
+                or pattern.get("competition_status")
+            )
+            if competition is None:
+                competition = (
+                    "ELIGIBLE"
+                    if research in {"REFERENCE", "KEEP_CANDIDATE", "ENSEMBLE_ONLY"}
+                    else "RESEARCH_ONLY"
+                )
+            eligible = (
+                competition == "ELIGIBLE"
+                and research != "REINTERPRET"
+                and item.get("decision") != "REINTERPRET"
+            )
+            rows.append({
+                "iteration": item["iteration"],
+                "primary": float(item["metrics"]["primary"]),
+                "scientific_status": scientific,
+                "competition_status": competition,
+                "submission_status": "ALLOW" if eligible else "EXCLUDE",
+                "research_decision": research,
+                "selected": bool(eligible and item["iteration"] == self.best_iteration),
+                "config": item["config"],
+            })
+        return sorted(rows, key=lambda row: (-row["primary"], row["iteration"]))
 
     def _iteration_cap(self, max_iterations: int | None) -> int:
         """Total executed experiments, baseline included, clamped to the official maximum."""
@@ -476,23 +685,43 @@ class Controller:
         max_iterations: int | None = None,
         *,
         finalize_test: bool = True,
+        research_after_convergence: bool = False,
+        auto_confirm: bool = False,
     ) -> dict[str, Any]:
         limits = self.project["run_limits"]
         cap = self._iteration_cap(max_iterations)
         budget_seconds = float(limits["max_wall_clock_hours"]) * 3600.0
         reserve = self._experiment_cost_seconds()
+        self.auto_confirm = bool(auto_confirm)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         print(f"Run log: {self.run_dir}", flush=True)
         planner = getattr(self.researcher, "planner", None)
         memory_mode = getattr(planner, "memory_mode", None)
-        _write_json(self.run_dir / "run_meta.json", {"started_at": datetime.now(timezone.utc).isoformat(),
-            "benchmark": self.project["benchmark"], "limits": limits,
-            "max_total_experiments": cap, "planner_memory_mode": memory_mode})
+        _write_json(self.run_dir / "run_meta.json", {
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "benchmark": self.project["benchmark"],
+            "limits": limits,
+            "max_total_experiments": cap,
+            "planner_memory_mode": memory_mode,
+            "researcher": type(self.researcher).__name__,
+            "research_after_convergence": bool(research_after_convergence),
+            "auto_confirm": self.auto_confirm,
+        })
         baseline = Proposal("Reproduce the official FM baseline.",
                             "A verified baseline anchors every subsequent comparison.", {}, "system")
         stop_reason, stop_detail = "max_iterations", None
         for iteration in range(cap):
-            blocked = self._budget_block(budget_seconds, reserve)
+            if iteration > 0 and not self._diagnostic_queue and self._converged():
+                self._record_competition_convergence()
+                if not research_after_convergence:
+                    stop_reason = "converged"
+                    break
+            next_reserve = reserve
+            if self.auto_confirm and self._confirmation_queue:
+                next_reserve *= max(
+                    1, self._confirmation_queue[0].estimated_training_runs
+                )
+            blocked = self._budget_block(budget_seconds, next_reserve)
             if blocked is not None:
                 stop_reason = blocked
                 break
@@ -518,9 +747,11 @@ class Controller:
                 self._pending_diagnostic = metadata
                 self._execute(iteration, candidate, proposal, parent)
                 continue
-            if self._converged():
-                stop_reason = "converged"
-                break
+            if self.auto_confirm and self._confirmation_queue:
+                self._execute_confirmation(
+                    iteration, self._confirmation_queue.pop(0)
+                )
+                continue
             parent = self._select_parent()
             if parent is None:
                 stop_reason, stop_detail = "search_exhausted", "no expandable parent node"
@@ -542,13 +773,19 @@ class Controller:
                 stop_reason, stop_detail = failure
                 break
             self._execute(iteration, candidate, proposal, parent)
+        if self._converged():
+            # The streak may reach the threshold on the final allowed iteration,
+            # leaving no next loop turn in which to record the official point.
+            self._record_competition_convergence()
         final_test = None
         if finalize_test and self.best_checkpoint is not None:
             final_test = self.runner.finalize(self.best_config, self.best_checkpoint,
                                               self.submissions_dir / "final.csv")
             _write_json(self.artifacts_dir / "final_test_metrics.json", final_test)
-        executed = len(self.history)
+        executed = len(self.history) + len(self.confirmations)
         elapsed = self._elapsed()
+        submission_candidates = self._submission_candidates()
+        _write_json(self.run_dir / "submission_candidates.json", submission_candidates)
         memory_influenced = sum(
             bool(item.get("candidate_selection", {}).get("memory_changed_choice"))
             for item in self.history
@@ -558,6 +795,23 @@ class Controller:
                    "iterations": executed,
                    "total_experiments": executed,
                    "candidate_experiments": max(0, executed - 1),
+                   "discovery_actions": sum(
+                       not self._is_control(row["config"])
+                       for row in self.history[1:]
+                   ),
+                   "control_actions": sum(
+                       self._is_control(row["config"])
+                       for row in self.history
+                   ),
+                   "confirmation_actions": len(self.confirmations),
+                   "confirmation_training_runs": sum(
+                       int(row.get("result", {}).get("training_runs", 0) or 0)
+                       for row in self.confirmations
+                       if isinstance(row.get("result"), dict)
+                   ),
+                   "pending_confirmations": [
+                       action.as_dict() for action in self._confirmation_queue
+                   ],
                    "best_primary": None if self.best_score == float("-inf") else self.best_score,
                    "best_iteration": self.best_iteration,
                    "manual_interventions": self.interventions.count,
@@ -567,6 +821,19 @@ class Controller:
                    "memory_influenced_selections": memory_influenced,
                    "final_test_metrics": final_test,
                    "convergence_streak": self.convergence_streak,
+                   "competition_converged": self.competition_converged_at is not None,
+                   "competition_converged_at": self.competition_converged_at,
+                   "competition_best_at_convergence": self.competition_best_at_convergence,
+                   "research_after_convergence": bool(research_after_convergence),
+                   "auto_confirm": self.auto_confirm,
+                   "research_exhausted": stop_reason == "search_exhausted",
+                   "submission_candidate_count": sum(
+                       row["submission_status"] == "ALLOW"
+                       for row in submission_candidates
+                   ),
+                   "submission_candidates": str(
+                       self.run_dir / "submission_candidates.json"
+                   ),
                    "elapsed_seconds": elapsed,
                    "remaining_seconds": max(0.0, budget_seconds - elapsed),
                    "wall_clock_seconds": elapsed,

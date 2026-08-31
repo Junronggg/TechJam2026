@@ -105,6 +105,10 @@
       "evidence": "Official validation delta versus DeepFM was only +0.000029, so the observational watch-time relationship did not translate into useful auxiliary supervision."
     },
     {
+      "mechanism": "Pairwise BPR plus one-sided censored watch-time auxiliary supervision",
+      "evidence": "The controlled configuration scored 0.602523, or -0.001339 versus DeepFM+BCE and -0.001416 versus pointwise censored-watch Multi-task DeepFM. This exact pairwise configuration is rejected."
+    },
+    {
       "mechanism": "Candidate-specific positive-history interpretation",
       "evidence": "prior_video_positive and author_positive_recency appeared to add +0.000242 and +0.000236, but the matched constant-field placebo added +0.000431. Validation coverage was only 0.0304% and 0.7269%, respectively; the behavioral attribution is rejected."
     },
@@ -130,6 +134,10 @@
     }
   ],
   "uncertain_findings": [
+    {
+      "mechanism": "Pointwise DeepFM plus one-sided censored watch-time auxiliary supervision",
+      "evidence": "The controlled configuration scored 0.603939 versus 0.603862 for DeepFM+BCE, a +0.000077 delta that is too small for a scientific gain claim. Keep this exact result research-only; it does not reject every future censored-survival formulation."
+    },
     {
       "mechanism": "FM+BPR with a learned global_context field",
       "evidence": "Official validation delta was +0.000431 and rolling improved 3/3 folds (mean +0.000810). Across paired seeds 0-3, however, it won 3/4 with mean +0.000333 and an approximate 95% interval [-0.000427, +0.001092], so the gain is promising but not statistically confirmed."
@@ -158,6 +166,7 @@
   ],
   "next_actions": [
     "If global_context is studied further, predeclare additional paired seeds and never select the best seed.",
+    "Do not prioritize the tested censored-watch configurations over validation-supported submission candidates; reopen only for a materially different survival objective or architecture.",
     "Integrate fixed slices, placebo verdicts, and exposure-policy robustness into the Agent's structured experiment report.",
     "Keep the strict last-K tensors, but revisit sequence modeling only with a materially different efficient backend and architecture.",
     "Require a matched constant-field placebo when evaluating any newly appended categorical FM feature.",

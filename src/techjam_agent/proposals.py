@@ -18,10 +18,10 @@ from .memory import (
 )
 from .tree import branch_name, node_id_for, select_parent
 
-# One experiment may change 1-3 allow-listed fields. A single field is preferred,
+# One experiment may change 1-4 allow-listed fields. A single field is preferred,
 # but model switches such as FM+BPR -> LightGBM+BCE must set model and
 # training_objective together (existing DeterministicResearcher behavior).
-MAX_CHANGE_FIELDS = 3
+MAX_CHANGE_FIELDS = 4
 ALLOWED_CHANGE_KEYS = set(ALLOWED_VALUES) | set(FEATURE_KEYS) | {"model", "training_objective"}
 PROPOSAL_RESPONSE_KEYS = frozenset({"hypothesis", "reason", "changes"})
 ZERO_TOKEN_USAGE = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -42,7 +42,7 @@ BLOCKED_EVIDENCE_KEYS = frozenset({
 CHANGE_RULE = (
     "Propose exactly one legal experiment. Change between 1 and "
     f"{MAX_CHANGE_FIELDS} allow-listed fields. Prefer a single-field change; "
-    "use two or three fields only when they are one atomic switch "
+    "use multiple fields only when they are one atomic mechanism switch "
     "(for example model plus training_objective when moving FM+BPR to LightGBM+BCE). "
     "Do not repeat a configuration already present in history. "
     "Your changes are applied to expansion_parent, which may differ from global_best. "
@@ -78,7 +78,9 @@ class Proposal:
             raise ValueError("proposal requires a non-empty reason")
         changes = value.get("changes")
         if not isinstance(changes, dict) or not 1 <= len(changes) <= MAX_CHANGE_FIELDS:
-            raise ValueError("proposal must contain one atomic action (at most three config fields)")
+            raise ValueError(
+                f"proposal must contain one atomic action (at most {MAX_CHANGE_FIELDS} config fields)"
+            )
         illegal = set(changes) - ALLOWED_CHANGE_KEYS
         if illegal:
             raise ValueError(f"unsupported proposal keys: {sorted(illegal)}")
@@ -278,7 +280,10 @@ def build_planner_prompt(
 ) -> dict[str, Any]:
     """Build the planner context. Does not call an HTTP API."""
     planning_config = expansion_config or best_config
-    ranked_candidates = rank_candidates(planning_config, history)
+    sanitized_evidence = sanitize_prior_evidence(prior_evidence or {})
+    ranked_candidates = rank_candidates(
+        planning_config, history, prior_evidence=sanitized_evidence
+    )
     return {
         "objective": (
             "Propose exactly one experiment that can improve validation Primary "
@@ -296,7 +301,12 @@ def build_planner_prompt(
         "remaining": remaining_search_space(expansion_config or best_config),
         "candidate_ranking": [row.as_dict() for row in ranked_candidates[:5]],
         "research_patterns": distill_research_patterns(history),
-        "prior_evidence": sanitize_prior_evidence(prior_evidence or {}),
+        "dataset_facts": sanitized_evidence.get("dataset_facts", {}),
+        "method_reference": sanitized_evidence.get("method_reference", {}),
+        "prior_evidence": {
+            key: value for key, value in sanitized_evidence.items()
+            if key not in {"dataset_facts", "method_reference"}
+        },
         "memory": build_memory_summary(history),
         "global_best": {
             "config": best_config,
@@ -312,7 +322,7 @@ def build_planner_prompt(
             "properties": {
                 "hypothesis": "non-empty string",
                 "reason": "non-empty string",
-                "changes": "non-empty object with 1-3 allow-listed keys only",
+                "changes": f"non-empty object with 1-{MAX_CHANGE_FIELDS} allow-listed keys only",
             },
         },
     }
@@ -646,6 +656,14 @@ class OpenAICompatibleResearcher:
             try:
                 raw = _message_json(payload)
                 proposal = Proposal.parse(raw, "llm")
+                ranked_changes = [
+                    row.get("changes") for row in prompt.get("candidate_ranking", [])
+                    if isinstance(row, dict)
+                ]
+                if ranked_changes and proposal.changes not in ranked_changes:
+                    raise ValueError(
+                        "LLM must select one candidate_ranking changes object exactly"
+                    )
                 candidate = apply_changes(best, proposal.changes)
                 if experiment_key(candidate) in tried:
                     raise ValueError("LLM repeated a previous experiment")
@@ -657,14 +675,20 @@ class OpenAICompatibleResearcher:
                         f"LLM proposal failed after {MAX_LLM_ATTEMPTS} attempts: {last_error}"
                     ) from exc
                 continue
+            selected_row = next(
+                (row for row in prompt.get("candidate_ranking", [])
+                 if isinstance(row, dict) and row.get("changes") == proposal.changes),
+                {},
+            )
             self.last_selection = {
-                "selected_family": "llm_generated",
-                "selected_score": None,
+                "selected_family": selected_row.get("family", "llm_generated"),
+                "selected_score": selected_row.get("score"),
                 "criteria": (
                     "LLM selected one legal action after reviewing ranked candidates, "
                     "validation memory, cost budget, and prior evidence"
                 ),
                 "ranked_candidates": prompt.get("candidate_ranking", []),
+                "retrieved_pattern": selected_row.get("retrieved_pattern"),
             }
             self.last_error = None
             return Proposal(
@@ -687,7 +711,11 @@ class OpenAICompatibleResearcher:
                 "role": "system",
                 "content": (
                     "You are a cautious autonomous ML researcher. Treat prior_evidence as "
-                    "authoritative experimental memory. Do not repeat rejected mechanisms "
+                    "authoritative experimental memory and dataset_facts as training-only "
+                    "observations. Use method_reference as conditional guidance, not as proof. "
+                    "Select one candidate_ranking changes object exactly; do not edit, add, "
+                    "or omit its fields. "
+                    "Do not repeat rejected mechanisms "
                     "unless the proposed legal action tests a materially different hypothesis. "
                     "Prefer evidence from multiple rolling folds over a single split. Propose "
                     "only values explicitly listed in allowed_values; roadmap items are not "

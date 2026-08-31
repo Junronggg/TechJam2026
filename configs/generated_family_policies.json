@@ -78,6 +78,50 @@
       ]
     },
     {
+      "policy_id": "26748e2a18fac263",
+      "family": "censored_watchtime",
+      "policy": "gather_evidence",
+      "scientific_verdict": "INSUFFICIENT",
+      "competition_status": "RESEARCH_ONLY",
+      "confidence": 0.4,
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "multitask_deepfm"
+        ],
+        "training_objectives": [
+          "bce"
+        ],
+        "features": {},
+        "hyperparameters": {
+          "auxiliary_loss_weight": 0.1,
+          "auxiliary_signals": "censored_watch",
+          "embedding_dim": 16,
+          "learning_rate": 0.001
+        }
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "censored_watchtime_bce_v1",
+          "kind": "single_delta",
+          "path": "runs/censored_watchtime_ablation/summary.json",
+          "sha256": "8a31e24adf42bc703d9778e950632f354290e8189fb3d30fb6dd3ce2ee3f6a97",
+          "result": {
+            "signal": "noise",
+            "delta": 7.700920104980469e-05,
+            "robust": false
+          }
+        }
+      ]
+    },
+    {
       "policy_id": "6307005496cecbf3",
       "family": "cross_network",
       "policy": "exploit_with_confirmation",
@@ -320,6 +364,50 @@
             "wins": 3,
             "folds": 3,
             "robust": true
+          }
+        }
+      ]
+    },
+    {
+      "policy_id": "bc3409ee8fd68625",
+      "family": "pairwise_censored_watchtime",
+      "policy": "stop_direction",
+      "scientific_verdict": "REJECTED",
+      "competition_status": "NOT_ELIGIBLE",
+      "confidence": 0.65,
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "multitask_deepfm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ],
+        "features": {},
+        "hyperparameters": {
+          "auxiliary_loss_weight": 0.1,
+          "auxiliary_signals": "censored_watch",
+          "embedding_dim": 16,
+          "learning_rate": 0.001
+        }
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "pairwise_censored_watchtime_v1",
+          "kind": "single_delta",
+          "path": "runs/censored_watchtime_ablation/summary.json",
+          "sha256": "8a31e24adf42bc703d9778e950632f354290e8189fb3d30fb6dd3ce2ee3f6a97",
+          "result": {
+            "signal": "negative",
+            "delta": -0.0013394355773925781,
+            "robust": false
           }
         }
       ]
