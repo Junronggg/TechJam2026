@@ -203,6 +203,42 @@
           "learning_rate": 0.001
         }
       }
+    },
+    {
+      "id": "censored_watchtime_bce_v1",
+      "family": "censored_watchtime",
+      "kind": "single_delta",
+      "path": "runs/censored_watchtime_ablation/summary.json",
+      "pointer": ["results", "censored_watch_bce", "delta_vs_deepfm_bce"],
+      "validation_only": true,
+      "applies_to": {
+        "models": ["multitask_deepfm"],
+        "training_objectives": ["bce"],
+        "hyperparameters": {
+          "auxiliary_signals": "censored_watch",
+          "auxiliary_loss_weight": 0.1,
+          "embedding_dim": 16,
+          "learning_rate": 0.001
+        }
+      }
+    },
+    {
+      "id": "pairwise_censored_watchtime_v1",
+      "family": "pairwise_censored_watchtime",
+      "kind": "single_delta",
+      "path": "runs/censored_watchtime_ablation/summary.json",
+      "pointer": ["results", "censored_watch_bpr", "delta_vs_deepfm_bce"],
+      "validation_only": true,
+      "applies_to": {
+        "models": ["multitask_deepfm"],
+        "training_objectives": ["bpr"],
+        "hyperparameters": {
+          "auxiliary_signals": "censored_watch",
+          "auxiliary_loss_weight": 0.1,
+          "embedding_dim": 16,
+          "learning_rate": 0.001
+        }
+      }
     }
   ]
 }

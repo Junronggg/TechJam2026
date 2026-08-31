@@ -187,6 +187,7 @@ class MultiTaskDeepFM(DeepFM):
         auxiliary_weight: float,
         auxiliary_mask: np.ndarray | None = None,
         auxiliary_loss: str = "bce",
+        auxiliary_censored: np.ndarray | None = None,
     ) -> float:
         if auxiliary_labels.ndim != 2 or auxiliary_labels.shape[1] != self.A.shape[1]:
             raise ValueError("auxiliary_labels has the wrong shape")
@@ -194,6 +195,10 @@ class MultiTaskDeepFM(DeepFM):
             auxiliary_mask = np.ones_like(auxiliary_labels, dtype=np.float32)
         if auxiliary_mask.shape != auxiliary_labels.shape:
             raise ValueError("auxiliary_mask has the wrong shape")
+        if auxiliary_censored is None:
+            auxiliary_censored = np.zeros_like(auxiliary_labels, dtype=np.float32)
+        if auxiliary_censored.shape != auxiliary_labels.shape:
+            raise ValueError("auxiliary_censored has the wrong shape")
         observed = max(1.0, float(auxiliary_mask.sum()))
         logits, cache = self._forward(X)
         _, _, _, flattened, hidden_pre, hidden = cache
@@ -217,8 +222,17 @@ class MultiTaskDeepFM(DeepFM):
                 1.0 - auxiliary_probabilities
             )
             element_loss = difference * difference
+        elif auxiliary_loss == "censored_mse":
+            difference = auxiliary_probabilities - auxiliary_labels
+            active_difference = np.where(
+                (auxiliary_censored > 0) & (difference >= 0), 0.0, difference
+            )
+            loss_gradient = 2.0 * active_difference * auxiliary_probabilities * (
+                1.0 - auxiliary_probabilities
+            )
+            element_loss = active_difference * active_difference
         else:
-            raise ValueError("auxiliary_loss must be 'bce' or 'mse'")
+            raise ValueError("auxiliary_loss must be 'bce', 'mse', or 'censored_mse'")
         auxiliary_gradient = (
             auxiliary_weight * loss_gradient * auxiliary_mask / observed
         ).astype(np.float32)
@@ -253,6 +267,8 @@ class MultiTaskDeepFM(DeepFM):
         positive_mask: np.ndarray | None = None,
         negative_mask: np.ndarray | None = None,
         auxiliary_loss: str = "bce",
+        positive_censored: np.ndarray | None = None,
+        negative_censored: np.ndarray | None = None,
     ) -> float:
         """Optimize BPR for long-view ranking plus pointwise auxiliary feedback."""
         expected = (len(positive_x), self.A.shape[1])
@@ -264,6 +280,12 @@ class MultiTaskDeepFM(DeepFM):
             negative_mask = np.ones_like(negative_auxiliary, dtype=np.float32)
         if positive_mask.shape != expected or negative_mask.shape != expected:
             raise ValueError("pairwise auxiliary masks have the wrong shape")
+        if positive_censored is None:
+            positive_censored = np.zeros(expected, dtype=np.float32)
+        if negative_censored is None:
+            negative_censored = np.zeros(expected, dtype=np.float32)
+        if positive_censored.shape != expected or negative_censored.shape != expected:
+            raise ValueError("pairwise auxiliary censor indicators have the wrong shape")
 
         positive_logits, positive_cache = self._forward(positive_x)
         negative_logits, negative_cache = self._forward(negative_x)
@@ -283,9 +305,9 @@ class MultiTaskDeepFM(DeepFM):
 
         observed = max(1.0, float(positive_mask.sum() + negative_mask.sum()))
         auxiliary_loss_sum = 0.0
-        for cache, labels, mask in (
-            (positive_cache, positive_auxiliary, positive_mask),
-            (negative_cache, negative_auxiliary, negative_mask),
+        for cache, labels, mask, censored in (
+            (positive_cache, positive_auxiliary, positive_mask, positive_censored),
+            (negative_cache, negative_auxiliary, negative_mask, negative_censored),
         ):
             X, _, _, flattened, hidden_pre, hidden = cache
             auxiliary_logits = hidden @ self.A + self.ab
@@ -302,8 +324,19 @@ class MultiTaskDeepFM(DeepFM):
                     1.0 - probabilities
                 )
                 element_loss = difference_aux * difference_aux
+            elif auxiliary_loss == "censored_mse":
+                difference_aux = probabilities - labels
+                active_difference = np.where(
+                    (censored > 0) & (difference_aux >= 0), 0.0, difference_aux
+                )
+                loss_gradient = 2.0 * active_difference * probabilities * (
+                    1.0 - probabilities
+                )
+                element_loss = active_difference * active_difference
             else:
-                raise ValueError("auxiliary_loss must be 'bce' or 'mse'")
+                raise ValueError(
+                    "auxiliary_loss must be 'bce', 'mse', or 'censored_mse'"
+                )
             auxiliary_gradient = (
                 auxiliary_weight * loss_gradient * mask / observed
             ).astype(np.float32)

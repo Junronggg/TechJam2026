@@ -12,6 +12,7 @@ from .config import (
     experiment_key,
 )
 from .memory import collect_tried_keys, distill_research_patterns
+from .skills import default_skill_registry
 
 
 FEATURE_FAMILIES = {
@@ -37,6 +38,8 @@ FAMILY_PRIORS = {
     "heterogeneous_ensemble": (0.82, 0.90, 0.70, 0.70, 0.30),
     "multitask": (0.62, 0.75, 0.70, 0.65, 0.45),
     "pairwise_multitask": (0.64, 0.60, 0.80, 0.75, 0.35),
+    "censored_watchtime": (0.58, 0.55, 0.90, 0.70, 0.30),
+    "pairwise_censored_watchtime": (0.60, 0.50, 0.95, 0.80, 0.25),
     "cross_network": (0.52, 0.65, 0.65, 0.60, 0.85),
     "sequence_model": (0.05, 0.90, 0.95, 1.00, 0.20),
     "tree_model": (0.20, 0.90, 0.60, 0.45, 0.50),
@@ -56,6 +59,7 @@ PRIOR_POLICIES = {
     "retest_with_control",
     "stop_direction",
 }
+SKILL_REGISTRY = default_skill_registry()
 
 
 @dataclass(frozen=True)
@@ -69,6 +73,9 @@ class CandidateExperiment:
     novelty: float
     compute_cost: float
     redundancy: float
+    skill_id: str
+    required_confirmation: tuple[str, ...]
+    risk: str
 
 
 @dataclass(frozen=True)
@@ -78,6 +85,7 @@ class RankedCandidate:
     observed_mean_delta: float | None
     family_trials: int
     direction_stopped: bool
+    retrieved_pattern: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         result = asdict(self.candidate)
@@ -86,6 +94,7 @@ class RankedCandidate:
             "observed_mean_delta": self.observed_mean_delta,
             "family_trials": self.family_trials,
             "direction_stopped": self.direction_stopped,
+            "retrieved_pattern": self.retrieved_pattern,
         })
         return result
 
@@ -99,9 +108,21 @@ def _candidate(
     prior: tuple[float, float, float, float, float] | None = None,
 ) -> CandidateExperiment:
     expected, evidence, novelty, cost, redundancy = prior or FAMILY_PRIORS[family]
+    skill_id = SKILL_REGISTRY.primary_for_candidate(family, changes)
+    SKILL_REGISTRY.require(skill_id)
+    confirmations = SKILL_REGISTRY.evidence_for_candidate(family, changes)
+    if cost >= 0.8:
+        risk = "high_compute_cost"
+    elif redundancy >= 0.8:
+        risk = "high_redundancy"
+    elif evidence < 0.5:
+        risk = "weak_prior_evidence"
+    else:
+        risk = "moderate"
     return CandidateExperiment(
         hypothesis, reason, changes, family,
         expected, evidence, novelty, cost, redundancy,
+        skill_id, confirmations, risk,
     )
 
 
@@ -135,6 +156,32 @@ def _model_candidates(config: dict[str, Any]) -> list[CandidateExperiment]:
             "FM benefits from BPR and like-only DeepFM has stable rolling evidence; this controlled action changes the main objective without changing the auxiliary target.",
             {"model": "multitask_deepfm", "training_objective": "bpr", "learning_rate": 0.001},
             "pairwise_multitask",
+        ))
+    if not (
+        model == "multitask_deepfm"
+        and config["training_objective"] == "bce"
+        and config["hyperparameters"]["auxiliary_signals"] == "censored_watch"
+    ):
+        rows.append(_candidate(
+            "Use a one-sided censored watch-time auxiliary objective.",
+            "Incomplete plays provide exact log-watch targets, while completed plays "
+            "provide only a duration lower bound; this is materially different from capped MSE.",
+            {"model": "multitask_deepfm", "training_objective": "bce",
+             "auxiliary_signals": "censored_watch", "learning_rate": 0.001},
+            "censored_watchtime",
+        ))
+    if not (
+        model == "multitask_deepfm"
+        and config["training_objective"] == "bpr"
+        and config["hyperparameters"]["auxiliary_signals"] == "censored_watch"
+    ):
+        rows.append(_candidate(
+            "Combine within-user BPR with one-sided censored watch-time supervision.",
+            "This aligns the main objective with ranking while retaining uncapped lower-bound "
+            "information from completed plays.",
+            {"model": "multitask_deepfm", "training_objective": "bpr",
+             "auxiliary_signals": "censored_watch", "learning_rate": 0.001},
+            "pairwise_censored_watchtime",
         ))
     if model != "dcnv2":
         rows.append(_candidate(
@@ -395,11 +442,24 @@ def rank_candidates(
             score += 0.08
         elif pattern_policy == "ensemble_only":
             score += 0.03
+        elif pattern_policy == "gather_evidence":
+            # Scientific uncertainty must not silently remove a promising leaderboard
+            # candidate. Submission-eligible configurations receive one controlled turn.
+            competition = pattern.get("competition_status")
+            if competition == "ELIGIBLE":
+                score += 0.10
+            elif competition == "RESEARCH_ONLY":
+                score -= 0.08
+            else:
+                score += 0.01
         if pattern_policy == "stop_direction":
             stopped = True
         if stopped:
             score -= 1.0
-        ranked.append(RankedCandidate(candidate, score, observed, len(deltas), stopped))
+        ranked.append(RankedCandidate(
+            candidate, score, observed, len(deltas), stopped,
+            pattern if pattern else None,
+        ))
     return sorted(ranked, key=lambda row: (-row.score, row.candidate.family,
                                             experiment_key(apply_changes(config, row.candidate.changes))))
 
@@ -457,13 +517,14 @@ class AutonomousExperimentPlanner:
             if self.memory_mode == "distilled_patterns" else {}
         )
         selected_config = apply_changes(config, winner.candidate.changes)
-        retrieved_pattern = _matching_prior_pattern(
+        retrieved_pattern = winner.retrieved_pattern or _matching_prior_pattern(
             prior_patterns, winner.candidate.family, selected_config
         ) or current_patterns.get(winner.candidate.family)
         self.last_selection = {
             "memory_mode": self.memory_mode,
             "selected_family": winner.candidate.family,
             "selected_score": float(winner.score),
+            "selected_skill": winner.candidate.skill_id,
             "criteria": (
                 "expected_gain + evidence_strength + novelty - compute_cost - redundancy; "
                 "scoped artifact policies override family-level patterns only when the "
@@ -482,5 +543,17 @@ class AutonomousExperimentPlanner:
                 for choice in counterfactual_choices.values()
             ),
             "ranked_candidates": [row.as_dict() for row in ranked[:5]],
+            "decision_record": {
+                "hypothesis": winner.candidate.hypothesis,
+                "mechanism_basis": winner.candidate.reason,
+                "family": winner.candidate.family,
+                "proposed_action": winner.candidate.skill_id,
+                "expected_gain": winner.candidate.expected_gain,
+                "novelty": winner.candidate.novelty,
+                "risk": winner.candidate.risk,
+                "required_confirmation": list(
+                    winner.candidate.required_confirmation
+                ),
+            },
         }
         return winner.candidate

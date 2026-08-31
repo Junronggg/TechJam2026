@@ -19,6 +19,7 @@ from .dcnv2 import DCNv2
 from .deepfm import DeepFM, MultiTaskDeepFM
 from .ensemble import blend_scores
 from .feedback import (
+    align_censored_watch_feedback,
     align_auxiliary_feedback,
     auxiliary_task_count,
     select_auxiliary_feedback,
@@ -63,6 +64,7 @@ class ExperimentRunner:
         self._splits = None
         self._encoded = None
         self._auxiliary_feedback = None
+        self._censored_watch_feedback = None
         self._sequence_categories = None
         self._causal_sequence_cache = {}
         self._validation_slices = None
@@ -96,15 +98,25 @@ class ExperimentRunner:
         })
         np.savez_compressed(self.validation_artifact_path(checkpoint), **payload)
 
-    def _auxiliary_for(self, selection: str) -> tuple[np.ndarray, np.ndarray]:
+    def _auxiliary_for(
+        self, selection: str
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if selection == "censored_watch":
+            if self._censored_watch_feedback is None:
+                self._censored_watch_feedback = align_censored_watch_feedback(
+                    self.data_dir, {"train": self._splits["train"]}
+                )
+            labels, masks, censored = self._censored_watch_feedback
+            return labels["train"], masks["train"], censored["train"]
         if self._auxiliary_feedback is None:
             self._auxiliary_feedback = align_auxiliary_feedback(
                 self.data_dir, {"train": self._splits["train"]}
             )
         labels, masks = self._auxiliary_feedback
-        return select_auxiliary_feedback(
+        selected_labels, selected_masks = select_auxiliary_feedback(
             labels["train"], masks["train"], selection
         )
+        return selected_labels, selected_masks, np.zeros_like(selected_labels)
 
     def _causal_for(
         self,
@@ -386,7 +398,7 @@ class ExperimentRunner:
             else None
         )
         if config["model"] == "multitask_deepfm":
-            auxiliary_train, auxiliary_mask = self._auxiliary_for(
+            auxiliary_train, auxiliary_mask, auxiliary_censored = self._auxiliary_for(
                 hp["auxiliary_signals"]
             )
             model = MultiTaskDeepFM(
@@ -475,7 +487,13 @@ class ExperimentRunner:
                             hp["auxiliary_loss_weight"],
                             auxiliary_mask[positive_rows],
                             auxiliary_mask[negative_rows],
-                            "mse" if hp["auxiliary_signals"] == "log_watch" else "bce",
+                            auxiliary_loss=(
+                                "censored_mse" if hp["auxiliary_signals"] == "censored_watch"
+                                else "mse" if hp["auxiliary_signals"] == "log_watch"
+                                else "bce"
+                            ),
+                            positive_censored=auxiliary_censored[positive_rows],
+                            negative_censored=auxiliary_censored[negative_rows],
                         )
                     elif config["model"] == "deepfm":
                         model.bpr_step(positive_x, negative_x)
@@ -492,7 +510,12 @@ class ExperimentRunner:
                             auxiliary_train[batch],
                             hp["auxiliary_loss_weight"],
                             auxiliary_mask[batch],
-                            "mse" if hp["auxiliary_signals"] == "log_watch" else "bce",
+                            auxiliary_loss=(
+                                "censored_mse" if hp["auxiliary_signals"] == "censored_watch"
+                                else "mse" if hp["auxiliary_signals"] == "log_watch"
+                                else "bce"
+                            ),
+                            auxiliary_censored=auxiliary_censored[batch],
                         )
                     elif config["model"] == "sequence_deepfm":
                         model.step(

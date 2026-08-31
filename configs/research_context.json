@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "scope": "Training-only dataset facts and mechanism conditions for long_view research planning.",
+  "dataset_facts": {
+    "source_split": "train only: 2022-04-09 through 2022-04-21",
+    "test_labels_used": false,
+    "interactions": 1141112,
+    "users": 26210,
+    "observed_videos": 7538,
+    "catalog_videos_from_label_free_metadata": 7551,
+    "interactions_per_observed_video": 151.3812682409127,
+    "long_view_rate": 0.33661989357749283,
+    "click_rate": 0.46344705865857166,
+    "play_time_ge_18s_agreement_with_long_view": 0.966785030741943,
+    "repeated_user_video_rows_fraction": 0.042381466499344496,
+    "evaluation_structure": "within-user ranking; Primary is mean(validation GAUC, validation nDCG@5)",
+    "inference_constraint": "play_time, click, like, follow and comment are post-exposure outcomes; use them only as training supervision, never prediction-time features"
+  },
+  "method_reference": {
+    "bpr": {
+      "use_when": "users contain both positive and negative training examples and evaluation is within-user ranking",
+      "failure_check": "compare paired seeds and avoid assuming more negatives or hard negatives help"
+    },
+    "censored_watchtime": {
+      "use_when": "training has play_time and duration but completed plays are right-censored by video length",
+      "mechanism": "incomplete plays use exact log-watch regression; completed plays use a one-sided lower-bound loss at log(duration)",
+      "distinction": "this is not capped log-watch MSE and not completion-ratio BCE"
+    },
+    "target_statistics": {
+      "use_when": "statistics are computed from strict past/train-only data with leave-one-out for training rows",
+      "failure_check": "run rolling validation and matched structural controls for appended categorical fields"
+    },
+    "ensemble": {
+      "use_when": "component predictions have measured conditional error complementarity",
+      "failure_check": "high standalone score or low global correlation alone is insufficient"
+    },
+    "hard_negative_sampling": {
+      "use_when": "the negative score used for mining is sufficiently calibrated and does not collapse diversity",
+      "project_evidence": "the current semi-hard pools reduced validation Primary; do not repeat without a materially different sampler"
+    },
+    "global_context": {
+      "project_evidence": "scientifically uncertain but submission-eligible: official +0.000431, rolling 3/3 mean +0.000810, paired seeds 3/4 mean +0.000333 with interval crossing zero"
+    }
+  }
+}

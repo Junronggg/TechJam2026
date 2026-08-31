@@ -22,7 +22,7 @@ ALLOWED_VALUES = {
     "auxiliary_loss_weight": (0.05, 0.1, 0.2, 0.3, 0.5),
     "auxiliary_signals": (
         "click", "like", "completion", "click_like", "click_like_completion",
-        "log_watch"
+        "log_watch", "censored_watch"
     ),
     "dcn_cross_layers": (1, 2, 3),
     "dcn_low_rank": (8, 16, 32),

@@ -21,6 +21,10 @@ def main() -> int:
         "--check-against",
         help="Fail if generated JSON differs from this existing file.",
     )
+    parser.add_argument(
+        "--output",
+        help="Write the generated snapshot to this project-relative path.",
+    )
     args = parser.parse_args()
     manifest_path = ROOT / args.manifest
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -32,6 +36,11 @@ def main() -> int:
             print("generated family policies are stale", file=sys.stderr)
             return 1
         print("generated family policies are current")
+        return 0
+    if args.output:
+        output = ROOT / args.output
+        output.write_text(rendered, encoding="utf-8")
+        print(f"wrote {output}")
         return 0
     print(rendered, end="")
     return 0

@@ -376,6 +376,7 @@ def distill_research_patterns(
         critique = item.get("critique") if isinstance(item.get("critique"), dict) else {}
         diagnostics = item.get("diagnostics") if isinstance(item.get("diagnostics"), dict) else {}
         verdict = critique.get("verdict")
+        scientific_status = diagnostics.get("scientific_status")
         placebo_status = diagnostics.get("placebo_status")
         placebo_result = diagnostics.get("placebo_verdict")
         if placebo_status == "scheduled":
@@ -389,6 +390,10 @@ def distill_research_patterns(
             row["failed"] += 1
         elif diagnostics.get("placebo_verdict") == "REINTERPRET":
             row["reinterpreted"] += 1
+        elif scientific_status == "VALIDATED":
+            row["positive"] += 1
+        elif scientific_status == "REJECTED":
+            row["negative_or_noise"] += 1
         elif verdict == "promote":
             row["positive"] += 1
         elif verdict in {"noise", "reject"}:
@@ -461,10 +466,17 @@ def build_structured_research_memory(
         verdict = critique.get("verdict") or (
             "failed" if item.get("status") != "success" else "unclassified"
         )
+        scientific_status = diagnostics.get("scientific_status")
         if item.get("decision") == "CONTROL":
             status = "control"
         elif diagnostics.get("placebo_verdict") == "REINTERPRET":
             status = "reinterpreted"
+        elif scientific_status == "VALIDATED":
+            status = "validated"
+        elif scientific_status == "UNCERTAIN":
+            status = "uncertain"
+        elif scientific_status == "REJECTED":
+            status = "rejected"
         else:
             status = {
                 "promote": "promising",
@@ -488,6 +500,9 @@ def build_structured_research_memory(
                 "within_user_score_correlation"
             ),
             "pair_error_recovery_rate": diagnostics.get("pair_error_recovery_rate"),
+            "confirmation_status": diagnostics.get("confirmation_status"),
+            "scientific_status": scientific_status,
+            "competition_status": diagnostics.get("competition_status"),
         }
         confidence = critique.get("confidence", "low")
         if status == "reinterpreted":
