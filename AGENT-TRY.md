@@ -256,7 +256,7 @@ Agent action space 新增 `pairwise_multitask`：同一个 MultiTask DeepFM 中�
 | 配置 | Primary | 相对 like+BCE | 自动结论 |
 |---|---:|---:|---|
 | k16 / aux0.1 / lr0.001 | 0.603322 | -0.001079 | STOP_DIRECTION（精确 scope） |
-| 外部报告 k32 / aux0.3 / lr0.001 | 0.603610 | -0.000791 | STOP_DIRECTION（精确 scope） |
+| alternative config k32 / aux0.3 / lr0.001 | 0.603610 | -0.000791 | STOP_DIRECTION（精确 scope） |
 
 这两条结果已进入 evidence manifest，分别绑定 model、objective、embedding、auxiliary signal/weight 和 learning rate，不会阻止未来采用不同 target 或 sampler 的新 pairwise mechanism。Agent 因此能执行该能力，也能根据自己的 validation 结果停止重复配置。
 

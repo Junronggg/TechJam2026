@@ -93,10 +93,10 @@ rank 校准，并将权重设为 `0.63`，Validation Primary **0.605365**。
 | 21 | Rank-calibrated local weight scan：weight=0.64 | 0.605352 | +0.000639 vs 原冠军 | 接近峰值；rolling 2/3、均值 +0.000350 |
 | 21 | weight=0.63 paired seeds 0–3（复用相同组件 checkpoint） | mean delta **+0.000430** | 4/4 seeds 为正；区间 `[-0.000061, +0.000922]` | `UNCERTAIN / ELIGIBLE`；区间仍跨 0 |
 | 22 | Train-only shadow validation：weight=0.63 | mean delta **+0.000085** | 3/4 窗口提升；第 4 窗口 -0.000484 | 有轻微跨时间优势，但增益接近噪声 |
-| 18 | `prior_video_exposure`（严格过去的同视频曝光） | 0.604123 | +0.000160 vs FM+BPR | 比 positive-history 更接近同学实现，但仍低于 ensemble；不确认 |
+| 18 | `prior_video_exposure`（严格过去的同视频曝光） | 0.604123 | +0.000160 vs FM+BPR | 比 positive-history 更接近 candidate-specific history，但仍低于 ensemble；不确认 |
 | 18 | `author_recency`（严格过去的同 author 任意曝光） | 0.604005 | +0.000042 vs FM+BPR | 没有可检测增益；不确认 |
-| 19 | FM+BPR + censored watch-time head | 0.604108 | +0.000145 vs FM+BPR | 这是同学 `fm_watchtime` 思路的直接对照；小于当前波动 |
-| 19 | 上述 watch-time + `prior_video_exposure` + `author_recency` | 0.604222 | +0.000114 vs watch-time FM | 7-field 组合仍未接近 0.607；不能把外部结果归因于这两个字段 |
+| 19 | FM+BPR + censored watch-time head | 0.604108 | +0.000145 vs FM+BPR | one-sided watch-time 辅助目标的直接对照；小于当前波动 |
+| 19 | 上述 watch-time + `prior_video_exposure` + `author_recency` | 0.604222 | +0.000114 vs watch-time FM | 7-field 组合仍未超过当前冠军；不能把小增益归因于这两个字段 |
 
 ## 为什么最近很难继续涨
 
@@ -130,16 +130,6 @@ python scripts/run_shadow_validation.py
 汇总为 **3/4** 窗口提升、平均 **+0.000085**。这不是新的 leaderboard 分数，而是
 对时间泛化的额外 sanity check；它支持“候选可能有轻微优势”，同时也证明优势很容易
 随时间段消失，因此不能据此宣称 `.605365` 一定优于稳健 fallback。
-
-## 外部 `0.607` 结果的可比性
-
-同学记录中的 `0.6071/0.6073` 来自另一套 pipeline：它把
-`prior_exposure`、`author_recency` 作为固定输入，并使用了独立的
-`fm_watchtime`、`finalmlp`、`LightGCN` 成员和不同的 baseline 口径。我们补做了
-同视频曝光、author recency 以及 FM+BPR censored watch-time 的受控实验，最高为
-`0.604222`，因此目前没有证据说明仅靠这几个信号就能复现 `0.607`。外部记录中的
-`0.607` 应写成其 validation peak；其 test 结果约 `0.602`，不能当作同一 evaluator
-下的最终 leaderboard 分数。
 
 ## 评价口径
 
@@ -491,7 +481,7 @@ Random 的 long-view rate 为 **8.06%**，standard 为 **31.33%**。两套 Prima
 
 严格对照 delta 为 **-0.001079**，所以“直接把当前 multi-task 主任务换成 BPR”被拒绝。
 
-随后只做一次外部报告配置复现，不继续扫参数：
+随后只做一次不同参数配置复现，不继续扫参数：
 
 ```text
 Like Multi-task + BPR
@@ -500,7 +490,7 @@ auxiliary_weight = 0.3
 learning_rate = 0.001
 ```
 
-结果 Primary 为 **0.603610**，相对同实现 BCE 仍为 **-0.000791**，相对当前冠军 0.604713 为 **-0.001103**。因此没有复现对方报告的 0.6069；合理解释是双方的 pairwise loss、auxiliary target、采样方式或模型实现并不相同，不能只凭配置名称认为是同一个实验。
+结果 Primary 为 **0.603610**，相对同实现 BCE 仍为 **-0.000791**，相对当前冠军 0.604713 为 **-0.001103**。因此这个配置没有超过当前结果；pairwise loss、auxiliary target、采样方式或模型实现的改变都必须单独对照，不能只凭配置名称认为是同一个实验。
 
 结论：保留 pairwise multi-task 的可执行能力和单元测试，但自动 memory 对上述两个精确配置标记 `STOP_DIRECTION`。只有获得对方 loss/target/sampler 代码，或提出实质不同的机制，才重新打开这个方向。
 
@@ -520,10 +510,10 @@ Pointwise 版本的 GAUC 略升但 nDCG 略降，最终 Primary 只增加 `0.000
 
 ### O. FM+BPR + censored watch-time 复跑
 
-为核对外部报告中的 fm_watchtime 思路，重新运行：
+为核对 one-sided censored watch-time 目标，重新运行：
 python scripts/run_fm_watchtime_ablation.py。主任务是 FM+BPR，辅助目标使用
-one-sided censored watch-time；当前脚本的辅助权重为 **0.3**，因此不是外部文字中
-提到的 lambda=0.2 的完全相同配置。只使用 validation，test_labels_used=false。
+one-sided censored watch-time；当前脚本的辅助权重为 **0.3**。只使用 validation，
+test_labels_used=false。
 
 | 配置 | GAUC | nDCG@5 | Primary | 对 FM+BPR 0.603963 |
 |---|---:|---:|---:|---:|
@@ -531,15 +521,15 @@ one-sided censored watch-time；当前脚本的辅助权重为 **0.3**，因此�
 | FM+BPR + censored watch-time | 0.670766 | 0.537451 | **0.604108** | **+0.000145** |
 | 上述模型 + prior_video_exposure + author_recency | 0.670981 | 0.537463 | **0.604222** | **+0.000259** |
 
-解释：这个目标比 capped/log-watch regression 更接近外部报告的共享 embedding
+解释：这个目标比 capped/log-watch regression 更接近共享 embedding
 辅助监督，确实复现了一个小的 validation 增量；但增量仍小于当前运行波动，
 且两种配置都低于 0.604713 的稳健 ensemble（分别低 0.000605 和
 0.000491）。因此本次结论是 **PROMISING / RESEARCH_ONLY**，不能把它写成
-新的冠军，也不能据此声称已经复现外部 0.607。若要严格验证外部 lambda=0.2
-结论，应单独预注册并运行该权重的对照，不能把 0.3 的结果当成 0.2。
+新的冠军。若要重开该方向，应单独预注册并运行不同权重的对照，不能把 0.3
+的结果当成其他权重的结果。
 
-随后用相同代码、相同 seed 和相同数据单独复现外部文字中的
-lambda=0.2（输出目录 runs/fm_watchtime_ablation_lambda02/）：
+随后用相同代码、相同 seed 和相同数据单独测试 lambda=0.2
+（输出目录 runs/fm_watchtime_ablation_lambda02/）：
 
 | 配置 | GAUC | nDCG@5 | Primary | 对 FM+BPR 0.603963 |
 |---|---:|---:|---:|---:|
@@ -642,10 +632,10 @@ Agent 自主运行、memory ablation、运行耗时和停止原因单独记录�
 
 最后更新结论：**当前 ML 冠军仍为 0.6 FM+BPR + 0.4 DeepFM+BCE，Validation Primary 0.604713；已知失败 feature 不再重复。**
 
-## P. 借鉴外部方案：缓存预测后的异构 ensemble 搜索
+## P. 异构 ensemble：缓存预测后的离线搜索
 
-外部高分方案最值得借鉴的不是照抄某一个模型，而是把训练结果保存成
-validation prediction cache，再离线比较不同模型子集、分数校准和粗粒度权重。这样一次训练可以支持很多融合假设，也能检查“单模型不强但是否互补”。本次新增：
+把训练结果保存成 validation prediction cache，再离线比较不同模型子集、分数校准
+和粗粒度权重。这样一次训练可以支持很多融合假设，也能检查“单模型不强但是否互补”。
 
 ```bash
 python scripts/search_heterogeneous_ensemble.py --max-members 3
@@ -686,4 +676,4 @@ python scripts/search_heterogeneous_ensemble.py \
   --max-members 3
 ```
 
-接入候选池。这个接口保留了外部方案的可扩展性，同时把模型选择、融合网格和最终确认分开，避免把一次 validation 峰值误当成泛化结论。
+接入候选池。这个接口把模型选择、融合网格和最终确认分开，避免把一次 validation 峰值误当成泛化结论。
