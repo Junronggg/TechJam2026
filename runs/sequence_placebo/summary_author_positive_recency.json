@@ -1,0 +1,10 @@
+{
+  "test_labels_used": false,
+  "feature": "author_positive_recency",
+  "baseline_primary": 0.6039628982543945,
+  "constant_field_primary": 0.6043940782546997,
+  "real_prior_video_primary": 0.6041990518569946,
+  "constant_delta": 0.0004311800003051758,
+  "real_feature_delta": 0.00023615360260009766,
+  "real_minus_constant": -0.00019502639770507812
+}

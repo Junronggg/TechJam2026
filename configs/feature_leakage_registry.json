@@ -1,0 +1,182 @@
+{
+  "features": {
+    "author_positive_recency": {
+      "feature": "author_positive_recency",
+      "implementation_source": "src/techjam_agent/sequence_features.py:strict_sequence_categories",
+      "leakage_safe": true,
+      "rationale": "Recency uses the last train positive timestamp for that (user, author). Validation and test labels never update last_positive_author_time.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "author_recency": {
+      "feature": "author_recency",
+      "implementation_source": "src/techjam_agent/sequence_features.py:strict_sequence_categories",
+      "leakage_safe": true,
+      "rationale": "The author recency bucket uses only prior interaction timestamps; validation and test labels cannot update the state used for a row.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "continuous_history_stats": {
+      "feature": "continuous_history_stats",
+      "implementation_source": "src/techjam_agent/runner.py:_lightgbm_matrices + src/techjam_agent/history_features.py:aggregate",
+      "leakage_safe": true,
+      "rationale": "Continuous user and item rates/counts use train-only aggregates with train leave-one-out. Validation and test labels are unused, but the statistic is not strict-past. Person 1 must confirm.",
+      "status": "uncertain",
+      "strict_past": false
+    },
+    "duration_semantic_bucket": {
+      "feature": "duration_semantic_bucket",
+      "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+      "leakage_safe": true,
+      "rationale": "The duration bucket is derived from the video's known duration before serving and uses no target or future data.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "global_context": {
+      "feature": "global_context",
+      "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+      "leakage_safe": true,
+      "rationale": "Constant field identifier appended to every row. No labels and no temporal aggregation are used.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "item_long_view_rate": {
+      "feature": "item_long_view_rate",
+      "implementation_source": "src/techjam_agent/runner.py:_encoded_for + src/techjam_agent/history_features.py:aggregate",
+      "leakage_safe": true,
+      "rationale": "Same train-only leave-one-out target-rate encoding as user_long_view_rate. Validation and test labels are unused, but aggregation is not a strict-past temporal window. Person 1 must confirm.",
+      "status": "uncertain",
+      "strict_past": false
+    },
+    "item_recent_3d_exposure": {
+      "feature": "item_recent_3d_exposure",
+      "implementation_source": "src/techjam_agent/temporal_features.py:strict_past_window_counts",
+      "leakage_safe": true,
+      "rationale": "Same strict-past, label-free window counts as user_recent_3d_activity, keyed by video_id.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "previous_author_same": {
+      "feature": "previous_author_same",
+      "implementation_source": "src/techjam_agent/sequence_features.py:strict_sequence_categories",
+      "leakage_safe": true,
+      "rationale": "Previous-author state updates after the current timestamp group. No labels are read for this flag.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "prior_video_count": {
+      "feature": "prior_video_count",
+      "implementation_source": "src/techjam_agent/sequence_features.py:strict_sequence_categories",
+      "leakage_safe": true,
+      "rationale": "Exposure counts update after the current timestamp group is emitted. Validation and test may update counts from inputs only; labels on those splits are not read.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "prior_video_exposure": {
+      "feature": "prior_video_exposure",
+      "implementation_source": "src/techjam_agent/sequence_features.py:strict_sequence_categories",
+      "leakage_safe": true,
+      "rationale": "The exposure count is built from interactions strictly earlier than the current timestamp. Validation and test labels are never used to construct the feature.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "prior_video_positive": {
+      "feature": "prior_video_positive",
+      "implementation_source": "src/techjam_agent/sequence_features.py:strict_sequence_categories",
+      "leakage_safe": true,
+      "rationale": "Train positives enter history only at strictly earlier timestamps. Validation and test start from the final train state and never update positive history with their own labels.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "user_active_degree": {
+      "feature": "user_active_degree",
+      "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+      "leakage_safe": true,
+      "rationale": "User activity degree is a pre-impression metadata field; it is not a target-derived or future-updated statistic.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "user_author_cross": {
+      "feature": "user_author_cross",
+      "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+      "leakage_safe": true,
+      "rationale": "Vocabulary is the set of train (user, author) pairs. No labels are read on any split. There is no temporal aggregation.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "user_long_view_rate": {
+      "feature": "user_long_view_rate",
+      "implementation_source": "src/techjam_agent/runner.py:_encoded_for + src/techjam_agent/history_features.py:aggregate",
+      "leakage_safe": true,
+      "rationale": "Stats are fit on the train split with leave-one-out on the current train label. Validation and test labels are not read, but the feature is a global train-label rate rather than a strict-past temporal window. Person 1 must confirm whether train-label target encoding is acceptable.",
+      "status": "uncertain",
+      "strict_past": false
+    },
+    "user_recent_3d_activity": {
+      "feature": "user_recent_3d_activity",
+      "implementation_source": "src/techjam_agent/temporal_features.py:strict_past_window_counts",
+      "leakage_safe": true,
+      "rationale": "Counts prior-day exposures in a rolling window. Labels are never read. Same-day rows cannot increment the count used for that day.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "user_register_days_range": {
+      "feature": "user_register_days_range",
+      "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+      "leakage_safe": true,
+      "rationale": "Registration-age bucket is fixed user metadata available before the impression and independent of labels.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "user_tab_cross": {
+      "feature": "user_tab_cross",
+      "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+      "leakage_safe": true,
+      "rationale": "Vocabulary is the set of train (user, tab) pairs. No labels are read on any split. There is no temporal aggregation, so no future or validation/test label can enter the encoding.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "user_tab_long_view_rate": {
+      "feature": "user_tab_long_view_rate",
+      "implementation_source": "src/techjam_agent/runner.py:_lightgbm_matrices + src/techjam_agent/history_features.py:aggregate_pair",
+      "leakage_safe": true,
+      "rationale": "User-tab rates use train-only pair aggregates with train leave-one-out. Validation and test labels are unused, but aggregation is not a strict-past temporal window. Person 1 must confirm.",
+      "status": "uncertain",
+      "strict_past": false
+    },
+    "video_music_type": {
+      "feature": "video_music_type",
+      "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+      "leakage_safe": true,
+      "rationale": "Music type is static video metadata available at ranking time; no labels are read.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "video_tag": {
+      "feature": "video_tag",
+      "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+      "leakage_safe": true,
+      "rationale": "Video metadata is available before the impression and is not computed from target labels or future interactions.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "video_tag_components": {
+      "feature": "video_tag_components",
+      "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+      "leakage_safe": true,
+      "rationale": "Tag components are deterministic metadata transformations and cannot include validation/test target information.",
+      "status": "safe",
+      "strict_past": true
+    },
+    "video_upload_type": {
+      "feature": "video_upload_type",
+      "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+      "leakage_safe": true,
+      "rationale": "Upload type is static video metadata known before ranking and does not read validation or test labels.",
+      "status": "safe",
+      "strict_past": true
+    }
+  },
+  "test_labels_used": false,
+  "version": 1
+}

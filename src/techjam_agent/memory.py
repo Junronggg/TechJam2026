@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import math
+from dataclasses import dataclass
 from typing import Any
 
 from .config import experiment_key
 
 LESSON_LIMIT = 5
+PATTERN_LIMIT = 8
 SIGNATURE_LIMIT = 10
 PLANNER_RECENT_HISTORY = 5
 VALIDATION_METRIC_KEYS = ("GAUC", "nDCG@5", "primary")
@@ -17,6 +19,19 @@ VERDICT_CATEGORIES = {
     "failed": "failed",
 }
 MAX_HYPOTHESIS_CHARS = 160
+# A model that cannot run at all is blocked after a single failure. Everything else
+# needs corroboration, so one timeout never closes a research direction.
+GENERIC_FAILURE_THRESHOLD = 2
+STRUCTURAL_ERROR_TYPES = frozenset({"ImportError", "ModuleNotFoundError"})
+# Substrings this project's own runner and validator emit. LLM prose is never read.
+STRUCTURAL_ERROR_MARKERS = (
+    "is required:",
+    "no module named",
+    "cannot import ",
+    "must be one of",
+    "currently supports only",
+    "requires training_objective",
+)
 
 
 def _finite(value: Any) -> bool:
@@ -249,6 +264,100 @@ def is_duplicate_config(config: dict[str, Any], history: list[dict[str, Any]] | 
     return experiment_key(config) in set(collect_tried_keys(history))
 
 
+@dataclass(frozen=True)
+class EvidenceDirections:
+    """What the recorded evidence says about each research direction.
+
+    A blocked model cannot run at all, so it is never proposed. Soft evidence only
+    lowers priority: it is relaxed once no ordinary candidate remains.
+    """
+
+    blocked_models: frozenset[str] = frozenset()
+    soft_models: frozenset[str] = frozenset()
+    soft_mechanisms: frozenset[tuple[str, str]] = frozenset()
+
+    def __bool__(self) -> bool:
+        return bool(self.blocked_models or self.soft_models or self.soft_mechanisms)
+
+    def hard_block_for(self, config: dict[str, Any]) -> str | None:
+        """Return an audit note when this config cannot run, else None."""
+        model = _model_of(config)
+        if model is not None and model in self.blocked_models:
+            return f"{model} cannot run here: an earlier attempt failed structurally"
+        return None
+
+    def soft_reason_for(self, config: dict[str, Any]) -> str | None:
+        """Return an audit note when evidence merely argues against this config."""
+        model = _model_of(config)
+        if model is None:
+            return None
+        if model in self.soft_models:
+            return f"{model} failed repeatedly without a structural cause"
+        objective = config.get("training_objective")
+        if isinstance(objective, str) and (model, objective) in self.soft_mechanisms:
+            return f"{model}+{objective} was rejected on validation"
+        return None
+
+
+def _model_of(config: Any) -> str | None:
+    if not isinstance(config, dict):
+        return None
+    model = config.get("model")
+    return model if isinstance(model, str) else None
+
+
+def _is_structural_failure(item: dict[str, Any]) -> bool:
+    """True when the recorded error names a missing dependency or an unusable model."""
+    error = item.get("error")
+    if not isinstance(error, dict):
+        return False
+    kind = error.get("type")
+    if isinstance(kind, str) and kind.strip() in STRUCTURAL_ERROR_TYPES:
+        return True
+    message = error.get("message")
+    if not isinstance(message, str):
+        return False
+    lowered = message.lower()
+    return any(marker in lowered for marker in STRUCTURAL_ERROR_MARKERS)
+
+
+def evidence_directions(history: list[dict[str, Any]] | None) -> EvidenceDirections:
+    """Split the structured evidence into hard blocks and soft preferences.
+
+    Pure and deterministic: only recorded verdicts, error types, error messages,
+    model, training_objective and changes are read. A rejected verdict narrows to
+    the model/objective pair the change actually introduced, so unrelated models
+    and plain hyperparameter tuning stay available.
+    """
+    blocked: set[str] = set()
+    generic: dict[str, int] = {}
+    mechanisms: set[tuple[str, str]] = set()
+    for item in history or []:
+        if not isinstance(item, dict):
+            continue
+        config = item.get("config")
+        if not isinstance(config, dict):
+            continue
+        model = config.get("model")
+        objective = config.get("training_objective")
+        if not isinstance(model, str) or not isinstance(objective, str):
+            continue
+        verdict = _verdict(item)
+        if verdict == "failed":
+            if _is_structural_failure(item):
+                blocked.add(model)
+            else:
+                generic[model] = generic.get(model, 0) + 1
+        elif verdict == "reject":
+            changes = item.get("changes")
+            if isinstance(changes, dict) and ("model" in changes
+                                              or "training_objective" in changes):
+                mechanisms.add((model, objective))
+    repeated = {name for name, count in generic.items()
+                if count >= GENERIC_FAILURE_THRESHOLD and name not in blocked}
+    return EvidenceDirections(frozenset(blocked), frozenset(repeated), frozenset(mechanisms))
+
+
 def build_memory_summary(history: list[dict[str, Any]] | None) -> dict[str, Any]:
     """Derive compact planner memory. JSONL/history remains the evidence source."""
     rows = [item for item in (history or []) if isinstance(item, dict)]
@@ -311,4 +420,188 @@ def build_memory_summary(history: list[dict[str, Any]] | None) -> dict[str, Any]
                 isinstance(item["seed_count"], int) and item["seed_count"] >= 2)
         ],
         "tried_signatures": signatures[-SIGNATURE_LIMIT:],
+    }
+
+
+def distill_research_patterns(
+    history: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Distill reusable, validation-only research policies by experiment family.
+
+    Raw experiment rows remain the source of truth.  Patterns are compact
+    planning aids: successful, failed and reinterpreted branches all contribute,
+    while placebo controls and test metrics cannot become positive evidence.
+    """
+    families: dict[str, dict[str, Any]] = {}
+    for item in history or []:
+        if not isinstance(item, dict) or item.get("iteration") == 0:
+            continue
+        selection = item.get("candidate_selection")
+        family = selection.get("selected_family") if isinstance(selection, dict) else None
+        if not isinstance(family, str) or not family or family == "placebo_control":
+            continue
+        row = families.setdefault(family, {
+            "trials": 0,
+            "positive": 0,
+            "negative_or_noise": 0,
+            "failed": 0,
+            "reinterpreted": 0,
+            "control_pending": 0,
+            "control_passed": 0,
+            "low_coverage": 0,
+            "slice_or_diversity": 0,
+            "deltas": [],
+        })
+        row["trials"] += 1
+        critique = item.get("critique") if isinstance(item.get("critique"), dict) else {}
+        diagnostics = item.get("diagnostics") if isinstance(item.get("diagnostics"), dict) else {}
+        verdict = critique.get("verdict")
+        scientific_status = diagnostics.get("scientific_status")
+        placebo_status = diagnostics.get("placebo_status")
+        placebo_result = diagnostics.get("placebo_verdict")
+        if placebo_status == "scheduled":
+            row["control_pending"] += 1
+        elif placebo_status == "complete" and placebo_result == "KEEP_CANDIDATE":
+            row["control_passed"] += 1
+        coverage = diagnostics.get("feature_coverage", diagnostics.get("coverage"))
+        if _finite(coverage) and float(coverage) < 0.01:
+            row["low_coverage"] += 1
+        if item.get("status") != "success" or verdict == "failed":
+            row["failed"] += 1
+        elif diagnostics.get("placebo_verdict") == "REINTERPRET":
+            row["reinterpreted"] += 1
+        elif scientific_status == "VALIDATED":
+            row["positive"] += 1
+        elif scientific_status == "REJECTED":
+            row["negative_or_noise"] += 1
+        elif verdict == "promote":
+            row["positive"] += 1
+        elif verdict in {"noise", "reject"}:
+            row["negative_or_noise"] += 1
+        if diagnostics.get("strong_slice_gain") or diagnostics.get("diversity_advantage"):
+            row["slice_or_diversity"] += 1
+        if _finite(item.get("delta_from_parent")) and item.get("decision") != "CONTROL":
+            row["deltas"].append(float(item["delta_from_parent"]))
+
+    patterns: list[dict[str, Any]] = []
+    for family, evidence in sorted(families.items()):
+        deltas = evidence.pop("deltas")
+        mean_delta = sum(deltas) / len(deltas) if deltas else None
+        best_delta = max(deltas) if deltas else None
+        if ((evidence["control_pending"] > 0 or evidence["low_coverage"] > 0)
+                and evidence["reinterpreted"] == 0
+                and evidence["control_passed"] == 0):
+            policy = "retest_with_control"
+            solution = "The apparent gain is not yet attributable to the real signal."
+            template = "Run matched constant, shuffled and same-cardinality controls before promotion."
+        elif (evidence["negative_or_noise"] + evidence["failed"]
+                + evidence["reinterpreted"] >= 2
+                and evidence["slice_or_diversity"] == 0):
+            policy = "stop_direction"
+            solution = "Do not repeat equivalent variants without a distinct information source."
+            template = "Select a different family; reopen only after new evidence changes the mechanism."
+        elif evidence["slice_or_diversity"] > 0 and not (
+            mean_delta is not None and mean_delta > 0
+        ):
+            policy = "ensemble_only"
+            solution = "Treat the family as conditionally complementary, not as a global replacement."
+            template = "Run fixed-slice and error-recovery checks, then one predeclared gate or blend."
+        elif evidence["positive"] > 0 and mean_delta is not None and mean_delta > 0:
+            policy = "exploit_with_confirmation"
+            solution = "The family has positive validation evidence worth confirming."
+            template = "Confirm with rolling folds or paired seeds before promotion; avoid fine-grid tuning."
+        else:
+            policy = "gather_evidence"
+            solution = "Evidence is insufficient for a directional conclusion."
+            template = "Run one cheap single-variable comparison, then attribute with controls if the gain is small."
+        patterns.append({
+            "family": family,
+            "task_description": f"Evaluate the {family} experiment family.",
+            "solution_description": solution,
+            "thought_template": template,
+            "policy": policy,
+            "evidence": {
+                **evidence,
+                "mean_delta_from_parent": mean_delta,
+                "best_delta_from_parent": best_delta,
+            },
+        })
+    return patterns[-PATTERN_LIMIT:]
+
+
+def build_structured_research_memory(
+    history: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Build machine-readable hypothesis evidence without test metrics or prose parsing."""
+    rows = [item for item in (history or []) if isinstance(item, dict)]
+    hypotheses: list[dict[str, Any]] = []
+    for item in rows:
+        if item.get("iteration") == 0 and item.get("changes") == {}:
+            continue
+        critique = item.get("critique") if isinstance(item.get("critique"), dict) else {}
+        diagnostics = item.get("diagnostics") if isinstance(item.get("diagnostics"), dict) else {}
+        selection = item.get("candidate_selection")
+        if not isinstance(selection, dict):
+            selection = {}
+        verdict = critique.get("verdict") or (
+            "failed" if item.get("status") != "success" else "unclassified"
+        )
+        scientific_status = diagnostics.get("scientific_status")
+        if item.get("decision") == "CONTROL":
+            status = "control"
+        elif diagnostics.get("placebo_verdict") == "REINTERPRET":
+            status = "reinterpreted"
+        elif scientific_status == "VALIDATED":
+            status = "validated"
+        elif scientific_status == "UNCERTAIN":
+            status = "uncertain"
+        elif scientific_status == "REJECTED":
+            status = "rejected"
+        else:
+            status = {
+                "promote": "promising",
+                "noise": "uncertain",
+                "reject": "rejected",
+                "failed": "failed",
+            }.get(verdict, "unclassified")
+        evidence = {
+            "validation_primary": _validation_primary(item.get("metrics")),
+            "delta_from_parent": (
+                float(item["delta_from_parent"])
+                if _finite(item.get("delta_from_parent")) else None
+            ),
+            "delta_from_best": (
+                float(item["delta_from_best"])
+                if _finite(item.get("delta_from_best")) else None
+            ),
+            "placebo_verdict": diagnostics.get("placebo_verdict"),
+            "strongest_slice_gain": diagnostics.get("strongest_slice_gain"),
+            "within_user_score_correlation": diagnostics.get(
+                "within_user_score_correlation"
+            ),
+            "pair_error_recovery_rate": diagnostics.get("pair_error_recovery_rate"),
+            "confirmation_status": diagnostics.get("confirmation_status"),
+            "scientific_status": scientific_status,
+            "competition_status": diagnostics.get("competition_status"),
+        }
+        confidence = critique.get("confidence", "low")
+        if status == "reinterpreted":
+            confidence = "high"
+        hypotheses.append({
+            "iteration": item.get("iteration"),
+            "hypothesis": _short_text(item.get("hypothesis")),
+            "family": selection.get("selected_family"),
+            "status": status,
+            "evidence": evidence,
+            "confidence": confidence,
+            "reason": _short_text(critique.get("interpretation")),
+            "next_test": _short_text(critique.get("next_test")),
+        })
+    return {
+        "version": 2,
+        "source": "validation_only",
+        "test_metrics_included": False,
+        "hypotheses": hypotheses,
+        "research_patterns": distill_research_patterns(rows),
+        "summary": build_memory_summary(rows),
     }

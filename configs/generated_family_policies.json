@@ -1,0 +1,591 @@
+{
+  "version": 1,
+  "source": "generated_from_validation_artifacts",
+  "test_metrics_included": false,
+  "task": "long_view",
+  "feature_schema": "v3",
+  "family_policies": [
+    {
+      "policy_id": "36c9057c1b4792cc",
+      "family": "candidate_history",
+      "policy": "stop_direction",
+      "scientific_verdict": "REJECTED",
+      "competition_status": "NOT_ELIGIBLE",
+      "confidence": 0.9,
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "fm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ],
+        "features": {},
+        "hyperparameters": {}
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "candidate_video_placebo_v1",
+          "kind": "placebo_margin",
+          "path": "runs/sequence_placebo/summary.json",
+          "sha256": "781c2cd69a227eeec00da65ce0e8c59c7b9bcf4974e93499ff9b1047c854206c",
+          "result": {
+            "signal": "negative",
+            "delta": -0.0001888275146484375,
+            "robust": true
+          }
+        },
+        {
+          "source_id": "candidate_author_placebo_v1",
+          "kind": "placebo_margin",
+          "path": "runs/sequence_placebo/summary_author_positive_recency.json",
+          "sha256": "5b14ffc5bdabdc910f423b39d5db1b69370a17c7a5bcb19d0da730b754751ad7",
+          "result": {
+            "signal": "negative",
+            "delta": -0.00019502639770507812,
+            "robust": true
+          }
+        },
+        {
+          "source_id": "candidate_video_count_v1",
+          "kind": "single_delta",
+          "path": "runs/candidate_history_followup/summary.json",
+          "sha256": "e653d5f4f99d216a5fad6b2e2a3105226a6f34331ecd49a422bc52f65186a1b2",
+          "result": {
+            "signal": "noise",
+            "delta": -2.676248550415039e-05,
+            "robust": false
+          }
+        },
+        {
+          "source_id": "candidate_previous_author_v1",
+          "kind": "single_delta",
+          "path": "runs/candidate_history_followup/summary.json",
+          "sha256": "e653d5f4f99d216a5fad6b2e2a3105226a6f34331ecd49a422bc52f65186a1b2",
+          "result": {
+            "signal": "noise",
+            "delta": 4.589557647705078e-05,
+            "robust": false
+          }
+        }
+      ]
+    },
+    {
+      "policy_id": "26748e2a18fac263",
+      "family": "censored_watchtime",
+      "policy": "gather_evidence",
+      "scientific_verdict": "INSUFFICIENT",
+      "competition_status": "RESEARCH_ONLY",
+      "confidence": 0.4,
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "multitask_deepfm"
+        ],
+        "training_objectives": [
+          "bce"
+        ],
+        "features": {},
+        "hyperparameters": {
+          "auxiliary_loss_weight": 0.1,
+          "auxiliary_signals": "censored_watch",
+          "embedding_dim": 16,
+          "learning_rate": 0.001
+        }
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "censored_watchtime_bce_v1",
+          "kind": "single_delta",
+          "path": "runs/censored_watchtime_ablation/summary.json",
+          "sha256": "8a31e24adf42bc703d9778e950632f354290e8189fb3d30fb6dd3ce2ee3f6a97",
+          "result": {
+            "signal": "noise",
+            "delta": 7.700920104980469e-05,
+            "robust": false
+          }
+        }
+      ]
+    },
+    {
+      "policy_id": "6307005496cecbf3",
+      "family": "cross_network",
+      "policy": "exploit_with_confirmation",
+      "scientific_verdict": "VALIDATED",
+      "competition_status": "ELIGIBLE",
+      "confidence": 0.82,
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "dcnv2"
+        ],
+        "training_objectives": [
+          "bce"
+        ],
+        "features": {},
+        "hyperparameters": {
+          "dcn_cross_layers": 2,
+          "dcn_low_rank": 16
+        }
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "dcnv2_rolling_v1",
+          "kind": "rolling_aggregate",
+          "path": "runs/rolling_dcnv2/summary.json",
+          "sha256": "4d1022c721da505ac897f6369d35c56e9af653faef9213fb5e917f4aec14c704",
+          "result": {
+            "signal": "positive",
+            "mean_delta": 0.0002484917640686035,
+            "wins": 3,
+            "folds": 3,
+            "robust": true
+          }
+        }
+      ]
+    },
+    {
+      "policy_id": "d87408bab3cc4178",
+      "family": "global_context",
+      "policy": "gather_evidence",
+      "scientific_verdict": "UNCERTAIN",
+      "competition_status": "ELIGIBLE",
+      "confidence": 0.7,
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "ensemble"
+        ],
+        "training_objectives": [
+          "hybrid"
+        ],
+        "features": {
+          "global_context": true
+        },
+        "hyperparameters": {
+          "ensemble_deepfm_weight": 0.4
+        }
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "global_context_ensemble_rolling_v1",
+          "kind": "rolling_aggregate",
+          "path": "runs/global_context_ensemble/summary.json",
+          "sha256": "550c52d1c223f8637f6c1c424be86178e63989665b583140d608fbdff015221e",
+          "result": {
+            "signal": "positive",
+            "mean_delta": 0.00046048561731974286,
+            "wins": 3,
+            "folds": 3,
+            "robust": true
+          }
+        },
+        {
+          "source_id": "global_context_ensemble_official_v1",
+          "kind": "single_delta",
+          "path": "runs/global_context_ensemble/summary.json",
+          "sha256": "550c52d1c223f8637f6c1c424be86178e63989665b583140d608fbdff015221e",
+          "result": {
+            "signal": "noise",
+            "delta": -3.8623809814453125e-05,
+            "robust": false
+          }
+        }
+      ]
+    },
+    {
+      "policy_id": "99f1e644e413c136",
+      "family": "global_context",
+      "policy": "gather_evidence",
+      "scientific_verdict": "UNCERTAIN",
+      "competition_status": "ELIGIBLE",
+      "confidence": 0.7,
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "fm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ],
+        "features": {
+          "global_context": true
+        },
+        "hyperparameters": {}
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "global_context_rolling_v1",
+          "kind": "rolling_aggregate",
+          "path": "runs/rolling_constant_context/summary.json",
+          "sha256": "d4e0620f6eb7dad44e56244426602b5ce4759a92ed32584604182dc55759c689",
+          "result": {
+            "signal": "positive",
+            "mean_delta": 0.0008104244867960612,
+            "wins": 3,
+            "folds": 3,
+            "robust": true
+          }
+        },
+        {
+          "source_id": "global_context_multiseed_v1",
+          "kind": "paired_seed",
+          "path": "runs/global_context_multiseed/summary.json",
+          "sha256": "f568c6b584860fb5928b41ecb0fe145244aeb021c68f7fdee21ae565074ba591",
+          "result": {
+            "signal": "uncertain",
+            "mean_delta": 0.000332564115524292,
+            "wins": 3,
+            "seeds": 4,
+            "interval": [
+              -0.0004273370560317222,
+              0.001092465287080306
+            ],
+            "robust": true
+          }
+        }
+      ]
+    },
+    {
+      "policy_id": "b81d5db8426c0130",
+      "family": "heterogeneous_ensemble",
+      "policy": "exploit_with_confirmation",
+      "scientific_verdict": "VALIDATED",
+      "competition_status": "ELIGIBLE",
+      "confidence": 0.82,
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "ensemble"
+        ],
+        "training_objectives": [
+          "hybrid"
+        ],
+        "features": {},
+        "hyperparameters": {
+          "ensemble_deepfm_weight": 0.4
+        }
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "ensemble_rolling_v1",
+          "kind": "rolling_fold_field",
+          "path": "runs/rolling_validation/summary.json",
+          "sha256": "b1a67f72fd9b128fba6a37f38569033d076dd531ed526b1fa339391543f8e203",
+          "result": {
+            "signal": "positive",
+            "mean_delta": 0.0011228521664937337,
+            "wins": 3,
+            "folds": 3,
+            "robust": true
+          }
+        }
+      ]
+    },
+    {
+      "policy_id": "83592dab1ac6bb72",
+      "family": "multitask",
+      "policy": "exploit_with_confirmation",
+      "scientific_verdict": "VALIDATED",
+      "competition_status": "ELIGIBLE",
+      "confidence": 0.82,
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "multitask_deepfm"
+        ],
+        "training_objectives": [
+          "bce"
+        ],
+        "features": {},
+        "hyperparameters": {
+          "auxiliary_loss_weight": 0.1,
+          "auxiliary_signals": "like"
+        }
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "like_multitask_rolling_v1",
+          "kind": "rolling_aggregate",
+          "path": "runs/rolling_multitask_like/summary.json",
+          "sha256": "9aee63a0bcca9474d900b557b82bb93d3c13c0b2d7bebe92f5a8aa99240e48ce",
+          "result": {
+            "signal": "positive",
+            "mean_delta": 0.00030934810638427734,
+            "wins": 3,
+            "folds": 3,
+            "robust": true
+          }
+        }
+      ]
+    },
+    {
+      "policy_id": "bc3409ee8fd68625",
+      "family": "pairwise_censored_watchtime",
+      "policy": "stop_direction",
+      "scientific_verdict": "REJECTED",
+      "competition_status": "NOT_ELIGIBLE",
+      "confidence": 0.65,
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "multitask_deepfm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ],
+        "features": {},
+        "hyperparameters": {
+          "auxiliary_loss_weight": 0.1,
+          "auxiliary_signals": "censored_watch",
+          "embedding_dim": 16,
+          "learning_rate": 0.001
+        }
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "pairwise_censored_watchtime_v1",
+          "kind": "single_delta",
+          "path": "runs/censored_watchtime_ablation/summary.json",
+          "sha256": "8a31e24adf42bc703d9778e950632f354290e8189fb3d30fb6dd3ce2ee3f6a97",
+          "result": {
+            "signal": "negative",
+            "delta": -0.0013394355773925781,
+            "robust": false
+          }
+        }
+      ]
+    },
+    {
+      "policy_id": "be312607311e3deb",
+      "family": "pairwise_multitask",
+      "policy": "stop_direction",
+      "scientific_verdict": "REJECTED",
+      "competition_status": "NOT_ELIGIBLE",
+      "confidence": 0.65,
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "multitask_deepfm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ],
+        "features": {},
+        "hyperparameters": {
+          "auxiliary_loss_weight": 0.1,
+          "auxiliary_signals": "like",
+          "embedding_dim": 16,
+          "learning_rate": 0.001
+        }
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "pairwise_multitask_controlled_v1",
+          "kind": "single_delta",
+          "path": "runs/pairwise_multitask_ablation/summary.json",
+          "sha256": "68e548ebdf15c6ab94d5a25c7424d7703722bae6bf9937fab50cb7abd3769deb",
+          "result": {
+            "signal": "negative",
+            "delta": -0.0010786652565002441,
+            "robust": false
+          }
+        }
+      ]
+    },
+    {
+      "policy_id": "94594de805dd458a",
+      "family": "pairwise_multitask",
+      "policy": "stop_direction",
+      "scientific_verdict": "REJECTED",
+      "competition_status": "NOT_ELIGIBLE",
+      "confidence": 0.65,
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "multitask_deepfm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ],
+        "features": {},
+        "hyperparameters": {
+          "auxiliary_loss_weight": 0.3,
+          "auxiliary_signals": "like",
+          "embedding_dim": 32,
+          "learning_rate": 0.001
+        }
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "pairwise_multitask_reported_config_v1",
+          "kind": "single_delta",
+          "path": "runs/pairwise_multitask_ablation/summary.json",
+          "sha256": "68e548ebdf15c6ab94d5a25c7424d7703722bae6bf9937fab50cb7abd3769deb",
+          "result": {
+            "signal": "negative",
+            "delta": -0.0007905364036560059,
+            "robust": false
+          }
+        }
+      ]
+    },
+    {
+      "policy_id": "df2eaf7da47928a2",
+      "family": "sequence_model",
+      "policy": "stop_direction",
+      "scientific_verdict": "REJECTED",
+      "competition_status": "NOT_ELIGIBLE",
+      "confidence": 0.65,
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "sequence_deepfm"
+        ],
+        "training_objectives": [
+          "bce"
+        ],
+        "features": {},
+        "hyperparameters": {
+          "sequence_length": 16
+        }
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "sequence_ablation_v1",
+          "kind": "single_delta",
+          "path": "runs/lightweight_sequence_ablation/summary.json",
+          "sha256": "c3e67725ff6478125b61c803eab83e5c7b5ab9248199d68f6633e3ad455d7ba2",
+          "result": {
+            "signal": "negative",
+            "delta": -0.0004934072494506836,
+            "robust": false
+          }
+        }
+      ]
+    },
+    {
+      "policy_id": "bafbc932a284b284",
+      "family": "temporal_counts",
+      "policy": "stop_direction",
+      "scientific_verdict": "REJECTED",
+      "competition_status": "NOT_ELIGIBLE",
+      "confidence": 0.9,
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "ensemble"
+        ],
+        "training_objectives": [
+          "hybrid"
+        ],
+        "features": {
+          "item_recent_3d_exposure": true,
+          "user_recent_3d_activity": true
+        },
+        "hyperparameters": {
+          "ensemble_deepfm_weight": 0.4
+        }
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "temporal_rolling_v1",
+          "kind": "rolling_fold_field",
+          "path": "runs/rolling_validation/summary.json",
+          "sha256": "b1a67f72fd9b128fba6a37f38569033d076dd531ed526b1fa339391543f8e203",
+          "result": {
+            "signal": "negative",
+            "mean_delta": -0.00024614731470743817,
+            "wins": 1,
+            "folds": 3,
+            "robust": true
+          }
+        }
+      ]
+    }
+  ]
+}

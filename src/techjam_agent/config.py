@@ -17,6 +17,10 @@ from .operator_registry import (
 )
 
 FEATURE_KEYS = FEATURE_FIELDS
+# Compatibility marker used by the validation-only evidence producers imported
+# from the main branch.  Feature semantics remain defined by FEATURE_FIELDS and
+# the operator registry; this version is metadata, not a model setting.
+FEATURE_SCHEMA_VERSION = "v3"
 LIGHTGBM_KEYS = {
     "learning_rate", "num_leaves", "n_estimators", "min_child_samples", "subsample",
     "colsample_bytree", "reg_lambda", "early_stopping_rounds",
