@@ -170,13 +170,14 @@ class ConvergenceTests(unittest.TestCase):
         self.assertEqual(controller.convergence_streak, 0)
         self.assertEqual(summary["convergence_streak"], 0)
 
-    def test_three_consecutive_small_deltas_stop_the_run(self) -> None:
+    def test_minimum_search_depth_prevents_premature_convergence(self) -> None:
         runner = ScriptedRunner([0.6015, 0.6016, 0.6016, 0.6016, 0.7000])
         controller, summary = run_controller(runner, SweepResearcher(), max_iterations=10)
         self.assertEqual(summary["stop_reason"], "converged")
         self.assertEqual(summary["convergence_streak"], 3)
-        self.assertEqual(runner.calls, 4)
-        self.assertEqual(summary["candidate_experiments"], 3)
+        self.assertEqual(runner.calls, 8)
+        self.assertEqual(summary["candidate_experiments"], 7)
+        self.assertEqual(summary["best_primary"], 0.7000)
 
     def test_meaningful_delta_resets_the_streak(self) -> None:
         runner = ScriptedRunner([0.6015, 0.6016, 0.6016, 0.6500, 0.6501])
@@ -254,6 +255,9 @@ class WallClockTests(unittest.TestCase):
     def test_insufficient_remaining_time_stops_before_the_runner(self) -> None:
         clock = FakeClock()
         project = load_project()
+        project["research_search"]["minimum_reserve_seconds"] = (
+            project["experiment_timeout_seconds"]
+        )
         runner = ScriptedRunner([0.6015, 0.6100], clock=clock, cost=21_000.0)
         controller, summary = run_controller(runner, SweepResearcher(), max_iterations=10,
                                              clock=clock, project=project)

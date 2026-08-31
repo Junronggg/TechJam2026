@@ -2,6 +2,46 @@
 
 ## English
 
+### Current implementation status (2026-08-30)
+
+This section supersedes stale gap/status lines later in this document.
+
+- One shared operator registry now drives planner choices and configuration validation.
+- FM supports BCE and same-user BPR; BPR supports 1/2/4 random negatives plus optional
+  same-tab and same-author matching.
+- Paired seeds 0-4 are complete. Tuned BPR (`lr=0.0005`) improved all 5/5 seeds:
+  BCE mean `0.601572`, BPR mean `0.603521`, mean delta `+0.001949`.
+- The current validation-selected model is a tuned BPR ensemble of seeds 3 and 4,
+  Primary `0.604216`. It was selected from 26 subsets, so this is model-selection
+  evidence rather than an unbiased test estimate.
+- Available models are a linear control, FM, field-aware FM (FFM), FM seed ensemble,
+  LightGBM binary/LambdaRank, a pure FPMC sequence control, and an FM plus
+  recent-positive transition hybrid. Linear+BPR (`0.602078`, seed 0)
+  and FFM+BPR (`0.602902`, k=8, seed 0) are executable but do not beat the incumbent.
+  Binary LightGBM (`0.599817`) and LambdaRank (`0.594128`) were rejected.
+  FPMC (`0.584411`) and the sequential FM hybrid (`0.602148`) are leakage-safe,
+  executable sequence controls but do not beat matched tuned FM+BPR.
+- Leakage-safe optional features now include user/item/user-tab rates, author and
+  user-author counts/rates, continuous history statistics, and a train-fitted 50-bin
+  duration field. Raw tag plus strictly-past user-tag impression/rate features with
+  tag/global fallback are also executable. Raw tag scored `0.604234` on tuned seed 0
+  (`+0.000538` versus its matched control), while the past-only user-tag rate scored
+  `0.603238`; both are single-seed evidence. Fine duration scored `0.603722` on seed 0.
+- Same-tab negatives (`0.590392`), same-author negatives (`0.602531`), author rate
+  (`0.601635`), and user-author rate (`0.602001`) were rejected.
+- Research runs are validation-only by default, start from the `0.604216` incumbent,
+  and load prior validation evidence. Test evaluation is an explicit final action
+  after the team freezes the validation winner.
+- A streaming EDA/data-profile pipeline now measures split balance, ranking-user
+  composition, cold start, pair coverage, metadata segments, and train-validation
+  drift. Its compact validation-safe output is supplied to the LLM Planner.
+
+The model capability registry and runner dispatch now share a common operator contract.
+Remaining Person 1 work: clean-environment reproduction, cached feature transforms,
+timestamp-aware recent features, cross-platform reporting, and a richer model only when
+the corresponding hypothesis is supported. Exact evidence is in
+`docs/performance-research.md`.
+
 ### Scope
 
 - Own benchmark correctness, models, features, objectives, legal parameters, leakage safety, and reproducibility.

@@ -230,7 +230,8 @@ class CriticAndKeepSeparationTests(unittest.TestCase):
         controller, summary, _ = run_controller(runner, SweepResearcher(), 10)
         self.assertEqual(summary["stop_reason"], "converged")
         self.assertEqual(summary["convergence_streak"], 3)
-        self.assertEqual(runner.calls, 4)
+        self.assertEqual(runner.calls, 8)
+        self.assertEqual(summary["best_primary"], 0.7000)
 
 
 class WeakerParentTests(unittest.TestCase):

@@ -5,22 +5,76 @@ from collections import defaultdict
 import numpy as np
 
 
-def build_pair_indices(users, labels, rng: np.random.Generator):
-    """Sample one same-user negative for every positive belonging to a mixed user."""
+def build_pair_indices(
+    users,
+    labels,
+    rng: np.random.Generator,
+    negatives_per_positive: int = 1,
+    match_values=None,
+):
+    """Sample same-user negatives, optionally matching a context value.
+
+    A context-matched pool falls back to all negatives for that user when the
+    positive has no matching negative. This keeps every pair legal while making
+    `same_tab` and `same_author` strategies useful rather than brittle.
+    """
+    if negatives_per_positive not in (1, 2, 4, 8):
+        raise ValueError("negatives_per_positive must be one of: 1, 2, 4, 8")
     groups = defaultdict(lambda: [[], []])
     for index, (user, label) in enumerate(zip(users, labels)):
         groups[user][int(label)].append(index)
     positive_parts, negative_parts = [], []
+    if match_values is not None and len(match_values) != len(labels):
+        raise ValueError("match_values must have the same length as labels")
     for negatives, positives in groups.values():
         if not positives or not negatives:
             continue
-        positive = np.asarray(positives, dtype=np.int64)
-        negative = rng.choice(np.asarray(negatives, dtype=np.int64), size=len(positive), replace=True)
+        positive = np.repeat(np.asarray(positives, dtype=np.int64), negatives_per_positive)
+        negative_pool = np.asarray(negatives, dtype=np.int64)
+        if match_values is None:
+            negative = rng.choice(negative_pool, size=len(positive), replace=True)
+        else:
+            pools = defaultdict(list)
+            for index in negatives:
+                pools[match_values[index]].append(index)
+            negative = np.empty(len(positive), dtype=np.int64)
+            for index, positive_index in enumerate(positive):
+                pool = pools.get(match_values[positive_index], negative_pool)
+                negative[index] = rng.choice(pool)
         positive_parts.append(positive); negative_parts.append(negative)
     if not positive_parts:
         raise ValueError("no users contain both positive and negative training examples")
     positive = np.concatenate(positive_parts)
     negative = np.concatenate(negative_parts)
+    order = rng.permutation(len(positive))
+    return positive[order], negative[order]
+
+
+def build_group_softmax_indices(
+    users, labels, rng: np.random.Generator, negatives_per_positive: int = 4,
+    match_values=None,
+):
+    """Return one positive and K same-user negatives per ranking group."""
+    groups = defaultdict(lambda: [[], []])
+    for index, (user, label) in enumerate(zip(users, labels)):
+        groups[user][int(label)].append(index)
+    positives, negatives = [], []
+    for negative_rows, positive_rows in groups.values():
+        if not positive_rows or not negative_rows:
+            continue
+        fallback = np.asarray(negative_rows, dtype=np.int64)
+        pools = defaultdict(list)
+        if match_values is not None:
+            for index in negative_rows:
+                pools[match_values[index]].append(index)
+        for positive in positive_rows:
+            pool = np.asarray(pools.get(match_values[positive], fallback), dtype=np.int64) if match_values is not None else fallback
+            positives.append(positive)
+            negatives.append(rng.choice(pool, size=negatives_per_positive, replace=True))
+    if not positives:
+        raise ValueError("no users contain both positive and negative training examples")
+    positive = np.asarray(positives, dtype=np.int64)
+    negative = np.asarray(negatives, dtype=np.int64)
     order = rng.permutation(len(positive))
     return positive[order], negative[order]
 

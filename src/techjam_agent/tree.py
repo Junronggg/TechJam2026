@@ -4,6 +4,8 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+from .operator_registry import branch_for_changes
+
 
 @dataclass(frozen=True)
 class TreePolicyConfig:
@@ -22,24 +24,13 @@ class TreePolicyConfig:
     repetition_penalty_weight: float = 0.001
     failed_child_penalty_weight: float = 0.002
     rejected_node_penalty_weight: float = 0.002
+    exploration_start: float = 0.90
+    exploration_end: float = 0.20
+    elite_top_k: int = 3
 
 
 def branch_name(changes: dict[str, Any]) -> str:
-    if not changes:
-        return "baseline"
-    feature_keys = {
-        "user_long_view_rate",
-        "item_long_view_rate",
-        "continuous_history_stats",
-        "user_tab_long_view_rate",
-    }
-    if feature_keys.intersection(changes):
-        return "features"
-    if "model" in changes:
-        return "model"
-    if "training_objective" in changes:
-        return "ranking_objective"
-    return "optimization"
+    return branch_for_changes(changes)
 
 
 def node_id_for(iteration: int | None) -> str | None:
@@ -75,6 +66,9 @@ class ParentSelection:
     failed_child_penalty: float
     rejected_node_penalty: float
     visits: int
+    search_phase: str = "explore"
+    selection_mode: str = "uct"
+    exploration_probability: float = 0.90
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -89,6 +83,9 @@ class ParentSelection:
             "failed_child_penalty": self.failed_child_penalty,
             "rejected_node_penalty": self.rejected_node_penalty,
             "visits": self.visits,
+            "search_phase": self.search_phase,
+            "selection_mode": self.selection_mode,
+            "exploration_probability": self.exploration_probability,
         }
 
 
@@ -131,9 +128,23 @@ def _successful_parents(history: list[dict[str, Any]] | None) -> list[Experiment
     for item in history or []:
         if not isinstance(item, dict) or item.get("status") != "success":
             continue
+        iteration = item.get("iteration")
+        # The reproduced baseline is the root. Every other expandable node
+        # must have beaten the global incumbent at the time it was evaluated.
+        if iteration != 0:
+            is_genuine_winner = item.get("search_outcome") == "global_best"
+            if item.get("search_outcome") is None:
+                critique = item.get("critique") if isinstance(item.get("critique"), dict) else {}
+                is_genuine_winner = (
+                    item.get("decision") == "KEEP" and critique.get("verdict") == "promote"
+                )
+            if not is_genuine_winner:
+                continue
+        critique = item.get("critique") if isinstance(item.get("critique"), dict) else {}
+        if critique.get("verdict") in {"reject", "failed"}:
+            continue
         primary = _finite_primary(item)
         config = item.get("config")
-        iteration = item.get("iteration")
         if primary is None or not isinstance(config, dict) or not isinstance(iteration, int):
             continue
         changes = item.get("changes") if isinstance(item.get("changes"), dict) else {}
@@ -156,7 +167,7 @@ class TreeSearchPolicy:
             raise ValueError("max_active_branches must be at least one")
 
     def frontier(self, history: list[dict[str, Any]] | None) -> tuple[ExperimentParent, ...]:
-        """Return the strongest successful node from each active branch."""
+        """Return the strongest non-rejected node from each active branch."""
         by_branch: dict[str, ExperimentParent] = {}
         for parent in _successful_parents(history):
             current = by_branch.get(parent.branch)
@@ -170,6 +181,7 @@ class TreeSearchPolicy:
         self,
         history: list[dict[str, Any]] | None,
         remaining_seconds: float,
+        progress: float = 0.0,
     ) -> ParentSelection:
         rows = [item for item in (history or []) if isinstance(item, dict)]
         frontier = self.frontier(rows)
@@ -196,14 +208,28 @@ class TreeSearchPolicy:
             item.get("parent_id") for item in rows[-3:] if isinstance(item.get("parent_id"), str)
         ]
         time_scale = max(1.0, float(remaining_seconds))
+        progress = min(1.0, max(0.0, float(progress)))
+        exploration_probability = (
+            self.config.exploration_start
+            + (self.config.exploration_end - self.config.exploration_start) * progress
+        )
+        switch = ((len(rows) + 1) * 2654435761 % 1000) / 1000.0
+        selection_mode = "uct" if switch < exploration_probability else "elite"
+        search_phase = "explore" if progress < 0.45 else "focus" if progress < 0.80 else "confirm"
         selections: list[ParentSelection] = []
         for node in frontier:
             children = child_rows.get(node.node_id, [])
             visits = len(children)
-            exploration = self.config.exploration_weight * math.sqrt(
+            exploration = exploration_probability * self.config.exploration_weight * math.sqrt(
                 math.log(total_visits + 1.0) / (visits + 1.0)
             )
-            novelty = self.config.novelty_weight / max(1, branch_counts.get(node.branch, 1))
+            novelty = (
+                exploration_probability * self.config.novelty_weight
+                / max(1, branch_counts.get(node.branch, 1))
+            )
+            if selection_mode == "elite":
+                exploration = 0.0
+                novelty = 0.0
 
             record = row_by_id.get(node.node_id, {})
             metrics = record.get("metrics") if isinstance(record.get("metrics"), dict) else {}
@@ -232,9 +258,15 @@ class TreeSearchPolicy:
             selections.append(ParentSelection(
                 node, priority, node.primary, exploration, novelty, runtime_penalty,
                 repetition_penalty, failed_child_penalty, rejected_node_penalty, visits,
+                search_phase, selection_mode, exploration_probability,
             ))
+        pool = selections
+        if selection_mode == "elite":
+            pool = sorted(
+                selections, key=lambda value: (-value.parent.primary, value.parent.iteration)
+            )[: max(1, self.config.elite_top_k)]
         return max(
-            selections,
+            pool,
             key=lambda value: (value.priority, value.parent.primary, -value.parent.iteration),
         )
 
@@ -251,7 +283,18 @@ class ExperimentTree:
             "status": item["status"], "decision": item["decision"],
             "primary": None if item.get("metrics") is None else item["metrics"]["primary"],
             "config": item["config"],
+            "research_phase": item.get("research_phase"),
+            "expansion_mode": item.get("expansion_mode"),
+            "strategy_id": item.get("strategy_id"),
+            "reference_ids": item.get("reference_ids", []),
+            "search_outcome": item.get("search_outcome"),
+            "search_reward": item.get("search_reward"),
         })
 
     def snapshot(self) -> dict[str, Any]:
-        return {"nodes": self.nodes}
+        reference_edges = [
+            {"reference_id": reference_id, "node_id": node["node_id"]}
+            for node in self.nodes
+            for reference_id in node.get("reference_ids", [])
+        ]
+        return {"nodes": self.nodes, "reference_edges": reference_edges}

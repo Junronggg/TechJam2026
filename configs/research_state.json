@@ -1,0 +1,248 @@
+{
+  "incumbent": {
+    "evidence_id": "incumbent_fm_bpr_ensemble_seeds_3_4",
+    "description": "Tuned FM+BPR ensemble selected from validation seeds 3 and 4",
+    "validation_metrics": {
+      "GAUC": 0.670870289630519,
+      "nDCG@5": 0.5375608544270533,
+      "primary": 0.6042155720287861
+    },
+    "config": {
+      "model": "fm_ensemble",
+      "training_objective": "bpr",
+      "hyperparameters": {
+        "embedding_dim": 16,
+        "learning_rate": 0.0005,
+        "epochs": 40,
+        "l2": 0.000001,
+        "batch_size": 8192,
+        "patience": 4,
+        "seed": 0,
+        "ensemble_size": 2,
+        "ensemble_seed_set": "3,4",
+        "negatives_per_positive": 1,
+        "negative_sampling_strategy": "random"
+      },
+      "features": {
+        "user_long_view_rate": false,
+        "item_long_view_rate": false,
+        "continuous_history_stats": false,
+        "user_tab_long_view_rate": false,
+        "duration_fine_bucket": false,
+        "tag": false,
+        "user_tag_impression_count": false,
+        "user_tag_long_view_rate": false,
+        "author_impression_count": false,
+        "author_long_view_count": false,
+        "author_long_view_rate": false,
+        "user_author_impression_count": false,
+        "user_author_long_view_count": false,
+        "user_author_long_view_rate": false
+      },
+      "lightgbm_hyperparameters": {
+        "learning_rate": 0.05,
+        "num_leaves": 31,
+        "n_estimators": 500,
+        "min_child_samples": 100,
+        "subsample": 0.9,
+        "colsample_bytree": 0.9,
+        "reg_lambda": 0.0001,
+        "early_stopping_rounds": 30
+      }
+    }
+  },
+  "findings": [
+    {
+      "evidence_id": "finding_fm_bpr_seed0_lr001",
+      "description": "FM+BPR seed 0 improved the original FM+BCE baseline but remained below the tuned incumbent.",
+      "changes": {
+        "training_objective": "bpr"
+      },
+      "validation_metrics": {
+        "GAUC": 0.669711026116243,
+        "nDCG@5": 0.5370812958436111,
+        "primary": 0.603396160979927
+      },
+      "verdict": "noise",
+      "seed_count": 1
+    },
+    {
+      "evidence_id": "finding_linear_bpr_k0_lr0005",
+      "description": "Linear+BPR is a useful no-interaction control but trails the incumbent.",
+      "changes": {
+        "model": "linear",
+        "training_objective": "bpr",
+        "learning_rate": 0.0005
+      },
+      "validation_metrics": {
+        "GAUC": 0.6681995788815146,
+        "nDCG@5": 0.5359557236273146,
+        "primary": 0.6020776512544146
+      },
+      "verdict": "reject",
+      "seed_count": 1
+    },
+    {
+      "evidence_id": "finding_ffm_bpr_k8_lr0005",
+      "description": "Field-aware FM+BPR with k=8 is executable but trails the incumbent.",
+      "changes": {
+        "model": "ffm",
+        "training_objective": "bpr",
+        "embedding_dim": 8,
+        "learning_rate": 0.0005
+      },
+      "validation_metrics": {
+        "GAUC": 0.6694121882346197,
+        "nDCG@5": 0.5363917367354628,
+        "primary": 0.6029019624850412
+      },
+      "verdict": "reject",
+      "seed_count": 1
+    },
+    {
+      "evidence_id": "finding_lightgbm_binary",
+      "description": "LightGBM binary on the original fields regressed against the incumbent.",
+      "changes": {
+        "model": "lightgbm"
+      },
+      "validation_metrics": {
+        "primary": 0.599817
+      },
+      "verdict": "reject",
+      "seed_count": 1
+    },
+    {
+      "evidence_id": "finding_lightgbm_lambdarank",
+      "description": "Capped LightGBM LambdaRank regressed against the incumbent.",
+      "changes": {
+        "model": "lightgbm",
+        "training_objective": "lambdarank"
+      },
+      "validation_metrics": {
+        "primary": 0.594128
+      },
+      "verdict": "reject",
+      "seed_count": 1
+    },
+    {
+      "evidence_id": "finding_bpr_same_tab_negatives",
+      "description": "Same-tab BPR negative sampling caused a strong regression.",
+      "changes": {
+        "training_objective": "bpr",
+        "learning_rate": 0.0005,
+        "negative_sampling_strategy": "same_tab"
+      },
+      "validation_metrics": {
+        "primary": 0.590392
+      },
+      "verdict": "reject",
+      "seed_count": 1
+    },
+    {
+      "evidence_id": "finding_bpr_same_author_negatives",
+      "description": "Same-author BPR negative sampling regressed against random negatives.",
+      "changes": {
+        "training_objective": "bpr",
+        "learning_rate": 0.0005,
+        "negative_sampling_strategy": "same_author"
+      },
+      "validation_metrics": {
+        "primary": 0.602531
+      },
+      "verdict": "reject",
+      "seed_count": 1
+    },
+    {
+      "evidence_id": "finding_bpr_two_negatives",
+      "description": "Two random negatives per positive did not improve tuned FM+BPR.",
+      "changes": {
+        "training_objective": "bpr",
+        "learning_rate": 0.0005,
+        "negatives_per_positive": 2
+      },
+      "validation_metrics": {
+        "primary": 0.60338
+      },
+      "verdict": "reject",
+      "seed_count": 1
+    },
+    {
+      "evidence_id": "finding_bpr_duration50",
+      "description": "A 50-bin duration feature produced only an unreplicated tiny gain over tuned single-seed FM+BPR.",
+      "changes": {
+        "training_objective": "bpr",
+        "learning_rate": 0.0005,
+        "duration_fine_bucket": true
+      },
+      "validation_metrics": {
+        "primary": 0.603722
+      },
+      "verdict": "noise",
+      "seed_count": 1
+    },
+    {
+      "evidence_id": "finding_bpr_tag_seed0",
+      "description": "Raw train-vocabulary tag improved tuned seed-0 FM+BPR by 0.000538, but the single-seed result is within epsilon and needs replication.",
+      "changes": {
+        "training_objective": "bpr",
+        "learning_rate": 0.0005,
+        "tag": true
+      },
+      "validation_metrics": {
+        "GAUC": 0.6711457189814523,
+        "nDCG@5": 0.5373225703327682,
+        "primary": 0.6042341446571102
+      },
+      "verdict": "noise",
+      "seed_count": 1
+    },
+    {
+      "evidence_id": "finding_bpr_user_tag_rate_seed0",
+      "description": "Past-only smoothed user-tag rate was 0.000458 below tuned seed-0 FM+BPR and remains inconclusive within epsilon.",
+      "changes": {
+        "training_objective": "bpr",
+        "learning_rate": 0.0005,
+        "user_tag_long_view_rate": true
+      },
+      "validation_metrics": {
+        "GAUC": 0.6691799214845914,
+        "nDCG@5": 0.537295831226901,
+        "primary": 0.6032378763557462
+      },
+      "verdict": "noise",
+      "seed_count": 1
+    },
+    {
+      "evidence_id": "finding_fpmc_bpr_k8_seed0",
+      "description": "The leakage-safe first-order FPMC sequence control was fast but substantially trailed tuned FM+BPR, so recent-positive transition signal alone is insufficient.",
+      "changes": {
+        "model": "fpmc",
+        "training_objective": "bpr",
+        "embedding_dim": 8
+      },
+      "validation_metrics": {
+        "GAUC": 0.6443596696026321,
+        "nDCG@5": 0.5244616679209011,
+        "primary": 0.5844106687617666
+      },
+      "verdict": "reject",
+      "seed_count": 1
+    },
+    {
+      "evidence_id": "finding_seq_fm_bpr_seed0",
+      "description": "Adding a leakage-safe recent-positive transition to FM+BPR retained more base signal than FPMC but still trailed the matched tuned FM+BPR control.",
+      "changes": {
+        "model": "seq_fm",
+        "training_objective": "bpr",
+        "learning_rate": 0.0005
+      },
+      "validation_metrics": {
+        "GAUC": 0.6684340954709435,
+        "nDCG@5": 0.5358616279428912,
+        "primary": 0.6021478617069174
+      },
+      "verdict": "reject",
+      "seed_count": 1
+    }
+  ]
+}

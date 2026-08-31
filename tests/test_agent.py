@@ -43,6 +43,74 @@ class AgentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             apply_changes(self.config, {"dropout": 0.5})
 
+    def test_seed_and_bpr_negative_operators_are_allow_listed(self):
+        seeded = apply_changes(self.config, {"seed": 4})
+        self.assertEqual(seeded["hyperparameters"]["seed"], 4)
+        with self.assertRaises(ValueError):
+            apply_changes(self.config, {"negatives_per_positive": 2})
+        bpr = apply_changes(self.config, {"training_objective": "bpr"})
+        multi_negative = apply_changes(bpr, {"negatives_per_positive": 2})
+        self.assertEqual(multi_negative["hyperparameters"]["negatives_per_positive"], 2)
+        matched = apply_changes(bpr, {"negative_sampling_strategy": "same_tab"})
+        self.assertEqual(matched["hyperparameters"]["negative_sampling_strategy"], "same_tab")
+        with self.assertRaises(ValueError):
+            apply_changes(self.config, {"negative_sampling_strategy": "same_tab"})
+
+    def test_model_objective_compatibility(self):
+        ranker = apply_changes(
+            self.config, {"model": "lightgbm", "training_objective": "lambdarank"}
+        )
+        validate_config(ranker)
+        with self.assertRaises(ValueError):
+            apply_changes(self.config, {"training_objective": "lambdarank"})
+        with self.assertRaises(ValueError):
+            apply_changes(self.config, {"model": "lightgbm", "training_objective": "bpr"})
+        ensemble = apply_changes(
+            self.config,
+            {"model": "fm_ensemble", "training_objective": "bpr", "ensemble_size": 4},
+        )
+        validate_config(ensemble)
+        with self.assertRaises(ValueError):
+            apply_changes(self.config, {"model": "fm_ensemble", "training_objective": "bpr"})
+        selected = apply_changes(
+            self.config,
+            {"model": "fm_ensemble", "training_objective": "bpr",
+             "ensemble_size": 2, "ensemble_seed_set": "3,4"},
+        )
+        validate_config(selected)
+
+    def test_researcher_uses_ranked_non_duplicate_candidate_after_tuning_bpr(self):
+        bpr = apply_changes(self.config, {"training_objective": "bpr"})
+        tuned = apply_changes(bpr, {"learning_rate": 0.0005})
+        history = [
+            {"config": self.config},
+            {"config": bpr},
+            {"config": tuned},
+        ]
+        proposal = DeterministicResearcher().propose(tuned, history)
+        from techjam_agent.proposals import legal_candidate_catalog
+        legal = legal_candidate_catalog(tuned, history)
+        self.assertIn(proposal.candidate_id, {item["candidate_id"] for item in legal})
+        self.assertNotIn(proposal.changes, [item["config"] for item in history])
+
+    def test_planner_registry_and_validator_share_values(self):
+        from techjam_agent.config import ALLOWED_VALUES
+        from techjam_agent.operator_registry import planner_registry
+
+        registry = planner_registry()
+        for field, values in ALLOWED_VALUES.items():
+            self.assertEqual(tuple(registry[field]["values"]), tuple(values))
+
+    def test_inactive_model_knobs_do_not_create_fake_new_experiments(self):
+        from techjam_agent.config import experiment_key
+
+        first = apply_changes(self.config, {"model": "lightgbm"})
+        tuned_fm_then_tree = apply_changes(
+            apply_changes(self.config, {"learning_rate": 0.0005}),
+            {"model": "lightgbm"},
+        )
+        self.assertEqual(experiment_key(first), experiment_key(tuned_fm_then_tree))
+
     def test_history_rate_uses_train_and_leaves_current_label_out(self):
         rows = [(0, "u1", "v1", "a", "t", 1.0, 1),
                 (0, "u1", "v2", "a", "t", 1.0, 0),
@@ -70,10 +138,57 @@ class AgentTests(unittest.TestCase):
         self.assertTrue(all(users[p] == users[n] for p, n in zip(positives, negatives)))
         self.assertTrue(all(labels[p] == 1 and labels[n] == 0 for p, n in zip(positives, negatives)))
 
-    def test_researcher_adds_continuous_stats_after_lightgbm(self):
+    def test_multiple_bpr_negatives_are_same_user_and_deterministic(self):
+        import numpy as np
+        from techjam_agent.bpr import build_pair_indices
+
+        users = ["u1", "u1", "u1", "u2", "u2"]
+        labels = np.asarray([1, 0, 0, 1, 0])
+        first = build_pair_indices(users, labels, np.random.default_rng(7), 4)
+        second = build_pair_indices(users, labels, np.random.default_rng(7), 4)
+        self.assertEqual(len(first[0]), 8)
+        np.testing.assert_array_equal(first[0], second[0])
+        np.testing.assert_array_equal(first[1], second[1])
+        self.assertTrue(all(users[p] == users[n] for p, n in zip(*first)))
+        self.assertTrue(all(labels[p] == 1 and labels[n] == 0 for p, n in zip(*first)))
+
+    def test_context_matched_negatives_use_match_then_fallback(self):
+        import numpy as np
+        from techjam_agent.bpr import build_pair_indices
+
+        users = ["u", "u", "u", "u"]
+        labels = np.asarray([1, 1, 0, 0])
+        tabs = np.asarray(["sports", "music", "sports", "other"])
+        positives, negatives = build_pair_indices(
+            users, labels, np.random.default_rng(4), match_values=tabs
+        )
+        pairs = {positive: negative for positive, negative in zip(positives, negatives)}
+        self.assertEqual(tabs[pairs[0]], "sports")
+        self.assertEqual(labels[pairs[1]], 0)
+
+    def test_ranking_group_builder_is_stable_and_complete(self):
+        import numpy as np
+        from techjam_agent.runner import _ranking_order_and_groups
+
+        users = ["b", "a", "b", "c", "a"]
+        order, groups = _ranking_order_and_groups(users)
+        self.assertEqual(groups, [2, 2, 1])
+        self.assertEqual(np.asarray(users)[order].tolist(), ["a", "a", "b", "b", "c"])
+
+    def test_bpr_negative_count_is_validated(self):
+        import numpy as np
+        from techjam_agent.bpr import build_pair_indices
+
+        with self.assertRaises(ValueError):
+            build_pair_indices(["u", "u"], np.asarray([1, 0]), np.random.default_rng(0), 3)
+
+    def test_researcher_selects_a_legal_candidate_after_lightgbm(self):
         lgb = apply_changes(self.config, {"model": "lightgbm"})
         proposal = DeterministicResearcher().propose(lgb, [{"config": self.config}])
-        self.assertEqual(proposal.changes, {"user_tab_long_view_rate": True})
+        self.assertGreaterEqual(len(proposal.changes), 1)
+        self.assertLessEqual(len(proposal.changes), 4)
+        candidate = apply_changes(lgb, proposal.changes)
+        validate_config(candidate)
 
     def test_user_tab_aggregation_keeps_preferences_separate(self):
         rows = [(0, "u1", "v1", "a", "sports", 1.0, 1),
@@ -81,6 +196,47 @@ class AgentTests(unittest.TestCase):
         stats, _ = aggregate_pair(rows, 1, 4)
         self.assertEqual(stats[("u1", "sports")], [1, 1])
         self.assertEqual(stats[("u1", "music")], [0, 1])
+
+    def test_author_and_affinity_train_features_leave_current_label_out(self):
+        from techjam_agent.history_features import TrainHistoryStatistics
+
+        other_rows = [
+            (20220408, "u1", "v2", "a1", "sports", 10.0, 0),
+            (20220408, "u2", "v3", "a1", "sports", 10.0, 1),
+            (20220408, "u3", "v4", "a2", "music", 10.0, 0),
+        ]
+        target_zero = (20220408, "u1", "v1", "a1", "sports", 10.0, 0)
+        target_one = (20220408, "u1", "v1", "a1", "sports", 10.0, 1)
+        features = (
+            "author_long_view_count", "author_long_view_rate",
+            "user_author_long_view_count", "user_author_long_view_rate",
+        )
+        zero = TrainHistoryStatistics.build([target_zero, *other_rows], features)
+        one = TrainHistoryStatistics.build([target_one, *other_rows], features)
+        for feature in features:
+            self.assertAlmostEqual(
+                zero.value(feature, target_zero, leave_one_out=True),
+                one.value(feature, target_one, leave_one_out=True),
+            )
+
+    def test_validation_affinity_does_not_read_validation_label(self):
+        from techjam_agent.history_features import TrainHistoryStatistics
+
+        train = [
+            (20220408, "u1", "v1", "a1", "sports", 10.0, 1),
+            (20220408, "u1", "v2", "a1", "sports", 10.0, 0),
+        ]
+        valid_zero = (20220422, "u1", "v3", "a1", "sports", 10.0, 0)
+        valid_one = (20220422, "u1", "v3", "a1", "sports", 10.0, 1)
+        statistics = TrainHistoryStatistics.build(train, ["user_author_long_view_rate"])
+        self.assertEqual(
+            statistics.numeric_value(
+                "user_author_long_view_rate", valid_zero, leave_one_out=False
+            ),
+            statistics.numeric_value(
+                "user_author_long_view_rate", valid_one, leave_one_out=False
+            ),
+        )
 
     def test_json_log_accepts_numpy_style_scalar(self):
         class Scalar:

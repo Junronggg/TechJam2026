@@ -20,13 +20,13 @@ from techjam_agent.config import apply_changes, experiment_key
 from techjam_agent.controller import Controller
 from techjam_agent.memory import (
     LESSON_LIMIT,
-    PLANNER_RECENT_HISTORY,
     SIGNATURE_LIMIT,
     build_memory_summary,
     collect_tried_keys,
     is_duplicate_config,
 )
 from techjam_agent.proposals import (
+    candidate_id_for,
     DeterministicResearcher,
     Proposal,
     build_planner_prompt,
@@ -140,10 +140,16 @@ def example_history() -> list[dict]:
     )
     bpr["critique"]["delta"] = 0.001926
     bpr["critique"]["meaningful_improvement"] = False
+    bpr["critique"]["metric_deltas"] = {
+        "GAUC": 0.0026, "nDCG@5": 0.0013, "primary": 0.001926,
+    }
+    bpr["critique"]["hypothesis_status"] = "inconclusive"
+    bpr["critique"]["evidence_strength"] = "single_seed"
+    bpr["critique"]["seed_count"] = 1
     failed = record(
         2,
-        config=apply_changes(bpr_config(), {"learning_rate": 0.005}),
-        changes={"learning_rate": 0.005},
+        config=apply_changes(bpr_config(), {"learning_rate": 0.002}),
+        changes={"learning_rate": 0.002},
         hypothesis="Raise learning rate.",
         verdict="failed",
         primary=None,
@@ -199,7 +205,12 @@ class CategoryTests(unittest.TestCase):
         self.assertEqual(summary["counts"]["failed"], 1)
         self.assertEqual(summary["best_observed"]["validation_primary"], 0.603396)
         self.assertEqual(summary["best_observed"]["training_objective"], "bpr")
+        self.assertEqual(summary["best_observed"]["hypothesis_status"], "inconclusive")
         self.assertEqual(summary["uncertain"][0]["primary"], 0.603396)
+        self.assertEqual(summary["uncertain"][0]["metric_deltas"]["primary"], 0.001926)
+        self.assertEqual(summary["research_findings"][0]["evidence_id"], "iteration_001")
+        self.assertEqual(summary["research_findings"][0]["evidence_status"], "inconclusive")
+        self.assertEqual(summary["confirmed_insights"], [])
         self.assertNotIn(0, [item["iteration"] for item in summary["uncertain"]])
         self.assertEqual(summary["failed"][0]["error_type"], "TimeoutError")
 
@@ -306,13 +317,14 @@ class BoundAndSafetyTests(unittest.TestCase):
         self.assertNotIn("sk-secret-do-not-leak", blob)
         self.assertNotIn("full traceback body", blob)
         self.assertNotIn("Traceback (most recent call last)", blob)
-        self.assertLessEqual(len(prompt["history"]), PLANNER_RECENT_HISTORY)
-        self.assertIn("promising", prompt["memory"])
+        self.assertNotIn("history", prompt)
+        self.assertIn("research_findings", prompt["memory"])
         self.assertNotIn("tried_keys", prompt["memory"])
-        self.assertIn("tried_signatures", prompt["memory"])
+        self.assertNotIn("tried_signatures", prompt["memory"])
+        self.assertIn("legal_candidates", prompt)
         self.assertIn("remaining", prompt)
 
-    def test_full_keys_stay_internal_and_compact_signatures_reach_prompt(self) -> None:
+    def test_full_keys_stay_internal_and_candidate_catalog_excludes_tried(self) -> None:
         history = example_history()
         full_keys = collect_tried_keys(history)
         self.assertEqual(len(full_keys), 3)
@@ -324,11 +336,9 @@ class BoundAndSafetyTests(unittest.TestCase):
         self.assertNotIn("experiment_key", prompt_blob)
         for key in full_keys:
             self.assertNotIn(key, prompt_blob)
-        signatures = prompt["memory"]["tried_signatures"]
-        self.assertEqual(len(signatures), 3)
-        self.assertEqual(signatures[1]["training_objective"], "bpr")
-        self.assertEqual(signatures[1]["changes"], {"training_objective": "bpr"})
-        self.assertEqual(len(signatures[1]["key_hash"]), 12)
+        candidate_ids = {item["candidate_id"] for item in prompt["legal_candidates"]}
+        for item in history:
+            self.assertNotIn(candidate_id_for(item["config"]), candidate_ids)
 
 
 class DuplicateTests(unittest.TestCase):
