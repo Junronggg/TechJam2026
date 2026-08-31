@@ -164,15 +164,31 @@ def _model_candidates(config: dict[str, Any]) -> list[CandidateExperiment]:
         # preserves the FM score scale and rank-calibrates only the DeepFM
         # branch.  The reverse transform remains legal for explicit ablations,
         # but is not promoted before evidence exists for it.
-        for normalization in ("fm_zscore_deepfm_rank",):
+        normalizations = ["fm_zscore_deepfm_rank"]
+        # Keep the reverse calibration as a later branch.  It becomes eligible
+        # only after the first calibrated branch reaches its tested weight
+        # neighborhood; this widens the search without stealing the established
+        # multitask/watch-time follow-ups from the original trajectory.
+        if (
+            config["hyperparameters"]["ensemble_normalization"]
+            == "fm_zscore_deepfm_rank"
+            and config["hyperparameters"]["ensemble_deepfm_weight"] in (0.63, 0.64, 0.65)
+        ):
+            normalizations.append("fm_rank_deepfm_zscore")
+        for normalization in normalizations:
             if config["hyperparameters"]["ensemble_normalization"] == normalization:
-                if config["hyperparameters"]["ensemble_deepfm_weight"] != 0.65:
+                # Keep the proven follow-up first for backwards-compatible
+                # trajectories, then expose the two local neighbors that were
+                # previously absent from the legal search space.
+                for value in (0.65, 0.64, 0.63, 0.6, 0.7):
+                    if config["hyperparameters"]["ensemble_deepfm_weight"] == value:
+                        continue
                     rows.append(_candidate(
-                        "Tune the DeepFM weight after rank calibration.",
+                        f"Tune the calibrated DeepFM weight to {value}.",
                         "The calibrated DeepFM branch has a different scale; a small, "
                         "predeclared weight check tests whether the improvement is "
                         "calibration-plus-weight rather than a lucky blend.",
-                        {"ensemble_deepfm_weight": 0.65},
+                        {"ensemble_deepfm_weight": value},
                         "heterogeneous_ensemble",
                     ))
                 continue

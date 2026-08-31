@@ -18,7 +18,8 @@
   label-free static-metadata capabilities（`video_music_type`、`video_tag_components`）。
   这不是把 action space 固定成 BPR/LambdaRank 等模型菜单，而是把可执行能力接入同一
   配置搜索和 evidence 流程。后来又修复了一个过早停止点：ensemble family 的旧 noisy
-  变体不再压制尚未测试的 calibration weight；代码通过 `192 passed`。
+  变体不再压制尚未测试的 calibration weight；本轮又把 `0.63/0.64` 邻域和延后的反向
+  calibration 接入 Planner，代码通过 `192 passed`。
 
 ## Agent 闭环
 
@@ -190,6 +191,35 @@ python scripts/run_agent.py \
 | Best Primary | **0.6052911282** |
 
 这条轨迹证明两点：第一，Planner 能根据上一轮 calibration 结果自动提出下一步 weight follow-up；第二，之前没有达到 `0.605` 不完全是模型上限，也有 Planner 把未测变体过早挡掉的问题。该分数仍需 rolling 和 paired-seed confirmation，不能直接宣称泛化提升。
+
+### Run G：Rank calibration paired-seed confirmation
+
+为验证 Run F 的 `0.605291` 候选，固定参考配置为 `FM+BPR + DeepFM+BCE`、z-score、
+DeepFM weight `0.4`；候选配置只改变为 `fm_zscore_deepfm_rank`、weight `0.65`。
+两边在相同 seeds `0–3` 下重训，未读取 test label。
+
+| Seed | Reference | Candidate | Delta |
+|---:|---:|---:|---:|
+| 0 | 0.604713 | 0.605291 | +0.000578 |
+| 1 | 0.604061 | 0.604734 | +0.000673 |
+| 2 | 0.604362 | 0.604723 | +0.000362 |
+| 3 | 0.604435 | 0.604433 | -0.000002 |
+
+汇总：`3/4` seeds 为正，paired mean delta **+0.000403**，paired std **0.000300**，
+近似 95% 区间 **[-0.000074, +0.000880]**，共 8 次模型训练、约 494 秒。
+因此自动证据状态为 `UNCERTAIN / ELIGIBLE`：它可以进入提交候选池，但不能写成
+“已确认的统计提升”，稳健 fallback 仍是 `0.604713` 的 rolling 3/3 ensemble。
+
+### Run H：局部 calibration 搜索空间扩展
+
+发现原配置只允许 `0.3/0.4/0.5/0.6/0.65/0.7` 六个融合权重。保持 FM 和
+DeepFM checkpoint 完全不变，增加 `0.63/0.64` 两个邻域值并评估三种校准方向。
+官方 validation 上 `fm_zscore_deepfm_rank + weight=0.63` 达到 **0.605365**，
+高于旧峰值 `0.605291`；rolling 的增量为 `+0.000843/-0.000484/+0.000531`
+（2/3、均值 `+0.000297`）。复用 Run G 四个 seed 的组件 checkpoint 做 paired
+weight check 时，`0.63` 为 4/4 正、均值 `+0.000430`，但近似 95% 区间
+`[-0.000061, +0.000922]` 仍跨 0。因此它是更强的 validation 提交候选，不能替换
+rolling 3/3 的 `0.604713`，也不能只凭局部扫描宣称统计确认。
 
 ### Run E：Artifact → policy 自动归因与 scoped replay
 

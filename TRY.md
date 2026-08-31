@@ -17,10 +17,14 @@ Rolling mean delta      +0.001123（相对 FM+BPR）
 ```
 
 最新候选：在同一 FM+BPR 与 DeepFM+BCE 上，把 DeepFM 分支改为用户内
-rank 校准，并将权重设为 `0.65`，Validation Primary **0.605291**。
-它相对原冠军 `0.604713` 增加 **+0.000578**；rolling 相对原冠军为
-`+0.001029 / -0.000504 / +0.000547`，2/3 folds、平均 **+0.000357**。
-因此它是当前验证集最高候选，但还没有替换 rolling 3/3 的原冠军。
+rank 校准，并将权重设为 `0.63`，Validation Primary **0.605365**。
+它相对原冠军 `0.604713` 增加 **+0.000652**；这是固定模型输出上的局部权重扫描结果，
+尚未作为一次新的完整 Agent 训练轨迹。原 `0.65` 候选为 **0.605291**，rolling
+相对原冠军为 `+0.001029 / -0.000504 / +0.000547`，2/3 folds、平均 **+0.000357**。
+因此 `0.605365` 是当前验证集峰值，`0.604713` 仍是 rolling 3/3 的稳健参考。
+随后按固定 seeds `0–3` 做 paired-seed confirmation：3/4 个 seed 为正，平均
+`+0.000403`，近似 95% 区间为 `[-0.000074, +0.000880]`。区间跨 0，所以科学状态是
+`UNCERTAIN`，但比赛提交状态仍为 `ELIGIBLE`；不能把它写成“已统计确认的稳健冠军”。
 
 值得保留、但不能直接替换冠军的单模型方向：
 
@@ -82,8 +86,16 @@ rank 校准，并将权重设为 `0.65`，Validation Primary **0.605291**。
 | 15 | `video_tag_components`（拆分多值 tag）+ FM+BPR | 0.604302 | +0.000339 vs FM+BPR | 比 exact tag 表示更好，但仍低于 ensemble |
 | 15 | `video_tag_components` ensemble | 0.604415 | -0.000298 vs 原冠军 | 组件信息没有形成互补，REJECT |
 | 16 | FM z-score + DeepFM rank，weight=0.4 | 0.604746 | +0.000033 vs 原冠军 | 校准方式本身有微小收益 |
-| 16 | FM z-score + DeepFM rank，weight=0.65 | **0.605291** | **+0.000578 vs 原冠军** | Validation-best candidate；rolling 2/3、均值 +0.000357，待更多 seed |
-| 17 | Autonomous follow-up：rank calibration 后自动测试 weight=0.65 | **0.605291** | **+0.003821 vs FM+BCE；+0.000578 vs 原冠军** | Agent 自主选中；尚需 rolling/paired-seed confirmation |
+| 16 | FM z-score + DeepFM rank，weight=0.65 | **0.605291** | **+0.000578 vs 原冠军** | Validation-best candidate；rolling 2/3、均值 +0.000357；paired seeds 后为 `UNCERTAIN / ELIGIBLE` |
+| 17 | Autonomous follow-up：rank calibration 后自动测试 weight=0.65 | **0.605291** | **+0.003821 vs FM+BCE；+0.000578 vs 原冠军** | Agent 自主选中；rolling 2/3，paired seeds 3/4，区间跨 0 |
+| 20 | Rank-calibrated ensemble paired seeds 0–3 | mean delta **+0.000403** | 3/4 seeds 为正；区间 `[-0.000074, +0.000880]` | `UNCERTAIN / ELIGIBLE`；不能宣称统计确认 |
+| 21 | Rank-calibrated local weight scan：weight=0.63 | **0.605365** | +0.000652 vs 原冠军 | 新 validation peak；固定输出、尚未通过独立 seed 确认 |
+| 21 | Rank-calibrated local weight scan：weight=0.64 | 0.605352 | +0.000639 vs 原冠军 | 接近峰值；rolling 2/3、均值 +0.000350 |
+| 21 | weight=0.63 paired seeds 0–3（复用相同组件 checkpoint） | mean delta **+0.000430** | 4/4 seeds 为正；区间 `[-0.000061, +0.000922]` | `UNCERTAIN / ELIGIBLE`；区间仍跨 0 |
+| 18 | `prior_video_exposure`（严格过去的同视频曝光） | 0.604123 | +0.000160 vs FM+BPR | 比 positive-history 更接近同学实现，但仍低于 ensemble；不确认 |
+| 18 | `author_recency`（严格过去的同 author 任意曝光） | 0.604005 | +0.000042 vs FM+BPR | 没有可检测增益；不确认 |
+| 19 | FM+BPR + censored watch-time head | 0.604108 | +0.000145 vs FM+BPR | 这是同学 `fm_watchtime` 思路的直接对照；小于当前波动 |
+| 19 | 上述 watch-time + `prior_video_exposure` + `author_recency` | 0.604222 | +0.000114 vs watch-time FM | 7-field 组合仍未接近 0.607；不能把外部结果归因于这两个字段 |
 
 ## 为什么最近很难继续涨
 
@@ -93,7 +105,17 @@ rank 校准，并将权重设为 `0.65`，Validation Primary **0.605291**。
 2. 评分是用户内排序（GAUC、nDCG@5），不是分类 accuracy。改变概率校准或增加相似字段，未必改变用户内排序。
 3. 官方 `convergence_epsilon=0.002` 大于大多数真实增益；默认循环会在连续小改动后结束。研究时必须显式使用 `--research-after-convergence`，但仍要保留官方收敛点。
 
-这轮真正有效的变化不是新 feature，而是对同一两个模型的分数做用户内 rank calibration，再重新检查融合权重。它带来验证集新高，但 rolling 只有 2/3 folds，因此暂时是“提交候选”，不是已确认的稳健冠军。
+这轮真正有效的变化不是新 feature，而是对同一两个模型的分数做用户内 rank calibration，再重新检查融合权重。局部扫描把 validation peak 从 `0.605291` 推到 `0.605365`；同一批四个 seed 的组件 checkpoint 上，`0.63` 的融合增量为 4/4 正、均值 `+0.000430`，但区间仍跨 0。当前规则是：`0.605365` 可作为 validation-best 提交候选，rolling 3/3 的 `0.604713` 保留为稳健 fallback。
+
+## 外部 `0.607` 结果的可比性
+
+同学记录中的 `0.6071/0.6073` 来自另一套 pipeline：它把
+`prior_exposure`、`author_recency` 作为固定输入，并使用了独立的
+`fm_watchtime`、`finalmlp`、`LightGCN` 成员和不同的 baseline 口径。我们补做了
+同视频曝光、author recency 以及 FM+BPR censored watch-time 的受控实验，最高为
+`0.604222`，因此目前没有证据说明仅靠这几个信号就能复现 `0.607`。外部记录中的
+`0.607` 应写成其 validation peak；其 test 结果约 `0.602`，不能当作同一 evaluator
+下的最终 leaderboard 分数。
 
 ## 评价口径
 

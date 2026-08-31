@@ -18,7 +18,11 @@ ALLOWED_VALUES = {
     "hard_negative_candidates": (2, 4),
     "deepfm_hidden_dim": (16, 32, 64),
     "hybrid_bpr_weight": (0.25, 0.5, 0.75),
-    "ensemble_deepfm_weight": (0.3, 0.4, 0.5, 0.6, 0.65, 0.7),
+    # The 0.63/0.64 neighbors were added after a fixed-output local scan
+    # found a narrow optimum around the earlier 0.65 candidate.  They remain
+    # ordinary legal candidates; rolling/seed evidence still decides whether
+    # either is safe to promote.
+    "ensemble_deepfm_weight": (0.3, 0.4, 0.5, 0.6, 0.63, 0.64, 0.65, 0.7),
     # Ranking is invariant to monotone score transforms within a user.  Keep
     # the default z-score blend for backwards compatibility, but let the
     # planner test a rank-calibrated DeepFM branch without changing either

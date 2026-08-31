@@ -445,6 +445,12 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(values["valid"]["previous_author_same"].tolist(), [0, 1])
         self.assertEqual(values["test"]["prior_video_count"].tolist(), [2])
         self.assertEqual(values["test"]["previous_author_same"].tolist(), [0])
+        self.assertEqual(values["train"]["prior_video_exposure"].tolist(), [1, 0, 0])
+        self.assertEqual(values["valid"]["prior_video_exposure"].tolist(), [1, 0])
+        self.assertEqual(values["test"]["prior_video_exposure"].tolist(), [1])
+        self.assertEqual(values["train"]["author_recency"].tolist(), [1, 0, 0])
+        self.assertEqual(values["valid"]["author_recency"].tolist(), [2, 3])
+        self.assertEqual(values["test"]["author_recency"].tolist(), [5])
 
         changed = {name: list(rows) for name, rows in splits.items()}
         changed["valid"] = [row[:-1] + (1 - row[-1],) for row in splits["valid"]]

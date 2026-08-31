@@ -75,10 +75,11 @@ def evaluate_blends(
     deepfm_scores: np.ndarray,
 ) -> dict[str, dict]:
     variants = {
-        "zscore_w04": ("zscore", 0.4),
-        "zscore_w065": ("zscore", 0.65),
-        "fm_zscore_deepfm_rank_w04": ("fm_zscore_deepfm_rank", 0.4),
-        "fm_zscore_deepfm_rank_w065": ("fm_zscore_deepfm_rank", 0.65),
+        f"{normalization}_w{weight:g}": (normalization, weight)
+        for normalization in (
+            "zscore", "fm_zscore_deepfm_rank", "fm_rank_deepfm_zscore"
+        )
+        for weight in (0.3, 0.4, 0.5, 0.6, 0.63, 0.64, 0.65, 0.7)
     }
     result = {}
     for name, (normalization, weight) in variants.items():
@@ -143,12 +144,16 @@ def main() -> int:
         print(json.dumps(rolling[fold_name], indent=2))
 
     aggregate = {}
-    for name in (
-        "zscore_w065", "fm_zscore_deepfm_rank_w04",
-        "fm_zscore_deepfm_rank_w065",
-    ):
+    variant_names = [
+        name for name in next(iter(rolling.values()))
+        if name != "zscore_w0.4"
+    ]
+    # ``:g`` formatting produces ``zscore_w0.4``; retain the historical key
+    # used by existing summaries for the reference blend.
+    reference_name = "zscore_w0.4"
+    for name in variant_names:
         deltas = [
-            fold[name]["primary"] - fold["zscore_w04"]["primary"]
+            fold[name]["primary"] - fold[reference_name]["primary"]
             for fold in rolling.values()
         ]
         aggregate[name] = {
@@ -157,6 +162,14 @@ def main() -> int:
             "folds": len(deltas),
             "deltas": [float(delta) for delta in deltas],
         }
+    # Keep a backwards-compatible alias for consumers of the earlier artifact.
+    aggregate["zscore_w065"] = aggregate["zscore_w0.65"]
+    aggregate["fm_zscore_deepfm_rank_w04"] = aggregate[
+        "fm_zscore_deepfm_rank_w0.4"
+    ]
+    aggregate["fm_zscore_deepfm_rank_w065"] = aggregate[
+        "fm_zscore_deepfm_rank_w0.65"
+    ]
     payload = {
         "test_labels_used": False,
         "controlled_change": "FM z-score + DeepFM within-user rank before blend",

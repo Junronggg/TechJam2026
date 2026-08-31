@@ -15,6 +15,8 @@ from techjam_agent.runner import ExperimentRunner
 
 EXPERIMENTS = {
     "fm_bpr": {},
+    "fm_bpr_prior_video_exposure": {"prior_video_exposure": True},
+    "fm_bpr_author_recency": {"author_recency": True},
     "fm_bpr_prior_video_count": {"prior_video_count": True},
     "fm_bpr_previous_author_same": {"previous_author_same": True},
 }
@@ -31,7 +33,7 @@ def experiment_config(initial: dict, features: dict[str, bool]) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Test target-free candidate count and author adjacency"
+        description="Test target-free candidate exposure and author recency signals"
     )
     parser.add_argument("--data-dir", default="data/KuaiRand-Pure/data")
     parser.add_argument("--output-dir", default="runs/candidate_history_followup")
