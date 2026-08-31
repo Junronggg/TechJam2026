@@ -1,8 +1,12 @@
 # Planner/Critic Research Architecture
 
-This is the control architecture for the autonomous ML researcher. It is set up
-before connecting an LLM or building new recommender models, so orchestration,
-safety, memory, and evidence formats can be tested independently.
+This document describes the **legacy** root `agent/` + `experiment/` prototype.
+It is exercised by `python run_agent.py --dry-run` or `--real-run`. The
+authoritative loop is `src/techjam_agent/`, launched with
+`python3 scripts/run_agent.py`.
+
+The prototype was set up so orchestration, safety, memory, and evidence formats
+could be tested independently of the live researcher.
 
 ```mermaid
 flowchart TD
@@ -20,18 +24,17 @@ flowchart TD
 
 - `agent/manager.py` owns the loop, budgets, convergence, duplicate prevention,
   and final best-node designation.
-- `agent/planner.py` defines the structured Planner input/output contract. The
-  deterministic implementation is only an architecture fixture; an LLM adapter
-  will implement the same interface later.
+- `agent/planner.py` defines the structured Planner input/output contract. In this
+  prototype the deterministic planner is an architecture fixture.
 - `agent/critic.py` separates measured observations from interpretations,
   confidence, decisions, and follow-up tests.
 - `agent/tree.py` keeps the best node from up to three research branches and
   scores candidates using exploitation, exploration, novelty, and runtime cost.
 - `agent/memory.py` stores parent/child lineage, configurations, results, lessons,
   visit counts, and the best-node marker.
-- `experiment/runner.py` is the canonical experiment boundary. A real backend
-  will later train, predict, and call the official evaluator. The current dry-run
-  backend returns clearly labelled simulated metrics only.
+- `experiment/runner.py` is the experiment boundary. The dry-run backend returns
+  clearly labelled simulated metrics; `--real-run` trains the official FM
+  backend on validation only.
 - `experiment/validator.py` restricts operations, models, features, parameter
   ranges, non-finite values, and protected organizer files before execution.
 - `experiment/evaluator.py` loads the organizer evaluator read-only and can pin
@@ -69,11 +72,14 @@ the 50-iteration and six-hour competition limits.
 
 ## Current versus deferred
 
-Currently runnable: schemas, tree selection, deterministic Planner, safe config
-operations, validation, dry-run Runner, isolated official-FM validation backend,
-grounded Critic, memory, JSONL logging, budgets, convergence, and tests. The real
-backend discards post-validation rows before reading `long_view` and stores each
-checkpoint/prediction in its experiment directory.
+Currently runnable **in this prototype**: schemas, tree selection, deterministic
+Planner, safe config operations, validation, dry-run Runner, isolated official-FM
+validation backend, grounded Critic, memory, JSONL logging, budgets, convergence,
+and tests. The real backend discards post-validation rows before reading
+`long_view` and stores each checkpoint/prediction in its experiment directory.
 
-Deferred to the next build phase: LLM provider integration, new feature
-transforms, additional model families, repair generation, and novel code patches.
+The live competition agent (`src/techjam_agent/` via `scripts/run_agent.py`) already
+includes allow-listed LLM proposals, persistent evidence, and the isolated NumPy
+training backends. Do not treat the deferred list below as the status of that stack.
+
+Deferred in this prototype: repair generation and novel code patches.
