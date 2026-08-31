@@ -260,9 +260,11 @@ the same family and matching scope. Override the files with `--evidence-file PAT
 and are removed before an LLM prompt is sent.
 
 Official convergence and optional research exploration are recorded separately. The
-default command still stops after the organizer rule (`epsilon=0.002` for three rounds).
-For a predeclared research run that records that point but continues within the same
-iteration/time limits, use:
+default command stops after the organizer's default rule (`epsilon=0.002` for three
+rounds). A team may predeclare a different epsilon, number of rounds, or minimum
+iteration floor, provided the choice is recorded before the run and the 50-iteration
+and 6-hour hard caps are respected. For a predeclared research run that records the
+default point but continues within the same limits, use:
 
 ```bash
 python3 scripts/run_agent.py --researcher llm --research-after-convergence
@@ -301,7 +303,7 @@ The LLM path automatically falls back to the deterministic policy if a proposal 
 invalid, duplicated, or temporarily unavailable. `summary.json` records each fallback
 and a sanitized provider error such as `HTTP 401`, so a deterministic proposal cannot
 be mistaken for an LLM decision. Development runs write a timestamped `logs/run_*`
-directory, `artifacts/best_config.json`, and `artifacts/best_model.npz`. They do not
+directory and run-scoped artifacts under `runs/<run_id>/artifacts`. They do not
 write `submissions/final.csv`. All ranking metrics still come from the untouched
 organizer `kuairand-starter-kit/evaluate.py`.
 
@@ -319,6 +321,14 @@ python3 scripts/run_agent.py --researcher deterministic \
 That command trains on the validation loop, then evaluates test once at the end
 and writes `submissions/final.csv`. Omit `--finalize-test` for development and
 smoke runs.
+
+Finalization is intentionally one-shot. Once `artifacts/final_test_metrics.json`
+or `submissions/final.csv` exists, a later `--finalize-test` invocation is refused
+so that a test result cannot accidentally be used to select a model. Continue
+research with validation-only commands (without `--finalize-test`); those runs
+write their checkpoints under `runs/<run_id>/artifacts` and cannot overwrite the
+stable final artifacts. Keep the existing final artifacts as a fallback, and
+finalize only the preselected model.
 
 ### Official run status
 

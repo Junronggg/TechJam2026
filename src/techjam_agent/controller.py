@@ -609,6 +609,18 @@ class Controller:
         timeout = _as_float(self.project.get("experiment_timeout_seconds"))
         return timeout if timeout is not None and timeout > 0 else 0.0
 
+    def _test_finalization_consumed(self) -> bool:
+        """Return whether this workspace already produced its one final test result.
+
+        Test labels are a one-shot resource for the official run.  Checking both
+        artifacts makes the guard safe after an interrupted copy or a partially
+        completed finalization.
+        """
+        return (
+            (self.artifacts_dir / "final_test_metrics.json").exists()
+            or (self.submissions_dir / "final.csv").exists()
+        )
+
     def _elapsed(self) -> float:
         return self.clock() - self.started
 
@@ -723,6 +735,12 @@ class Controller:
         research_after_convergence: bool = False,
         auto_confirm: bool = False,
     ) -> dict[str, Any]:
+        if finalize_test and self._test_finalization_consumed():
+            raise RuntimeError(
+                "test finalization has already been consumed for this workspace; "
+                "run validation-only experiments without --finalize-test and keep "
+                "the existing final.csv as the fallback"
+            )
         limits = self.project["run_limits"]
         cap = self._iteration_cap(max_iterations)
         budget_seconds = float(limits["max_wall_clock_hours"]) * 3600.0

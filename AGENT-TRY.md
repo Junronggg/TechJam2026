@@ -12,7 +12,7 @@
 - 旧版 broad family policy 在 replay 中避免过 2 个 temporal 实验；精确审计后确认 rolling 只否定“两项同时开启”，当前 scoped policy 只阻止这个已验证组合，不误伤尚未 rolling 的单特征。
 - `family_policies` 现由 validation-only rolling/placebo/paired-seed artifacts 自动生成；每条策略带来源哈希、模型作用域、科学结论和比赛状态。
 - 旧策略只在 task、model、feature schema 仍匹配时生效；artifact 改变后下次运行会重新归因，不再依赖人工同步 JSON 结论。
-- 官方 convergence 与内部研究探索已分开：默认仍按 `epsilon=0.002, rounds=3` 停止；显式研究模式会记录官方收敛点后继续探索，不能改写该收敛事实。
+- 默认 convergence 与内部研究探索已分开：当前配置使用 organizer 默认的 `epsilon=0.002, rounds=3`；团队也可以在运行前固定并记录其他值，但仍受 50 iterations / 6h 上限约束。显式研究模式会记录默认收敛点后继续探索，不能改写该收敛事实。
 - LLM 现在只能原样选择 deterministic top-5 候选中的完整 `changes`，不能漏掉学习率或自行拼配置；prompt 同时获得 train-only dataset facts 与方法适用条件。
 - Planner 新增了通用的 ensemble-calibration 候选（`fm_zscore_deepfm_rank`），以及
   label-free static-metadata capabilities（`video_music_type`、`video_tag_components`）。

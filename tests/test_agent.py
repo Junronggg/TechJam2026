@@ -632,6 +632,17 @@ class AgentTests(unittest.TestCase):
             self.assertEqual(tree["nodes"][1]["parent_id"], "baseline")
             self.assertEqual(summary["final_test_metrics"]["primary"], 0.60)
 
+    def test_test_finalization_is_one_shot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            artifacts = base / "artifacts"
+            artifacts.mkdir(parents=True)
+            (artifacts / "final_test_metrics.json").write_text("{}", encoding="utf-8")
+            controller = Controller(FakeRunner(), DeterministicResearcher(), self.config,
+                self.project, base / "logs", artifacts, base / "submissions")
+            with self.assertRaisesRegex(RuntimeError, "already been consumed"):
+                controller.run(max_iterations=1)
+
     def test_history_availability_is_strict_and_target_free(self):
         splits = {
             "train": [

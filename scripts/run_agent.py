@@ -97,6 +97,15 @@ def main() -> int:
 
     project = json.loads((ROOT / "configs" / "project.json").read_text(encoding="utf-8"))
     initial = json.loads((ROOT / "configs" / "experiment.json").read_text(encoding="utf-8"))
+    if args.finalize_test:
+        final_metrics = ROOT / "artifacts" / "final_test_metrics.json"
+        final_submission = ROOT / "submissions" / "final.csv"
+        if final_metrics.exists() or final_submission.exists():
+            parser.error(
+                "test finalization is already recorded in this workspace; "
+                "omit --finalize-test for validation-only research and do not "
+                "overwrite the existing final.csv"
+            )
     configured = args.data_dir or os.getenv("TECHJAM_DATA_DIR", project["data_dir"])
     data_dir = Path(configured)
     if not data_dir.is_absolute():
@@ -149,11 +158,21 @@ def main() -> int:
             prior_evidence=prior_evidence,
         )
     run_id = datetime.now(timezone.utc).strftime("run_%Y%m%dT%H%M%SZ")
+    if args.finalize_test:
+        # The one official finalization owns the stable submission artifacts.
+        artifacts_dir = ROOT / "artifacts"
+        submissions_dir = ROOT / "submissions"
+    else:
+        # Validation-only research must not overwrite the model paired with the
+        # already-finalized submission.  Keep every exploratory checkpoint local
+        # to its run so it can still be audited or promoted deliberately.
+        artifacts_dir = ROOT / "runs" / run_id / "artifacts"
+        submissions_dir = ROOT / "runs" / run_id / "submissions"
     local_runner = ExperimentRunner(ROOT, data_dir, ROOT / project["starter_dir"],
                                     project.get("official_evaluator_sha256"))
     runner = IsolatedExperimentRunner(local_runner, project["experiment_timeout_seconds"])
     controller = Controller(runner, researcher, initial, project, ROOT / "logs" / run_id,
-                            ROOT / "artifacts", ROOT / "submissions")
+                            artifacts_dir, submissions_dir)
     for raw in args.intervention:
         parts = raw.split("::")
         if len(parts) != 3 or parts[2].strip().lower() not in {"true", "false"}:

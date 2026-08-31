@@ -104,7 +104,7 @@ rank 校准，并将权重设为 `0.63`，Validation Primary **0.605365**。
 
 1. 许多新增特征来自同一类全局统计或稀疏交叉，和 FM/BPR 已有信号高度重复；因此单 split 的 `+0.0000x` 很容易只是噪声。
 2. 评分是用户内排序（GAUC、nDCG@5），不是分类 accuracy。改变概率校准或增加相似字段，未必改变用户内排序。
-3. 官方 `convergence_epsilon=0.002` 大于大多数真实增益；默认循环会在连续小改动后结束。研究时必须显式使用 `--research-after-convergence`，但仍要保留官方收敛点。
+3. 当前配置使用 organizer 默认的 `convergence_epsilon=0.002`，它大于大多数真实增益；默认循环会在连续小改动后结束。若要延长研究，可在运行前固定并记录自定义 epsilon/rounds，或显式使用 `--research-after-convergence`，同时保留默认收敛点和 50 iterations / 6h 上限。
 
 这轮真正有效的变化不是新 feature，而是对同一两个模型的分数做用户内 rank calibration，再重新检查融合权重。局部扫描把 validation peak 从 `0.605291` 推到 `0.605365`；同一批四个 seed 的组件 checkpoint 上，`0.63` 的融合增量为 4/4 正、均值 `+0.000430`，但区间仍跨 0。当前规则是：`0.605365` 可作为 validation-best 提交候选，rolling 3/3 的 `0.604713` 保留为稳健 fallback。
 

@@ -12,8 +12,9 @@ Primary = (GAUC + nDCG@5) / 2
 ```
 
 The validation split contains `124,909` rows. Test labels were not used to choose
-any research candidate. `KEEP` means retain as a candidate, not automatically claim
-that the result is a statistically confirmed generalization improvement.
+any research candidate. A final test evaluation was run once after research only.
+`KEEP` means retain as a candidate, not automatically claim that the result is a
+statistically confirmed generalization improvement.
 
 ## Iteration 0 — FM/BCE official baseline
 
@@ -635,6 +636,20 @@ rank calibration, and weight `0.4 -> 0.6`.
 **Errors/recovery.** All iteration records contain `error: null`. There was no retry,
 timeout, deterministic fallback, or manual restart.
 
+## Finalization after research
+
+After the validation search converged, the controller evaluated the validation-best
+checkpoint on the test split exactly once and wrote `submissions/final.csv`. This
+evaluation was not available to the planner and did not change the selected config.
+
+| GAUC | nDCG@5 | Primary | Rows |
+|---:|---:|---:|---:|
+| 0.666354 | 0.532377 | **0.599365** | 170,588 |
+
+The final CSV has the required columns `row_id,user_id,video_id,score` and 170,588
+prediction rows. The complete test result is recorded in
+`artifacts/final_test_metrics.json`.
+
 ## Final research summary
 
 | Reference | Primary | Interpretation |
@@ -660,6 +675,9 @@ experiments without changing the official evaluator.
 
 - Model/feature chronology: [`TRY.md`](TRY.md)
 - Agent planning and autonomy chronology: [`AGENT-TRY.md`](AGENT-TRY.md)
-- Latest raw agent records: `logs/run_20260831T154525Z/iteration_000.json` through `iteration_004.json`
-- Latest agent summary: `logs/run_20260831T154525Z/summary.json`
+- Final raw agent records: `logs/run_20260831T160804Z/iteration_000.json` through `iteration_004.json`
+- Final agent summary: `logs/run_20260831T160804Z/summary.json`
+- Final research trajectory: `logs/run_20260831T160804Z/research_trajectory.json`
+- Final artifact manifest: `artifacts/best_manifest.json`
+- Final submission: `submissions/final.csv`
 - Typical model ablation commands are listed in the reproduction section of `TRY.md`.
