@@ -144,6 +144,38 @@ class CandidatePlanningTests(unittest.TestCase):
         )
         self.assertFalse(no_memory.direction_stopped)
 
+    def test_unseen_ensemble_calibration_variant_survives_family_noise(self):
+        base = load_config()
+        bpr = apply_changes(base, {
+            "training_objective": "bpr", "learning_rate": 0.0003,
+        })
+        ensemble = apply_changes(bpr, {
+            "model": "ensemble", "training_objective": "hybrid",
+            "ensemble_deepfm_weight": 0.4,
+        })
+        calibrated = apply_changes(ensemble, {
+            "ensemble_normalization": "fm_zscore_deepfm_rank",
+        })
+        history = [
+            {"iteration": 0, "config": base, "changes": {}},
+            {"iteration": 1, "config": bpr, "changes": {"training_objective": "bpr"}},
+            {"iteration": 2, "config": ensemble,
+             "changes": {"model": "ensemble", "ensemble_deepfm_weight": 0.4},
+             "candidate_selection": {"selected_family": "heterogeneous_ensemble"},
+             "delta_from_parent": 0.0001, "critique": {"verdict": "noise"},
+             "diagnostics": {}},
+            {"iteration": 3, "config": calibrated,
+             "changes": {"ensemble_normalization": "fm_zscore_deepfm_rank"},
+             "candidate_selection": {"selected_family": "heterogeneous_ensemble"},
+             "delta_from_parent": 0.0001, "critique": {"verdict": "noise"},
+             "diagnostics": {}},
+        ]
+        weight = next(
+            row for row in rank_candidates(calibrated, history)
+            if row.candidate.changes == {"ensemble_deepfm_weight": 0.65}
+        )
+        self.assertFalse(weight.direction_stopped)
+
 
 class AutonomousControlTests(unittest.TestCase):
     def test_small_categorical_gain_triggers_controls_and_rolls_back_fake_gain(self):

@@ -460,8 +460,13 @@ class AgentTests(unittest.TestCase):
             {"model": "ensemble", "training_objective": "hybrid",
              "ensemble_deepfm_weight": 0.4},
         )
+        calibrated = apply_changes(
+            ensemble, {"ensemble_normalization": "fm_zscore_deepfm_rank"}
+        )
+        tuned = apply_changes(calibrated, {"ensemble_deepfm_weight": 0.65})
         proposal = DeterministicResearcher().propose(
-            ensemble, [{"config": self.config}, {"config": ensemble}]
+            ensemble, [{"config": self.config}, {"config": ensemble},
+                       {"config": calibrated}, {"config": tuned}]
         )
         self.assertEqual(proposal.changes, {
             "model": "multitask_deepfm",
@@ -475,6 +480,10 @@ class AgentTests(unittest.TestCase):
             {"model": "ensemble", "training_objective": "hybrid",
              "ensemble_deepfm_weight": 0.4},
         )
+        calibrated = apply_changes(
+            ensemble, {"ensemble_normalization": "fm_zscore_deepfm_rank"}
+        )
+        tuned = apply_changes(calibrated, {"ensemble_deepfm_weight": 0.65})
         multitask = apply_changes(
             ensemble,
             {"model": "multitask_deepfm", "training_objective": "bce",
@@ -485,6 +494,8 @@ class AgentTests(unittest.TestCase):
             [
                 {"config": self.config},
                 {"config": ensemble},
+                {"config": calibrated},
+                {"config": tuned},
                 {"config": multitask},
             ],
         )
@@ -500,6 +511,10 @@ class AgentTests(unittest.TestCase):
             {"model": "ensemble", "training_objective": "hybrid",
              "ensemble_deepfm_weight": 0.4},
         )
+        calibrated = apply_changes(
+            ensemble, {"ensemble_normalization": "fm_zscore_deepfm_rank"}
+        )
+        tuned = apply_changes(calibrated, {"ensemble_deepfm_weight": 0.65})
         pointwise = apply_changes(
             ensemble,
             {"model": "multitask_deepfm", "training_objective": "bce",
@@ -513,7 +528,8 @@ class AgentTests(unittest.TestCase):
         proposal = DeterministicResearcher().propose(
             ensemble,
             [{"config": self.config}, {"config": ensemble},
-             {"config": pointwise}, {"config": pairwise}],
+             {"config": calibrated}, {"config": tuned}, {"config": pointwise},
+             {"config": pairwise}],
         )
         self.assertEqual(proposal.changes, {
             "model": "multitask_deepfm",
@@ -532,7 +548,8 @@ class AgentTests(unittest.TestCase):
         proposal = DeterministicResearcher().propose(
             ensemble,
             [{"config": self.config}, {"config": ensemble},
-             {"config": pointwise}, {"config": pairwise},
+             {"config": calibrated}, {"config": tuned}, {"config": pointwise},
+             {"config": pairwise},
              {"config": censored_pointwise}, {"config": censored_pairwise}],
         )
         self.assertEqual(proposal.changes, {

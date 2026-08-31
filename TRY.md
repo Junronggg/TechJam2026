@@ -5,7 +5,7 @@
 
 ## 一页结论
 
-当前提交候选：
+当前提交候选（按验证集峰值）：
 
 ```text
 FM + BPR                    60%
@@ -15,6 +15,12 @@ Validation Primary     0.604713
 Rolling validation      3/3 folds 提升
 Rolling mean delta      +0.001123（相对 FM+BPR）
 ```
+
+最新候选：在同一 FM+BPR 与 DeepFM+BCE 上，把 DeepFM 分支改为用户内
+rank 校准，并将权重设为 `0.65`，Validation Primary **0.605291**。
+它相对原冠军 `0.604713` 增加 **+0.000578**；rolling 相对原冠军为
+`+0.001029 / -0.000504 / +0.000547`，2/3 folds、平均 **+0.000357**。
+因此它是当前验证集最高候选，但还没有替换 rolling 3/3 的原冠军。
 
 值得保留、但不能直接替换冠军的单模型方向：
 
@@ -72,6 +78,22 @@ Rolling mean delta      +0.001123（相对 FM+BPR）
 | 13 | Global-context FM + DeepFM | 0.604674 | -0.000039 vs champion | rolling 3/3、平均 +0.000460；暂列候选，不替换冠军 |
 | 14 | DeepFM + one-sided censored watch-time | 0.603939 | +0.000077 vs DeepFM | INSUFFICIENT；机制不同于 capped MSE，但增量仍是噪声量级 |
 | 14 | BPR + one-sided censored watch-time | 0.602523 | -0.001339 vs DeepFM | REJECT exact config；pairwise 主任务进一步下降 |
+| 15 | `video_music_type`（视频静态 metadata）+ FM+BPR | 0.604077 | +0.000114 vs FM+BPR | 小幅单 split，未超过 ensemble；暂不纳入冠军 |
+| 15 | `video_tag_components`（拆分多值 tag）+ FM+BPR | 0.604302 | +0.000339 vs FM+BPR | 比 exact tag 表示更好，但仍低于 ensemble |
+| 15 | `video_tag_components` ensemble | 0.604415 | -0.000298 vs 原冠军 | 组件信息没有形成互补，REJECT |
+| 16 | FM z-score + DeepFM rank，weight=0.4 | 0.604746 | +0.000033 vs 原冠军 | 校准方式本身有微小收益 |
+| 16 | FM z-score + DeepFM rank，weight=0.65 | **0.605291** | **+0.000578 vs 原冠军** | Validation-best candidate；rolling 2/3、均值 +0.000357，待更多 seed |
+| 17 | Autonomous follow-up：rank calibration 后自动测试 weight=0.65 | **0.605291** | **+0.003821 vs FM+BCE；+0.000578 vs 原冠军** | Agent 自主选中；尚需 rolling/paired-seed confirmation |
+
+## 为什么最近很难继续涨
+
+这不是单一原因，而是三个因素叠加：
+
+1. 许多新增特征来自同一类全局统计或稀疏交叉，和 FM/BPR 已有信号高度重复；因此单 split 的 `+0.0000x` 很容易只是噪声。
+2. 评分是用户内排序（GAUC、nDCG@5），不是分类 accuracy。改变概率校准或增加相似字段，未必改变用户内排序。
+3. 官方 `convergence_epsilon=0.002` 大于大多数真实增益；默认循环会在连续小改动后结束。研究时必须显式使用 `--research-after-convergence`，但仍要保留官方收敛点。
+
+这轮真正有效的变化不是新 feature，而是对同一两个模型的分数做用户内 rank calibration，再重新检查融合权重。它带来验证集新高，但 rolling 只有 2/3 folds，因此暂时是“提交候选”，不是已确认的稳健冠军。
 
 ## 评价口径
 
@@ -170,6 +192,33 @@ DeepFM+BCE 在相同基础字段上得到 `0.603862`。它没有超过 FM+BPR，
 | Mean | 0.592587 | **0.593710** | **+0.001123** |
 
 结论：当前最好方案不是最强单模型，而是 ranking signal 与 nonlinear pointwise signal 的融合。
+
+### I. 测试融合校准，而不是继续堆 feature
+
+此前 ensemble 先对两个模型都做用户内 z-score，再按 `0.6/0.4` 融合。由于
+官方评估只看同一用户内部排序，模型分数的绝对尺度并不重要；因此新增一个
+严格对照：FM 保留 z-score，DeepFM 改成用户内 rank，模型和输入完全不变。
+
+| 融合方式 | DeepFM 权重 | Official validation Primary |
+|---|---:|---:|
+| 两边 z-score（原冠军） | 0.40 | 0.604713 |
+| FM z-score + DeepFM rank | 0.40 | 0.604746 |
+| FM z-score + DeepFM rank | **0.65** | **0.605291** |
+
+rolling 对照以“两边 z-score、weight=0.40”为基准：
+
+| Fold | 基准 | rank-calibrated / 0.65 | Delta |
+|---|---:|---:|---:|
+| Fold 1 | 0.611392 | 0.612421 | +0.001029 |
+| Fold 2 | 0.581429 | 0.580925 | -0.000504 |
+| Fold 3 | 0.588308 | 0.588855 | +0.000547 |
+| Mean delta | — | — | **+0.000357，2/3** |
+
+这次提升来自“融合排序校准 + weight”，不是新特征或换模型。它解释了为什么
+之前继续加 tag、duration、user metadata 都只能带来 `0.0001~0.0004`：当前单模型
+已经相近，瓶颈更多在如何组合它们。由于 rolling 仍有一个负 fold，当前策略是：
+把 `0.605291` 作为 validation submission candidate，保留 `0.604713` 作为稳健参考，
+后续用预先声明的 paired seeds 决定最终提交。
 
 ### E. 用 rolling validation 推翻单切分假象
 

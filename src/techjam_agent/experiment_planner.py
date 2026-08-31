@@ -28,7 +28,16 @@ FEATURE_FAMILIES = {
     "author_positive_recency": "candidate_history",
     "prior_video_count": "candidate_history",
     "previous_author_same": "candidate_history",
+    "prior_video_exposure": "candidate_history",
+    "author_recency": "candidate_history",
     "global_context": "global_context",
+    "video_tag": "content_metadata",
+    "video_upload_type": "content_metadata",
+    "user_active_degree": "user_metadata",
+    "user_register_days_range": "user_metadata",
+    "duration_semantic_bucket": "duration_nonlinearity",
+    "video_music_type": "content_metadata",
+    "video_tag_components": "content_metadata",
 }
 
 # Priors come from validation-only project evidence. They seed the search; measured
@@ -44,6 +53,13 @@ FAMILY_PRIORS = {
     "sequence_model": (0.05, 0.90, 0.95, 1.00, 0.20),
     "tree_model": (0.20, 0.90, 0.60, 0.45, 0.50),
     "global_context": (0.45, 0.45, 0.45, 0.20, 0.80),
+    # Newly wired static metadata has no rolling confirmation yet, so it is
+    # explored after established model families rather than masking them.
+    "content_metadata": (0.35, 0.35, 0.75, 0.30, 0.60),
+    "user_metadata": (0.30, 0.35, 0.70, 0.30, 0.65),
+    # The fixed duration buckets were already tested and fell below BPR; keep
+    # the capability legal, but give it a rejected-direction prior.
+    "duration_nonlinearity": (0.05, 0.95, 0.30, 0.35, 0.90),
     "temporal_counts": (0.15, 0.85, 0.55, 0.35, 0.65),
     "candidate_history": (0.10, 0.95, 0.65, 0.35, 0.65),
     "global_target_statistics": (0.05, 0.95, 0.35, 0.35, 0.90),
@@ -143,6 +159,30 @@ def _model_candidates(config: dict[str, Any]) -> list[CandidateExperiment]:
             {"model": "ensemble", "training_objective": "hybrid", "ensemble_deepfm_weight": 0.4},
             "heterogeneous_ensemble",
         ))
+    if model == "ensemble":
+        # The first calibration candidate is deliberately the direction that
+        # preserves the FM score scale and rank-calibrates only the DeepFM
+        # branch.  The reverse transform remains legal for explicit ablations,
+        # but is not promoted before evidence exists for it.
+        for normalization in ("fm_zscore_deepfm_rank",):
+            if config["hyperparameters"]["ensemble_normalization"] == normalization:
+                if config["hyperparameters"]["ensemble_deepfm_weight"] != 0.65:
+                    rows.append(_candidate(
+                        "Tune the DeepFM weight after rank calibration.",
+                        "The calibrated DeepFM branch has a different scale; a small, "
+                        "predeclared weight check tests whether the improvement is "
+                        "calibration-plus-weight rather than a lucky blend.",
+                        {"ensemble_deepfm_weight": 0.65},
+                        "heterogeneous_ensemble",
+                    ))
+                continue
+            rows.append(_candidate(
+                f"Calibrate the ensemble with {normalization}.",
+                "GAUC and nDCG depend on within-user ordering; rank calibration tests "
+                "whether score scale, rather than model content, limits the blend.",
+                {"ensemble_normalization": normalization},
+                "heterogeneous_ensemble",
+            ))
     if model != "multitask_deepfm":
         rows.append(_candidate(
             "Use like as auxiliary supervision in a multi-task DeepFM.",
@@ -296,6 +336,40 @@ def _family_observations(history: list[dict[str, Any]], family: str) -> tuple[li
     return deltas, weak, strong_slice_or_diversity
 
 
+def _has_unseen_ensemble_variant(
+    config: dict[str, Any],
+    candidate: CandidateExperiment,
+    history: list[dict[str, Any]],
+) -> bool:
+    """Keep unexplored ensemble calibration values alive after noisy siblings.
+
+    Ensemble calibration is a two-stage intervention: changing the score
+    transform and then tuning its blend weight.  Treating both as one family
+    is useful for memory, but a noisy result for one variant must not suppress
+    a value that has never been measured.  This guard is deliberately narrow;
+    it does not reopen unrelated rejected feature/model families.
+    """
+    if candidate.family != "heterogeneous_ensemble":
+        return False
+    if config.get("model") != "ensemble":
+        return False
+    variant_keys = {"ensemble_normalization", "ensemble_deepfm_weight"}
+    hp = config.get("hyperparameters", {})
+    for key in variant_keys.intersection(candidate.changes):
+        target = candidate.changes[key]
+        seen = set()
+        for item in history:
+            item_config = item.get("config") if isinstance(item, dict) else None
+            if not isinstance(item_config, dict) or item_config.get("model") != "ensemble":
+                continue
+            item_hp = item_config.get("hyperparameters", {})
+            if key in item_hp:
+                seen.add(item_hp[key])
+        if hp.get(key) != target and target not in seen:
+            return True
+    return False
+
+
 def _prior_family_patterns(
     prior_evidence: dict[str, Any] | None,
 ) -> dict[str, list[dict[str, Any]]]:
@@ -421,7 +495,14 @@ def rank_candidates(
         else:
             deltas, weak, advantage = _family_observations(history, candidate.family)
         observed = sum(deltas) / len(deltas) if deltas else None
-        stopped = weak >= 2 and advantage == 0
+        unseen_ensemble_variant = _has_unseen_ensemble_variant(
+            config, candidate, history
+        )
+        stopped = (
+            weak >= 2
+            and advantage == 0
+            and not unseen_ensemble_variant
+        )
         score = (
             weights["expected_gain"] * candidate.expected_gain
             + weights["evidence_strength"] * candidate.evidence_strength
@@ -431,6 +512,12 @@ def rank_candidates(
         )
         if observed is not None:
             score += weights["observed_gain"] * max(-0.005, min(0.005, observed))
+        if unseen_ensemble_variant:
+            # A new calibration value is an information-gathering follow-up,
+            # not a repetition of the noisy family mean. Give it a bounded
+            # confirmation bonus so an old scoped policy cannot crowd it out
+            # before the new value is measured.
+            score += 0.08
         # A scoped artifact policy describes this concrete configuration and is
         # stronger than a family-level pattern distilled from a different variant
         # in the current run. Unscoped/current evidence remains the fallback.
@@ -452,7 +539,7 @@ def rank_candidates(
                 score -= 0.08
             else:
                 score += 0.01
-        if pattern_policy == "stop_direction":
+        if pattern_policy == "stop_direction" and not unseen_ensemble_variant:
             stopped = True
         if stopped:
             score -= 1.0

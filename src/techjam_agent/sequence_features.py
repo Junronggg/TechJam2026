@@ -12,6 +12,8 @@ SEQUENCE_FEATURE_DIMS = {
     "author_positive_recency": 6,
     "prior_video_count": 6,
     "previous_author_same": 2,
+    "prior_video_exposure": 2,
+    "author_recency": 6,
 }
 LOG_FILES = (
     "log_standard_4_08_to_4_21_pure.csv",
@@ -113,6 +115,7 @@ def strict_sequence_categories(
     train = splits["train"]
     prior_positive_videos: set[tuple[object, object]] = set()
     last_positive_author_time: dict[tuple[object, object], int] = {}
+    last_author_time: dict[tuple[object, object], int] = {}
     video_exposure_counts: dict[tuple[object, object], int] = defaultdict(int)
     previous_author: dict[object, object] = {}
     result: dict[str, dict[str, np.ndarray]] = {}
@@ -121,6 +124,8 @@ def strict_sequence_categories(
     train_recency = np.zeros(len(train), dtype=np.int32)
     train_video_count = np.zeros(len(train), dtype=np.int32)
     train_previous_author = np.zeros(len(train), dtype=np.int32)
+    train_prior_exposure = np.zeros(len(train), dtype=np.int32)
+    train_author_recency = np.zeros(len(train), dtype=np.int32)
     order = np.argsort(event_times["train"], kind="stable")
     cursor = 0
     while cursor < len(order):
@@ -142,8 +147,16 @@ def strict_sequence_categories(
                 video_exposure_counts[(user, video)]
             )
             train_previous_author[index] = int(previous_author.get(user) == author)
+            train_prior_exposure[index] = int(
+                video_exposure_counts[(user, video)] > 0
+            )
+            previous_any = last_author_time.get((user, author))
+            train_author_recency[index] = _recency_bucket(
+                None if previous_any is None else timestamp - previous_any
+            )
         for raw_index in indices:
             row = train[int(raw_index)]
+            last_author_time[(row[1], row[3])] = timestamp
             if int(row[6]) == 1:
                 prior_positive_videos.add((row[1], row[2]))
                 last_positive_author_time[(row[1], row[3])] = timestamp
@@ -157,6 +170,8 @@ def strict_sequence_categories(
         "author_positive_recency": train_recency,
         "prior_video_count": train_video_count,
         "previous_author_same": train_previous_author,
+        "prior_video_exposure": train_prior_exposure,
+        "author_recency": train_author_recency,
     }
 
     for split, rows in splits.items():
@@ -166,8 +181,11 @@ def strict_sequence_categories(
         recency = np.zeros(len(rows), dtype=np.int32)
         video_count = np.zeros(len(rows), dtype=np.int32)
         same_author = np.zeros(len(rows), dtype=np.int32)
+        prior_exposure = np.zeros(len(rows), dtype=np.int32)
+        author_recency = np.zeros(len(rows), dtype=np.int32)
         split_video_counts = defaultdict(int, video_exposure_counts)
         split_previous_author = dict(previous_author)
+        split_last_author_time = dict(last_author_time)
         order = np.argsort(event_times[split], kind="stable")
         cursor = 0
         while cursor < len(order):
@@ -191,15 +209,25 @@ def strict_sequence_categories(
                 same_author[index] = int(
                     split_previous_author.get(user) == author
                 )
+                prior_exposure[index] = int(
+                    split_video_counts[(user, video)] > 0
+                )
+                previous_any = split_last_author_time.get((user, author))
+                author_recency[index] = _recency_bucket(
+                    None if previous_any is None else max(0, timestamp - previous_any)
+                )
             for raw_index in indices:
                 row = rows[int(raw_index)]
                 split_video_counts[(row[1], row[2])] += 1
                 split_previous_author[row[1]] = row[3]
+                split_last_author_time[(row[1], row[3])] = timestamp
             cursor = end
         result[split] = {
             "prior_video_positive": prior,
             "author_positive_recency": recency,
             "prior_video_count": video_count,
             "previous_author_same": same_author,
+            "prior_video_exposure": prior_exposure,
+            "author_recency": author_recency,
         }
     return result

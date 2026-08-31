@@ -14,6 +14,11 @@
 - 旧策略只在 task、model、feature schema 仍匹配时生效；artifact 改变后下次运行会重新归因，不再依赖人工同步 JSON 结论。
 - 官方 convergence 与内部研究探索已分开：默认仍按 `epsilon=0.002, rounds=3` 停止；显式研究模式会记录官方收敛点后继续探索，不能改写该收敛事实。
 - LLM 现在只能原样选择 deterministic top-5 候选中的完整 `changes`，不能漏掉学习率或自行拼配置；prompt 同时获得 train-only dataset facts 与方法适用条件。
+- Planner 新增了通用的 ensemble-calibration 候选（`fm_zscore_deepfm_rank`），以及
+  label-free static-metadata capabilities（`video_music_type`、`video_tag_components`）。
+  这不是把 action space 固定成 BPR/LambdaRank 等模型菜单，而是把可执行能力接入同一
+  配置搜索和 evidence 流程。后来又修复了一个过早停止点：ensemble family 的旧 noisy
+  变体不再压制尚未测试的 calibration weight；代码通过 `192 passed`。
 
 ## Agent 闭环
 
@@ -153,6 +158,38 @@ python scripts/run_agent.py \
 | Memory-influenced selections | 0 |
 
 判断：所有分数精确复现，说明 persistent evidence 接线没有破坏训练和评估。短轨迹在停止前仍未进入 memory 会阻止的 family，因此 action 没有分叉；不能用 Run C 覆盖这个负结果。
+
+### Run F：修复过早停止后的自主校准轨迹
+
+命令：
+
+```bash
+python scripts/run_agent.py \
+  --researcher deterministic \
+  --max-iterations 5 \
+  --research-after-convergence
+```
+
+运行目录：`logs/run_20260831T124346Z`
+
+| Iteration | Agent action | Primary | 决策 |
+|---:|---|---:|---|
+| 0 | FM+BCE baseline | 0.601470 | REFERENCE |
+| 1 | FM+BPR, lr=0.0003 | 0.603963 | KEEP_CANDIDATE |
+| 2 | FM+BPR + DeepFM ensemble, z-score, weight=0.4 | 0.604713 | KEEP_CANDIDATE |
+| 3 | FM z-score + DeepFM rank calibration | 0.604746 | KEEP_CANDIDATE |
+| 4 | **Agent 自动跟进 DeepFM weight=0.65** | **0.605291** | **KEEP_CANDIDATE** |
+
+| 审计项 | 结果 |
+|---|---:|
+| Stop reason | `max_iterations` |
+| Official convergence point | iteration 4，streak=3 |
+| Total / candidate experiments | 5 / 4 |
+| Manual interventions | 0 |
+| Test metrics | `null` |
+| Best Primary | **0.6052911282** |
+
+这条轨迹证明两点：第一，Planner 能根据上一轮 calibration 结果自动提出下一步 weight follow-up；第二，之前没有达到 `0.605` 不完全是模型上限，也有 Planner 把未测变体过早挡掉的问题。该分数仍需 rolling 和 paired-seed confirmation，不能直接宣称泛化提升。
 
 ### Run E：Artifact → policy 自动归因与 scoped replay
 
