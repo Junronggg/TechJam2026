@@ -92,6 +92,7 @@ rank 校准，并将权重设为 `0.63`，Validation Primary **0.605365**。
 | 21 | Rank-calibrated local weight scan：weight=0.63 | **0.605365** | +0.000652 vs 原冠军 | 新 validation peak；固定输出、尚未通过独立 seed 确认 |
 | 21 | Rank-calibrated local weight scan：weight=0.64 | 0.605352 | +0.000639 vs 原冠军 | 接近峰值；rolling 2/3、均值 +0.000350 |
 | 21 | weight=0.63 paired seeds 0–3（复用相同组件 checkpoint） | mean delta **+0.000430** | 4/4 seeds 为正；区间 `[-0.000061, +0.000922]` | `UNCERTAIN / ELIGIBLE`；区间仍跨 0 |
+| 22 | Train-only shadow validation：weight=0.63 | mean delta **+0.000085** | 3/4 窗口提升；第 4 窗口 -0.000484 | 有轻微跨时间优势，但增益接近噪声 |
 | 18 | `prior_video_exposure`（严格过去的同视频曝光） | 0.604123 | +0.000160 vs FM+BPR | 比 positive-history 更接近同学实现，但仍低于 ensemble；不确认 |
 | 18 | `author_recency`（严格过去的同 author 任意曝光） | 0.604005 | +0.000042 vs FM+BPR | 没有可检测增益；不确认 |
 | 19 | FM+BPR + censored watch-time head | 0.604108 | +0.000145 vs FM+BPR | 这是同学 `fm_watchtime` 思路的直接对照；小于当前波动 |
@@ -106,6 +107,29 @@ rank 校准，并将权重设为 `0.63`，Validation Primary **0.605365**。
 3. 官方 `convergence_epsilon=0.002` 大于大多数真实增益；默认循环会在连续小改动后结束。研究时必须显式使用 `--research-after-convergence`，但仍要保留官方收敛点。
 
 这轮真正有效的变化不是新 feature，而是对同一两个模型的分数做用户内 rank calibration，再重新检查融合权重。局部扫描把 validation peak 从 `0.605291` 推到 `0.605365`；同一批四个 seed 的组件 checkpoint 上，`0.63` 的融合增量为 4/4 正、均值 `+0.000430`，但区间仍跨 0。当前规则是：`0.605365` 可作为 validation-best 提交候选，rolling 3/3 的 `0.604713` 保留为稳健 fallback。
+
+## Shadow validation：模拟未见时间段
+
+为了测试“validation 上的权重是否能泛化到其他未来窗口”，新增
+`scripts/run_shadow_validation.py`。它只使用官方 train period `20220408–20220420`，
+切出四组严格按时间排列的 train/holdout，不读取官方 validation 或 test label：
+
+```bash
+python scripts/run_shadow_validation.py
+```
+
+比较参考融合 `weight=0.4 + z-score` 与候选 `weight=0.63 + fm_zscore_deepfm_rank`：
+
+| Shadow fold | Candidate delta |
+|---|---:|
+| shadow_1 | +0.000275 |
+| shadow_2 | +0.000206 |
+| shadow_3 | +0.000345 |
+| shadow_4 | -0.000484 |
+
+汇总为 **3/4** 窗口提升、平均 **+0.000085**。这不是新的 leaderboard 分数，而是
+对时间泛化的额外 sanity check；它支持“候选可能有轻微优势”，同时也证明优势很容易
+随时间段消失，因此不能据此宣称 `.605365` 一定优于稳健 fallback。
 
 ## 外部 `0.607` 结果的可比性
 
