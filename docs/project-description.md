@@ -113,6 +113,28 @@ returned GAUC `0.6665823`, nDCG@5 `0.5314327`, and Primary `0.5990075` across 17
 rows and 23,875 users. Test metrics were computed after research and were not exposed
 to the Planner; the hidden competition score is determined by the organizers.
 
+## Resource usage
+
+The final validation winner came from the deterministic autonomous run. The separate
+OpenRouter run is reported as the LLM/autonomy evidence:
+
+| Resource | Deterministic winner (`run_20260831T171347Z`) | OpenRouter LLM run (`run_20260831T160000Z`) |
+| --- | ---: | ---: |
+| Agent wall-clock | 819.61 s (0.228 h) | 3,699.42 s (1.028 h) |
+| Total LLM tokens | 0 | 197,797 (62,608 input + 135,189 output) |
+| Manual interventions | 0 | 0 |
+| GPU-hours | 0 | 0 |
+| Iterations | 4 | 6 |
+
+The LLM run made 10 requests, with one proposal failure handled by deterministic
+fallback. A separate failed-credentials smoke run used five requests and zero tokens;
+it is not included in the successful LLM resource total.
+
+If only one resource row can be entered in the submission form, use the OpenRouter
+column because that run completed five candidate experiments and stopped with
+`stop_reason=converged`. The deterministic column documents the separate run that
+located the best validation score within its four-experiment limit.
+
 ## Development tools
 
 - Visual Studio Code for implementation and inspection

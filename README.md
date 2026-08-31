@@ -174,14 +174,31 @@ The two representative runs used for the submission record are:
 | Run | Researcher | Iterations | Candidate experiments | Manual interventions | LLM requests/failures | Best validation Primary |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | `run_20260831T171347Z` | Deterministic, autonomous | 4 | 3 | 0 | 0 / 0 | 0.6058938 |
-| `run_20260831T131357Z` | OpenAI-compatible LLM with fallback | 6 | 5 | 0 | 5 / 5 authentication failures; deterministic fallback | 0.6053735 |
+| `run_20260831T160000Z` | OpenRouter LLM, autonomous | 6 | 5 | 0 | 10 / 1 proposal failure; one fallback | 0.6054142 |
 
 Each run directory contains `run_meta.json`, `iteration_*.json`, `summary.json`,
 `research_trajectory.json`, `tree_snapshot.json`, and `experiment_history.jsonl`.
 The LLM run also contains the sanitized/redacted `llm_calls.jsonl` audit. Review it
 before upload and remove any provider-specific or secret-bearing fields. The per-iteration
 records include the hypothesis, candidate/configuration diff, validation metrics,
-errors or recovery actions, and promotion decision required by the Starter Kit.
+errors or recovery actions, and promotion decision required by the Starter Kit. A
+separate earlier API smoke run (`run_20260831T131357Z`) had five authentication failures
+and zero tokens, then correctly used the deterministic fallback; it is optional evidence.
+
+Resource accounting for the representative runs:
+
+| Resource | Deterministic winner (`171347Z`) | OpenRouter LLM run (`160000Z`) |
+| --- | ---: | ---: |
+| Agent wall-clock | 819.61 s (0.228 h) | 3,699.42 s (1.028 h) |
+| Total LLM tokens | 0 | 197,797 (62,608 input + 135,189 output) |
+| Manual interventions | 0 | 0 |
+| GPU-hours | 0 | 0 |
+| Iterations | 4 | 6 |
+
+If the submission form accepts only one resource row for an autonomous converged run,
+use the OpenRouter column: it completed five candidate experiments and stopped with
+`stop_reason=converged`. The deterministic column is the separate best-performance
+reference run; it stopped at its four-experiment limit after locating the shared winner.
 
 For top-five experiments, set the legal `validation_metric` hyperparameter to
 `"nDCG@5"`. This changes only epoch stopping and blend-weight selection; the
