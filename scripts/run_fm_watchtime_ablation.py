@@ -149,7 +149,12 @@ class FMWatchtime:
         return float(np.mean(np.logaddexp(0.0, -difference)) + aux_loss / observed)
 
 
-def run_one(runner: ExperimentRunner, config: dict, aux_weight: float) -> dict:
+def run_one(
+    runner: ExperimentRunner,
+    config: dict,
+    aux_weight: float,
+    checkpoint: Path | None = None,
+) -> dict:
     encoded, dimension = runner._encoded_for(config)
     Xtr, ytr, utr = encoded["train"]
     Xva, yva, uva = encoded["valid"]
@@ -165,6 +170,7 @@ def run_one(runner: ExperimentRunner, config: dict, aux_weight: float) -> dict:
     rng = np.random.default_rng(hp["seed"])
     best = -1.0
     best_state = None
+    best_epoch = 0
     bad = 0
     started = time.monotonic()
     for epoch in range(hp["epochs"]):
@@ -184,6 +190,7 @@ def run_one(runner: ExperimentRunner, config: dict, aux_weight: float) -> dict:
         print(f"    epoch {epoch + 1:02d} | primary={score:.6f} | best={max(best, score):.6f}", flush=True)
         if score > best + 1e-5:
             best, bad = score, 0
+            best_epoch = epoch + 1
             best_state = (model.V.copy(), model.W.copy(), np.float32(model.b),
                           model.A.copy(), np.float32(model.ab))
         else:
@@ -193,11 +200,26 @@ def run_one(runner: ExperimentRunner, config: dict, aux_weight: float) -> dict:
     if best_state is None:
         raise RuntimeError("watch-time FM did not produce a checkpoint")
     model.V, model.W, model.b, model.A, model.ab = best_state
-    valid = runner.evaluate_mod.evaluate(uva, yva, model.predict(Xva))
+    valid_scores = model.predict(Xva)
+    valid = runner.evaluate_mod.evaluate(uva, yva, valid_scores)
+    if checkpoint is not None:
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(
+            checkpoint,
+            V=model.V,
+            W=model.W,
+            b=model.b,
+            A=model.A,
+            ab=model.ab,
+            best_epoch=np.asarray(best_epoch),
+        )
+        # The generic validation artifact is what offline ensemble search
+        # consumes; it contains no test rows or labels.
+        runner._save_validation_artifact(checkpoint, uva, yva, valid_scores)
     return {**{key: float(value) for key, value in valid.items()},
             "runtime_seconds": float(time.monotonic() - started),
             "auxiliary_loss_weight": aux_weight,
-            "best_epoch": int(epoch + 1 - bad)}
+            "best_epoch": int(best_epoch)}
 
 
 def main() -> int:
@@ -226,7 +248,10 @@ def main() -> int:
         config["hyperparameters"]["learning_rate"] = 0.0003
         config["features"].update(features)
         print(f"\n=== {name} ===", flush=True)
-        results[name] = {"features": features, "metrics": run_one(runner, config, weight)}
+        results[name] = {
+            "features": features,
+            "metrics": run_one(runner, config, weight, output_dir / f"{name}.npz"),
+        }
         print(json.dumps(results[name], indent=2), flush=True)
     baseline = results["fm_watchtime"]["metrics"]["primary"]
     for row in results.values():
