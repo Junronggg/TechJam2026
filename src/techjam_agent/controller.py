@@ -537,7 +537,13 @@ class Controller:
                     "reason": failure[1],
                     "provider_error": getattr(self.researcher, "last_error", None),
                 })
-                proposal, candidate, failure = self._propose(DeterministicResearcher(), parent)
+                prior_evidence = getattr(self.researcher, "prior_evidence", None)
+                if prior_evidence is None:
+                    planner = getattr(self.researcher, "planner", None)
+                    prior_evidence = getattr(planner, "prior_evidence", None)
+                proposal, candidate, failure = self._propose(
+                    DeterministicResearcher(prior_evidence=prior_evidence), parent
+                )
             if failure is not None:
                 stop_reason, stop_detail = failure
                 break
