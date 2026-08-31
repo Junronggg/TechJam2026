@@ -19,6 +19,7 @@ from .dcnv2 import DCNv2
 from .deepfm import DeepFM, MultiTaskDeepFM
 from .ensemble import blend_scores
 from .feedback import (
+    align_censored_watch_feedback,
     align_auxiliary_feedback,
     auxiliary_task_count,
     select_auxiliary_feedback,
@@ -63,9 +64,11 @@ class ExperimentRunner:
         self._splits = None
         self._encoded = None
         self._auxiliary_feedback = None
+        self._censored_watch_feedback = None
         self._sequence_categories = None
         self._causal_sequence_cache = {}
         self._validation_slices = None
+        self._side_metadata = None
 
     @staticmethod
     def validation_artifact_path(checkpoint: Path) -> Path:
@@ -96,15 +99,25 @@ class ExperimentRunner:
         })
         np.savez_compressed(self.validation_artifact_path(checkpoint), **payload)
 
-    def _auxiliary_for(self, selection: str) -> tuple[np.ndarray, np.ndarray]:
+    def _auxiliary_for(
+        self, selection: str
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if selection == "censored_watch":
+            if self._censored_watch_feedback is None:
+                self._censored_watch_feedback = align_censored_watch_feedback(
+                    self.data_dir, {"train": self._splits["train"]}
+                )
+            labels, masks, censored = self._censored_watch_feedback
+            return labels["train"], masks["train"], censored["train"]
         if self._auxiliary_feedback is None:
             self._auxiliary_feedback = align_auxiliary_feedback(
                 self.data_dir, {"train": self._splits["train"]}
             )
         labels, masks = self._auxiliary_feedback
-        return select_auxiliary_feedback(
+        selected_labels, selected_masks = select_auxiliary_feedback(
             labels["train"], masks["train"], selection
         )
+        return selected_labels, selected_masks, np.zeros_like(selected_labels)
 
     def _causal_for(
         self,
@@ -150,8 +163,17 @@ class ExperimentRunner:
         sequence_features = [key for key in SEQUENCE_FEATURE_DIMS
                              if config["features"][key]]
         use_global_context = config["features"]["global_context"]
+        metadata_features = [key for key in ("video_tag", "video_upload_type",
+                                             "user_active_degree",
+                                             "user_register_days_range",
+                                             "video_music_type")
+                             if config["features"][key]]
+        tag_components = config["features"]["video_tag_components"]
+        duration_semantic = config["features"]["duration_semantic_bucket"]
         if (not rate_features and not cross_features and not temporal_features
-                and not sequence_features and not use_global_context):
+                and not sequence_features and not use_global_context
+                and not metadata_features and not duration_semantic
+                and not tag_components):
             return base, base_dim
         key_indices = {"user_long_view_rate": 1, "item_long_view_rate": 2}
         columns = {}
@@ -230,10 +252,118 @@ class ExperimentRunner:
                     np.full(len(rows), next_offset, dtype=np.int32)
                 )
             next_offset += 1
+        if metadata_features:
+            metadata = self._load_side_metadata()
+            specs = {
+                "video_tag": ("video", "tag"),
+                "video_upload_type": ("video", "upload_type"),
+                "user_active_degree": ("user", "user_active_degree"),
+                "user_register_days_range": ("user", "register_days_range"),
+                "video_music_type": ("video", "music_type"),
+            }
+            for feature in metadata_features:
+                entity, column = specs[feature]
+                source = metadata[entity]
+                key_index = 2 if entity == "video" else 1
+                values = {
+                    str(source_key): str(row_value[column])
+                    for source_key, row_value in source.items()
+                    if column in row_value
+                }
+                vocabulary = {
+                    value: index
+                    for index, value in enumerate(dict.fromkeys(
+                        values.get(str(row[key_index]), "UNK")
+                        for row in self._splits["train"]
+                    ))
+                }
+                unknown = len(vocabulary)
+                for split, rows in self._splits.items():
+                    encoded_values = np.fromiter(
+                        (next_offset + vocabulary.get(
+                            values.get(str(row[key_index]), "UNK"), unknown
+                        ) for row in rows),
+                        dtype=np.int32,
+                        count=len(rows),
+                    )
+                    columns.setdefault(split, []).append(encoded_values)
+                next_offset += unknown + 1
+        if tag_components:
+            metadata = self._load_side_metadata()
+            video = metadata["video"]
+            # The raw tag field is multi-valued (usually one or two tags).  The
+            # original exact-string field makes e.g. "39,68" unrelated to "39";
+            # component fields let FM share signal across tag combinations.  The
+            # three fixed slots are label-free and missing slots use __NONE__.
+            component_values: list[dict[str, str]] = []
+            for index in range(3):
+                values = {}
+                for video_id, row in video.items():
+                    raw = str(row.get("tag", ""))
+                    parts = tuple(part.strip() for part in raw.split(",") if part.strip())
+                    values[video_id] = parts[index] if index < len(parts) else "__NONE__"
+                component_values.append(values)
+            for values in component_values:
+                vocabulary = {
+                    value: index
+                    for index, value in enumerate(dict.fromkeys(
+                        values.get(str(row[2]), "__NONE__")
+                        for row in self._splits["train"]
+                    ))
+                }
+                unknown = len(vocabulary)
+                for split, rows in self._splits.items():
+                    encoded_values = np.fromiter(
+                        (next_offset + vocabulary.get(
+                            values.get(str(row[2]), "__NONE__"), unknown
+                        ) for row in rows),
+                        dtype=np.int32,
+                        count=len(rows),
+                    )
+                    columns.setdefault(split, []).append(encoded_values)
+                next_offset += unknown + 1
+        if duration_semantic:
+            # Fixed, human-readable boundaries encode the non-linear duration
+            # response seen in EDA without using labels or fitting split-specific
+            # thresholds. Values are milliseconds; the final bucket is 5 minutes+.
+            edges = np.asarray(
+                (10_000.0, 20_000.0, 30_000.0, 60_000.0,
+                 120_000.0, 300_000.0),
+                dtype=np.float64,
+            )
+            dimension = len(edges) + 1
+            for split, rows in self._splits.items():
+                values = np.fromiter(
+                    (next_offset + int(np.searchsorted(edges, float(row[5]), side="right"))
+                     for row in rows),
+                    dtype=np.int32,
+                    count=len(rows),
+                )
+                columns.setdefault(split, []).append(values)
+            next_offset += dimension
         encoded = {}
         for split, (X, y, users) in base.items():
             encoded[split] = (np.column_stack([X, *columns[split]]).astype(np.int32), y, users)
         return encoded, next_offset
+
+    def _load_side_metadata(self) -> dict[str, dict[str, dict[str, str]]]:
+        """Load static user/video metadata without reading target labels."""
+        if self._side_metadata is not None:
+            return self._side_metadata
+        video: dict[str, dict[str, str]] = {}
+        with (self.data_dir / "video_features_basic_pure.csv").open(
+            encoding="utf-8", newline=""
+        ) as handle:
+            for row in csv.DictReader(handle):
+                video[str(row["video_id"])] = row
+        user: dict[str, dict[str, str]] = {}
+        user_path = self.data_dir / "user_features_pure.csv"
+        if user_path.is_file():
+            with user_path.open(encoding="utf-8", newline="") as handle:
+                for row in csv.DictReader(handle):
+                    user[str(row["user_id"])] = row
+        self._side_metadata = {"video": video, "user": user}
+        return self._side_metadata
 
     def _lightgbm_matrices(self, config: dict[str, Any]):
         base, _ = self._encoded
@@ -361,7 +491,8 @@ class ExperimentRunner:
             deepfm_state = {f"deepfm_{name}": state[name].copy()
                             for name in deepfm.state_dict()}
         scores = blend_scores(users, fm.predict(Xvalid), deepfm.predict(Xvalid),
-                              hp["ensemble_deepfm_weight"])
+                              hp["ensemble_deepfm_weight"],
+                              hp["ensemble_normalization"])
         metrics = self.evaluate_mod.evaluate(users, labels, scores)
         np.savez_compressed(checkpoint, **fm_state, **deepfm_state)
         self._save_validation_artifact(checkpoint, users, labels, scores)
@@ -386,7 +517,7 @@ class ExperimentRunner:
             else None
         )
         if config["model"] == "multitask_deepfm":
-            auxiliary_train, auxiliary_mask = self._auxiliary_for(
+            auxiliary_train, auxiliary_mask, auxiliary_censored = self._auxiliary_for(
                 hp["auxiliary_signals"]
             )
             model = MultiTaskDeepFM(
@@ -475,7 +606,13 @@ class ExperimentRunner:
                             hp["auxiliary_loss_weight"],
                             auxiliary_mask[positive_rows],
                             auxiliary_mask[negative_rows],
-                            "mse" if hp["auxiliary_signals"] == "log_watch" else "bce",
+                            auxiliary_loss=(
+                                "censored_mse" if hp["auxiliary_signals"] == "censored_watch"
+                                else "mse" if hp["auxiliary_signals"] == "log_watch"
+                                else "bce"
+                            ),
+                            positive_censored=auxiliary_censored[positive_rows],
+                            negative_censored=auxiliary_censored[negative_rows],
                         )
                     elif config["model"] == "deepfm":
                         model.bpr_step(positive_x, negative_x)
@@ -492,7 +629,12 @@ class ExperimentRunner:
                             auxiliary_train[batch],
                             hp["auxiliary_loss_weight"],
                             auxiliary_mask[batch],
-                            "mse" if hp["auxiliary_signals"] == "log_watch" else "bce",
+                            auxiliary_loss=(
+                                "censored_mse" if hp["auxiliary_signals"] == "censored_watch"
+                                else "mse" if hp["auxiliary_signals"] == "log_watch"
+                                else "bce"
+                            ),
+                            auxiliary_censored=auxiliary_censored[batch],
                         )
                     elif config["model"] == "sequence_deepfm":
                         model.step(
@@ -563,7 +705,8 @@ class ExperimentRunner:
                 deepfm.load_state_dict({name: state[f"deepfm_{name}"]
                                         for name in deepfm.state_dict()})
             scores = blend_scores(users, fm.predict(Xtest), deepfm.predict(Xtest),
-                                  hp["ensemble_deepfm_weight"])
+                                  hp["ensemble_deepfm_weight"],
+                                  hp["ensemble_normalization"])
         elif config["model"] in ("deepfm", "multitask_deepfm", "sequence_deepfm", "dcnv2"):
             hp = config["hyperparameters"]
             if config["model"] == "dcnv2":

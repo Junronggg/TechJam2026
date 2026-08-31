@@ -13,6 +13,7 @@ from .config import (
     apply_changes,
     experiment_key,
 )
+from .skills import default_skill_registry
 from .evidence import feasibility_from_prior
 from .memory import collect_tried_keys, distill_research_patterns, evidence_directions
 
@@ -35,6 +36,8 @@ MODEL_FAMILY_ACTIONS = {
     "heterogeneous_ensemble": ActionType.TRY_ENSEMBLE,
     "multitask": ActionType.TRY_MODEL,
     "pairwise_multitask": ActionType.TRY_MODEL,
+    "censored_watchtime": ActionType.TRY_MODEL,
+    "pairwise_censored_watchtime": ActionType.TRY_MODEL,
     "cross_network": ActionType.TRY_MODEL,
     "sequence_model": ActionType.TRY_SEQUENCE,
     "tree_model": ActionType.TRY_MODEL,
@@ -54,7 +57,16 @@ FEATURE_FAMILIES = {
     "author_positive_recency": "candidate_history",
     "prior_video_count": "candidate_history",
     "previous_author_same": "candidate_history",
+    "prior_video_exposure": "candidate_history",
+    "author_recency": "candidate_history",
     "global_context": "global_context",
+    "video_tag": "content_metadata",
+    "video_upload_type": "content_metadata",
+    "user_active_degree": "user_metadata",
+    "user_register_days_range": "user_metadata",
+    "duration_semantic_bucket": "duration_nonlinearity",
+    "video_music_type": "content_metadata",
+    "video_tag_components": "content_metadata",
 }
 
 # Priors come from validation-only project evidence. They seed the search; measured
@@ -64,10 +76,19 @@ FAMILY_PRIORS = {
     "heterogeneous_ensemble": (0.82, 0.90, 0.70, 0.70, 0.30),
     "multitask": (0.62, 0.75, 0.70, 0.65, 0.45),
     "pairwise_multitask": (0.64, 0.60, 0.80, 0.75, 0.35),
+    "censored_watchtime": (0.58, 0.55, 0.90, 0.70, 0.30),
+    "pairwise_censored_watchtime": (0.60, 0.50, 0.95, 0.80, 0.25),
     "cross_network": (0.52, 0.65, 0.65, 0.60, 0.85),
     "sequence_model": (0.05, 0.90, 0.95, 1.00, 0.20),
     "tree_model": (0.20, 0.90, 0.60, 0.45, 0.50),
     "global_context": (0.45, 0.45, 0.45, 0.20, 0.80),
+    # Newly wired static metadata has no rolling confirmation yet, so it is
+    # explored after established model families rather than masking them.
+    "content_metadata": (0.35, 0.35, 0.75, 0.30, 0.60),
+    "user_metadata": (0.30, 0.35, 0.70, 0.30, 0.65),
+    # The fixed duration buckets were already tested and fell below BPR; keep
+    # the capability legal, but give it a rejected-direction prior.
+    "duration_nonlinearity": (0.05, 0.95, 0.30, 0.35, 0.90),
     "temporal_counts": (0.15, 0.85, 0.55, 0.35, 0.65),
     "candidate_history": (0.10, 0.95, 0.65, 0.35, 0.65),
     "global_target_statistics": (0.05, 0.95, 0.35, 0.35, 0.90),
@@ -86,6 +107,7 @@ PRIOR_POLICIES = {
     "retest_with_control",
     "stop_direction",
 }
+SKILL_REGISTRY = default_skill_registry()
 
 
 @dataclass(frozen=True)
@@ -100,6 +122,9 @@ class CandidateExperiment:
     novelty: float
     compute_cost: float
     redundancy: float
+    skill_id: str
+    required_confirmation: tuple[str, ...]
+    risk: str
 
 
 @dataclass(frozen=True)
@@ -111,12 +136,12 @@ class RankedCandidate:
     hard_blocked: bool
     soft_stopped: bool
     evidence_reasons: tuple[str, ...] = ()
+    retrieved_pattern: dict[str, Any] | None = None
 
     @property
     def direction_stopped(self) -> bool:
         """True when either evidence state applies. Kept for existing readers."""
         return self.hard_blocked or self.soft_stopped
-
     def as_dict(self) -> dict[str, Any]:
         result = asdict(self.candidate)
         result["action_type"] = str(self.candidate.action_type)
@@ -127,6 +152,7 @@ class RankedCandidate:
             "hard_blocked": self.hard_blocked,
             "soft_stopped": self.soft_stopped,
             "direction_stopped": self.direction_stopped,
+            "retrieved_pattern": self.retrieved_pattern,
             "evidence_reasons": list(self.evidence_reasons),
         })
         return result
@@ -144,9 +170,21 @@ def _candidate(
     if action_type not in ACTION_TYPES:
         raise ValueError(f"action_type must be one of {sorted(t.value for t in ActionType)}")
     expected, evidence, novelty, cost, redundancy = prior or FAMILY_PRIORS[family]
+    skill_id = SKILL_REGISTRY.primary_for_candidate(family, changes)
+    SKILL_REGISTRY.require(skill_id)
+    confirmations = SKILL_REGISTRY.evidence_for_candidate(family, changes)
+    if cost >= 0.8:
+        risk = "high_compute_cost"
+    elif redundancy >= 0.8:
+        risk = "high_redundancy"
+    elif evidence < 0.5:
+        risk = "weak_prior_evidence"
+    else:
+        risk = "moderate"
     return CandidateExperiment(
         hypothesis, reason, changes, family, action_type,
         expected, evidence, novelty, cost, redundancy,
+        skill_id, confirmations, risk,
     )
 
 
@@ -167,6 +205,48 @@ def _model_candidates(config: dict[str, Any]) -> list[CandidateExperiment]:
             {"model": "ensemble", "training_objective": "hybrid", "ensemble_deepfm_weight": 0.4},
             "heterogeneous_ensemble", MODEL_FAMILY_ACTIONS["heterogeneous_ensemble"],
         ))
+    if model == "ensemble":
+        # The first calibration candidate is deliberately the direction that
+        # preserves the FM score scale and rank-calibrates only the DeepFM
+        # branch.  The reverse transform remains legal for explicit ablations,
+        # but is not promoted before evidence exists for it.
+        normalizations = ["fm_zscore_deepfm_rank"]
+        # Keep the reverse calibration as a later branch.  It becomes eligible
+        # only after the first calibrated branch reaches its tested weight
+        # neighborhood; this widens the search without stealing the established
+        # multitask/watch-time follow-ups from the original trajectory.
+        if (
+            config["hyperparameters"]["ensemble_normalization"]
+            == "fm_zscore_deepfm_rank"
+            and config["hyperparameters"]["ensemble_deepfm_weight"] in (0.63, 0.64, 0.65)
+        ):
+            normalizations.append("fm_rank_deepfm_zscore")
+        for normalization in normalizations:
+            if config["hyperparameters"]["ensemble_normalization"] == normalization:
+                # Keep the proven follow-up first for backwards-compatible
+                # trajectories, then expose the two local neighbors that were
+                # previously absent from the legal search space.
+                for value in (0.65, 0.64, 0.63, 0.6, 0.7):
+                    if config["hyperparameters"]["ensemble_deepfm_weight"] == value:
+                        continue
+                    rows.append(_candidate(
+                        f"Tune the calibrated DeepFM weight to {value}.",
+                        "The calibrated DeepFM branch has a different scale; a small, "
+                        "predeclared weight check tests whether the improvement is "
+                        "calibration-plus-weight rather than a lucky blend.",
+                        {"ensemble_deepfm_weight": value},
+                        "heterogeneous_ensemble",
+                        MODEL_FAMILY_ACTIONS["heterogeneous_ensemble"],
+                    ))
+                continue
+            rows.append(_candidate(
+                f"Calibrate the ensemble with {normalization}.",
+                "GAUC and nDCG depend on within-user ordering; rank calibration tests "
+                "whether score scale, rather than model content, limits the blend.",
+                {"ensemble_normalization": normalization},
+                "heterogeneous_ensemble",
+                MODEL_FAMILY_ACTIONS["heterogeneous_ensemble"],
+            ))
     if model != "multitask_deepfm":
         rows.append(_candidate(
             "Use like as auxiliary supervision in a multi-task DeepFM.",
@@ -180,6 +260,34 @@ def _model_candidates(config: dict[str, Any]) -> list[CandidateExperiment]:
             "FM benefits from BPR and like-only DeepFM has stable rolling evidence; this controlled action changes the main objective without changing the auxiliary target.",
             {"model": "multitask_deepfm", "training_objective": "bpr", "learning_rate": 0.001},
             "pairwise_multitask", MODEL_FAMILY_ACTIONS["pairwise_multitask"],
+        ))
+    if not (
+        model == "multitask_deepfm"
+        and config["training_objective"] == "bce"
+        and config["hyperparameters"]["auxiliary_signals"] == "censored_watch"
+    ):
+        rows.append(_candidate(
+            "Use a one-sided censored watch-time auxiliary objective.",
+            "Incomplete plays provide exact log-watch targets, while completed plays "
+            "provide only a duration lower bound; this is materially different from capped MSE.",
+            {"model": "multitask_deepfm", "training_objective": "bce",
+             "auxiliary_signals": "censored_watch", "learning_rate": 0.001},
+            "censored_watchtime",
+            MODEL_FAMILY_ACTIONS["censored_watchtime"],
+        ))
+    if not (
+        model == "multitask_deepfm"
+        and config["training_objective"] == "bpr"
+        and config["hyperparameters"]["auxiliary_signals"] == "censored_watch"
+    ):
+        rows.append(_candidate(
+            "Combine within-user BPR with one-sided censored watch-time supervision.",
+            "This aligns the main objective with ranking while retaining uncapped lower-bound "
+            "information from completed plays.",
+            {"model": "multitask_deepfm", "training_objective": "bpr",
+             "auxiliary_signals": "censored_watch", "learning_rate": 0.001},
+            "pairwise_censored_watchtime",
+            MODEL_FAMILY_ACTIONS["pairwise_censored_watchtime"],
         ))
     if model != "dcnv2":
         rows.append(_candidate(
@@ -298,6 +406,40 @@ def _family_observations(history: list[dict[str, Any]], family: str) -> tuple[li
         if diagnostics.get("strong_slice_gain") or diagnostics.get("diversity_advantage"):
             strong_slice_or_diversity += 1
     return deltas, weak, strong_slice_or_diversity
+
+
+def _has_unseen_ensemble_variant(
+    config: dict[str, Any],
+    candidate: CandidateExperiment,
+    history: list[dict[str, Any]],
+) -> bool:
+    """Keep unexplored ensemble calibration values alive after noisy siblings.
+
+    Ensemble calibration is a two-stage intervention: changing the score
+    transform and then tuning its blend weight.  Treating both as one family
+    is useful for memory, but a noisy result for one variant must not suppress
+    a value that has never been measured.  This guard is deliberately narrow;
+    it does not reopen unrelated rejected feature/model families.
+    """
+    if candidate.family != "heterogeneous_ensemble":
+        return False
+    if config.get("model") != "ensemble":
+        return False
+    variant_keys = {"ensemble_normalization", "ensemble_deepfm_weight"}
+    hp = config.get("hyperparameters", {})
+    for key in variant_keys.intersection(candidate.changes):
+        target = candidate.changes[key]
+        seen = set()
+        for item in history:
+            item_config = item.get("config") if isinstance(item, dict) else None
+            if not isinstance(item_config, dict) or item_config.get("model") != "ensemble":
+                continue
+            item_hp = item_config.get("hyperparameters", {})
+            if key in item_hp:
+                seen.add(item_hp[key])
+        if hp.get(key) != target and target not in seen:
+            return True
+    return False
 
 
 def _prior_family_patterns(
@@ -660,6 +802,14 @@ def rank_candidates(
         else:
             deltas, weak, advantage = _family_observations(history, candidate.family)
         observed = sum(deltas) / len(deltas) if deltas else None
+        unseen_ensemble_variant = _has_unseen_ensemble_variant(
+            config, candidate, history
+        )
+        stopped = (
+            weak >= 2
+            and advantage == 0
+            and not unseen_ensemble_variant
+        )
         feas_hard, feas_soft, compute_cost, feas_reasons = _feasibility_effect(
             candidate, changed, prior_evidence,
         )
@@ -672,6 +822,12 @@ def rank_candidates(
         )
         if observed is not None:
             score += weights["observed_gain"] * max(-0.005, min(0.005, observed))
+        if unseen_ensemble_variant:
+            # A new calibration value is an information-gathering follow-up,
+            # not a repetition of the noisy family mean. Give it a bounded
+            # confirmation bonus so an old scoped policy cannot crowd it out
+            # before the new value is measured.
+            score += 0.08
         # A scoped artifact policy describes this concrete configuration and is
         # stronger than a family-level pattern distilled from a different variant
         # in the current run. Unscoped/current evidence remains the fallback.
@@ -683,9 +839,35 @@ def rank_candidates(
             score += 0.08
         elif pattern_policy == "ensemble_only":
             score += 0.03
+        elif pattern_policy == "gather_evidence":
+            # Scientific uncertainty must not silently remove a promising leaderboard
+            # candidate. Submission-eligible configurations receive one controlled turn.
+            competition = pattern.get("competition_status")
+            if competition == "ELIGIBLE":
+                score += 0.10
+            elif competition == "RESEARCH_ONLY":
+                score -= 0.08
+            else:
+                score += 0.01
+        if pattern_policy == "stop_direction" and not unseen_ensemble_variant:
+            stopped = True
         hard_blocked, soft_stopped = _classify_evidence(
             weak=weak, advantage=advantage, pattern=pattern,
         )
+        if stopped and not hard_blocked:
+            soft_stopped = True
+        if (
+            pattern_policy == "gather_evidence"
+            and pattern.get("competition_status") == "ELIGIBLE"
+            and not hard_blocked
+        ):
+            # A submission-eligible uncertain candidate gets one controlled run;
+            # missing optional feasibility records must not silently suppress it.
+            soft_stopped = False
+        if unseen_ensemble_variant and not hard_blocked:
+            # A never-measured calibration neighbor is an information-gathering
+            # action, so family-level noise cannot suppress it.
+            soft_stopped = False
         if directions.hard_block_for(changed) is not None:
             hard_blocked, soft_stopped = True, False
         elif memory_mode != "no_memory" and directions.soft_reason_for(changed) is not None:
@@ -694,11 +876,23 @@ def rank_candidates(
             hard_blocked, soft_stopped = True, False
         elif feas_soft and not hard_blocked:
             soft_stopped = True
+        if (
+            pattern_policy == "gather_evidence"
+            and pattern.get("competition_status") == "ELIGIBLE"
+            and not hard_blocked
+        ) or (unseen_ensemble_variant and not hard_blocked):
+            soft_stopped = False
         if hard_blocked or soft_stopped:
             score -= 1.0
         ranked.append(RankedCandidate(
-            candidate, score, observed, len(deltas), hard_blocked, soft_stopped,
-            feas_reasons,
+            candidate=candidate,
+            score=score,
+            observed_mean_delta=observed,
+            family_trials=len(deltas),
+            hard_blocked=hard_blocked,
+            soft_stopped=soft_stopped,
+            evidence_reasons=feas_reasons,
+            retrieved_pattern=pattern if pattern else None,
         ))
     return sorted(ranked, key=lambda row: (-row.score, row.candidate.family,
                                             experiment_key(apply_changes(config, row.candidate.changes))))
@@ -758,7 +952,7 @@ class AutonomousExperimentPlanner:
             if self.memory_mode == "distilled_patterns" else {}
         )
         selected_config = apply_changes(config, winner.candidate.changes)
-        retrieved_pattern = _matching_prior_pattern(
+        retrieved_pattern = winner.retrieved_pattern or _matching_prior_pattern(
             prior_patterns, winner.candidate.family, selected_config
         ) or current_patterns.get(winner.candidate.family)
         self.last_selection = {
@@ -767,6 +961,7 @@ class AutonomousExperimentPlanner:
             "selected_action_type": str(winner.candidate.action_type),
             "selection_pass": "preferred" if preferred else "relaxed",
             "selected_score": float(winner.score),
+            "selected_skill": winner.candidate.skill_id,
             "evidence_reasons": list(winner.evidence_reasons),
             "criteria": (
                 "expected_gain + evidence_strength + novelty - compute_cost - redundancy; "
@@ -786,5 +981,17 @@ class AutonomousExperimentPlanner:
                 for choice in counterfactual_choices.values()
             ),
             "ranked_candidates": [row.as_dict() for row in ranked[:5]],
+            "decision_record": {
+                "hypothesis": winner.candidate.hypothesis,
+                "mechanism_basis": winner.candidate.reason,
+                "family": winner.candidate.family,
+                "proposed_action": winner.candidate.skill_id,
+                "expected_gain": winner.candidate.expected_gain,
+                "novelty": winner.candidate.novelty,
+                "risk": winner.candidate.risk,
+                "required_confirmation": list(
+                    winner.candidate.required_confirmation
+                ),
+            },
         }
         return winner.candidate

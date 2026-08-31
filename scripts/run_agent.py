@@ -51,6 +51,11 @@ def main() -> int:
         help=("Manifest of validation artifacts used to regenerate scoped family "
               "policies before every run."),
     )
+    parser.add_argument(
+        "--research-context",
+        default=os.getenv("TECHJAM_RESEARCH_CONTEXT", "configs/research_context.json"),
+        help="Training-only dataset facts and method conditions supplied to the LLM planner.",
+    )
     parser.add_argument("--max-iterations", type=int,
                         help="Maximum total executed experiments including the iteration-0 "
                              "baseline. Clamped to the official maximum in configs/project.json.")
@@ -59,6 +64,18 @@ def main() -> int:
         "--finalize-test",
         action="store_true",
         help="Evaluate test once after research. Omit during development runs.",
+    )
+    parser.add_argument(
+        "--research-after-convergence",
+        action="store_true",
+        help=("Record the official convergence point but continue exploring legal "
+              "branches until the experiment/time cap or search exhaustion."),
+    )
+    parser.add_argument(
+        "--auto-confirm",
+        action="store_true",
+        help=("Automatically spend action/time budget on rolling validation and "
+              "paired-seed confirmation for promising new discoveries."),
     )
     parser.add_argument(
         "--intervention",
@@ -105,6 +122,20 @@ def main() -> int:
         )
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         parser.error(f"cannot build family policies from {manifest_path}: {exc}")
+    context_path = Path(args.research_context)
+    if not context_path.is_absolute():
+        context_path = ROOT / context_path
+    try:
+        research_context = json.loads(context_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        parser.error(f"cannot load research context from {context_path}: {exc}")
+    if not isinstance(research_context, dict):
+        parser.error("research context must be a JSON object")
+    prior_evidence = {
+        **prior_evidence,
+        "dataset_facts": research_context.get("dataset_facts", {}),
+        "method_reference": research_context.get("method_reference", {}),
+    }
     if args.researcher == "llm":
         if args.memory_mode != "distilled_patterns":
             parser.error("--memory-mode ablation currently supports --researcher deterministic")
@@ -130,7 +161,12 @@ def main() -> int:
         controller.record_intervention(
             parts[0], parts[1], parts[2].strip().lower() == "true"
         )
-    summary = controller.run(args.max_iterations, finalize_test=args.finalize_test)
+    summary = controller.run(
+        args.max_iterations,
+        finalize_test=args.finalize_test,
+        research_after_convergence=args.research_after_convergence,
+        auto_confirm=args.auto_confirm,
+    )
     print(json.dumps(summary, indent=2))
     return 0 if summary["best_primary"] is not None else 1
 

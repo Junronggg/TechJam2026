@@ -22,9 +22,15 @@
       "delta_field": "ensemble_delta",
       "validation_only": true,
       "applies_to": {
-        "models": ["ensemble"],
-        "training_objectives": ["hybrid"],
-        "hyperparameters": {"ensemble_deepfm_weight": 0.4}
+        "models": [
+          "ensemble"
+        ],
+        "training_objectives": [
+          "hybrid"
+        ],
+        "hyperparameters": {
+          "ensemble_deepfm_weight": 0.4
+        }
       }
     },
     {
@@ -36,13 +42,19 @@
       "delta_field": "temporal_delta",
       "validation_only": true,
       "applies_to": {
-        "models": ["ensemble"],
-        "training_objectives": ["hybrid"],
+        "models": [
+          "ensemble"
+        ],
+        "training_objectives": [
+          "hybrid"
+        ],
         "features": {
           "user_recent_3d_activity": true,
           "item_recent_3d_exposure": true
         },
-        "hyperparameters": {"ensemble_deepfm_weight": 0.4}
+        "hyperparameters": {
+          "ensemble_deepfm_weight": 0.4
+        }
       }
     },
     {
@@ -50,11 +62,17 @@
       "family": "multitask",
       "kind": "rolling_aggregate",
       "path": "runs/rolling_multitask_like/summary.json",
-      "pointer": ["aggregate"],
+      "pointer": [
+        "aggregate"
+      ],
       "validation_only": true,
       "applies_to": {
-        "models": ["multitask_deepfm"],
-        "training_objectives": ["bce"],
+        "models": [
+          "multitask_deepfm"
+        ],
+        "training_objectives": [
+          "bce"
+        ],
         "hyperparameters": {
           "auxiliary_signals": "like",
           "auxiliary_loss_weight": 0.1
@@ -66,12 +84,21 @@
       "family": "cross_network",
       "kind": "rolling_aggregate",
       "path": "runs/rolling_dcnv2/summary.json",
-      "pointer": ["aggregate"],
+      "pointer": [
+        "aggregate"
+      ],
       "validation_only": true,
       "applies_to": {
-        "models": ["dcnv2"],
-        "training_objectives": ["bce"],
-        "hyperparameters": {"dcn_cross_layers": 2, "dcn_low_rank": 16}
+        "models": [
+          "dcnv2"
+        ],
+        "training_objectives": [
+          "bce"
+        ],
+        "hyperparameters": {
+          "dcn_cross_layers": 2,
+          "dcn_low_rank": 16
+        }
       }
     },
     {
@@ -79,48 +106,96 @@
       "family": "candidate_history",
       "kind": "placebo_margin",
       "path": "runs/sequence_placebo/summary.json",
-      "pointer": ["real_minus_constant"],
+      "pointer": [
+        "real_minus_constant"
+      ],
       "validation_only": true,
-      "applies_to": {"models": ["fm"], "training_objectives": ["bpr"]}
+      "applies_to": {
+        "models": [
+          "fm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ]
+      }
     },
     {
       "id": "candidate_author_placebo_v1",
       "family": "candidate_history",
       "kind": "placebo_margin",
       "path": "runs/sequence_placebo/summary_author_positive_recency.json",
-      "pointer": ["real_minus_constant"],
+      "pointer": [
+        "real_minus_constant"
+      ],
       "validation_only": true,
-      "applies_to": {"models": ["fm"], "training_objectives": ["bpr"]}
+      "applies_to": {
+        "models": [
+          "fm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ]
+      }
     },
     {
       "id": "candidate_video_count_v1",
       "family": "candidate_history",
       "kind": "single_delta",
       "path": "runs/candidate_history_followup/summary.json",
-      "pointer": ["results", "fm_bpr_prior_video_count", "delta_vs_fm_bpr"],
+      "pointer": [
+        "results",
+        "fm_bpr_prior_video_count",
+        "delta_vs_fm_bpr"
+      ],
       "validation_only": true,
-      "applies_to": {"models": ["fm"], "training_objectives": ["bpr"]}
+      "applies_to": {
+        "models": [
+          "fm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ]
+      }
     },
     {
       "id": "candidate_previous_author_v1",
       "family": "candidate_history",
       "kind": "single_delta",
       "path": "runs/candidate_history_followup/summary.json",
-      "pointer": ["results", "fm_bpr_previous_author_same", "delta_vs_fm_bpr"],
+      "pointer": [
+        "results",
+        "fm_bpr_previous_author_same",
+        "delta_vs_fm_bpr"
+      ],
       "validation_only": true,
-      "applies_to": {"models": ["fm"], "training_objectives": ["bpr"]}
+      "applies_to": {
+        "models": [
+          "fm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ]
+      }
     },
     {
       "id": "global_context_rolling_v1",
       "family": "global_context",
       "kind": "rolling_aggregate",
       "path": "runs/rolling_constant_context/summary.json",
-      "pointer": ["aggregate"],
+      "pointer": [
+        "aggregate"
+      ],
       "validation_only": true,
       "applies_to": {
-        "models": ["fm"],
-        "training_objectives": ["bpr"],
-        "features": {"global_context": true}
+        "models": [
+          "fm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ],
+        "features": {
+          "global_context": true
+        }
       }
     },
     {
@@ -128,12 +203,20 @@
       "family": "global_context",
       "kind": "paired_seed",
       "path": "runs/global_context_multiseed/summary.json",
-      "pointer": ["aggregate"],
+      "pointer": [
+        "aggregate"
+      ],
       "validation_only": true,
       "applies_to": {
-        "models": ["fm"],
-        "training_objectives": ["bpr"],
-        "features": {"global_context": true}
+        "models": [
+          "fm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ],
+        "features": {
+          "global_context": true
+        }
       }
     },
     {
@@ -141,13 +224,23 @@
       "family": "global_context",
       "kind": "rolling_aggregate",
       "path": "runs/global_context_ensemble/summary.json",
-      "pointer": ["rolling_aggregate"],
+      "pointer": [
+        "rolling_aggregate"
+      ],
       "validation_only": true,
       "applies_to": {
-        "models": ["ensemble"],
-        "training_objectives": ["hybrid"],
-        "features": {"global_context": true},
-        "hyperparameters": {"ensemble_deepfm_weight": 0.4}
+        "models": [
+          "ensemble"
+        ],
+        "training_objectives": [
+          "hybrid"
+        ],
+        "features": {
+          "global_context": true
+        },
+        "hyperparameters": {
+          "ensemble_deepfm_weight": 0.4
+        }
       }
     },
     {
@@ -155,13 +248,24 @@
       "family": "global_context",
       "kind": "single_delta",
       "path": "runs/global_context_ensemble/summary.json",
-      "pointer": ["official_validation", "delta"],
+      "pointer": [
+        "official_validation",
+        "delta"
+      ],
       "validation_only": true,
       "applies_to": {
-        "models": ["ensemble"],
-        "training_objectives": ["hybrid"],
-        "features": {"global_context": true},
-        "hyperparameters": {"ensemble_deepfm_weight": 0.4}
+        "models": [
+          "ensemble"
+        ],
+        "training_objectives": [
+          "hybrid"
+        ],
+        "features": {
+          "global_context": true
+        },
+        "hyperparameters": {
+          "ensemble_deepfm_weight": 0.4
+        }
       }
     },
     {
@@ -169,12 +273,22 @@
       "family": "sequence_model",
       "kind": "single_delta",
       "path": "runs/lightweight_sequence_ablation/summary.json",
-      "pointer": ["results", "sequence_deepfm", "delta_vs_deepfm"],
+      "pointer": [
+        "results",
+        "sequence_deepfm",
+        "delta_vs_deepfm"
+      ],
       "validation_only": true,
       "applies_to": {
-        "models": ["sequence_deepfm"],
-        "training_objectives": ["bce"],
-        "hyperparameters": {"sequence_length": 16}
+        "models": [
+          "sequence_deepfm"
+        ],
+        "training_objectives": [
+          "bce"
+        ],
+        "hyperparameters": {
+          "sequence_length": 16
+        }
       }
     },
     {
@@ -182,11 +296,17 @@
       "family": "pairwise_multitask",
       "kind": "single_delta",
       "path": "runs/pairwise_multitask_ablation/summary.json",
-      "pointer": ["pairwise_delta_vs_pointwise"],
+      "pointer": [
+        "pairwise_delta_vs_pointwise"
+      ],
       "validation_only": true,
       "applies_to": {
-        "models": ["multitask_deepfm"],
-        "training_objectives": ["bpr"],
+        "models": [
+          "multitask_deepfm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ],
         "hyperparameters": {
           "auxiliary_signals": "like",
           "auxiliary_loss_weight": 0.1,
@@ -200,11 +320,17 @@
       "family": "pairwise_multitask",
       "kind": "single_delta",
       "path": "runs/pairwise_multitask_ablation/summary.json",
-      "pointer": ["reported_config_delta_vs_pointwise"],
+      "pointer": [
+        "reported_config_delta_vs_pointwise"
+      ],
       "validation_only": true,
       "applies_to": {
-        "models": ["multitask_deepfm"],
-        "training_objectives": ["bpr"],
+        "models": [
+          "multitask_deepfm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ],
         "hyperparameters": {
           "auxiliary_signals": "like",
           "auxiliary_loss_weight": 0.3,
@@ -214,16 +340,75 @@
       }
     },
     {
+      "id": "censored_watchtime_bce_v1",
+      "family": "censored_watchtime",
+      "kind": "single_delta",
+      "path": "runs/censored_watchtime_ablation/summary.json",
+      "pointer": [
+        "results",
+        "censored_watch_bce",
+        "delta_vs_deepfm_bce"
+      ],
+      "validation_only": true,
+      "applies_to": {
+        "models": [
+          "multitask_deepfm"
+        ],
+        "training_objectives": [
+          "bce"
+        ],
+        "hyperparameters": {
+          "auxiliary_signals": "censored_watch",
+          "auxiliary_loss_weight": 0.1,
+          "embedding_dim": 16,
+          "learning_rate": 0.001
+        }
+      }
+    },
+    {
+      "id": "pairwise_censored_watchtime_v1",
+      "family": "pairwise_censored_watchtime",
+      "kind": "single_delta",
+      "path": "runs/censored_watchtime_ablation/summary.json",
+      "pointer": [
+        "results",
+        "censored_watch_bpr",
+        "delta_vs_deepfm_bce"
+      ],
+      "validation_only": true,
+      "applies_to": {
+        "models": [
+          "multitask_deepfm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ],
+        "hyperparameters": {
+          "auxiliary_signals": "censored_watch",
+          "auxiliary_loss_weight": 0.1,
+          "embedding_dim": 16,
+          "learning_rate": 0.001
+        }
+      }
+    },
+    {
       "id": "sequence_runtime_v1",
       "family": "sequence_model",
       "kind": "family_runtime",
       "path": "runs/lightweight_sequence_ablation/summary.json",
-      "pointer": ["results", "sequence_deepfm"],
+      "pointer": [
+        "results",
+        "sequence_deepfm"
+      ],
       "runtime_key": "runtime_seconds",
       "validation_only": true,
       "applies_to": {
-        "models": ["sequence_deepfm"],
-        "training_objectives": ["bce"]
+        "models": [
+          "sequence_deepfm"
+        ],
+        "training_objectives": [
+          "bce"
+        ]
       }
     },
     {
@@ -231,13 +416,19 @@
       "family": "cross_network",
       "kind": "family_runtime",
       "path": "runs/rolling_dcnv2/summary.json",
-      "pointer": ["folds"],
+      "pointer": [
+        "folds"
+      ],
       "runtime_key": "runtime_seconds",
       "runtime_model": "dcnv2",
       "validation_only": true,
       "applies_to": {
-        "models": ["dcnv2"],
-        "training_objectives": ["bce"]
+        "models": [
+          "dcnv2"
+        ],
+        "training_objectives": [
+          "bce"
+        ]
       }
     },
     {
@@ -245,12 +436,20 @@
       "family": "pairwise_multitask",
       "kind": "family_runtime",
       "path": "runs/pairwise_multitask_ablation/summary.json",
-      "pointer": ["results", "multitask_like_bpr", "metrics"],
+      "pointer": [
+        "results",
+        "multitask_like_bpr",
+        "metrics"
+      ],
       "runtime_key": "runtime_seconds",
       "validation_only": true,
       "applies_to": {
-        "models": ["multitask_deepfm"],
-        "training_objectives": ["bpr"]
+        "models": [
+          "multitask_deepfm"
+        ],
+        "training_objectives": [
+          "bpr"
+        ]
       }
     },
     {
@@ -258,11 +457,16 @@
       "family": "candidate_history",
       "kind": "feature_coverage",
       "path": "runs/candidate_history_audit/summary.json",
-      "pointer": ["features", "prior_video_positive"],
+      "pointer": [
+        "features",
+        "prior_video_positive"
+      ],
       "validation_only": true,
       "optional": true,
       "applies_to": {
-        "features": {"prior_video_positive": true}
+        "features": {
+          "prior_video_positive": true
+        }
       }
     },
     {
@@ -270,11 +474,16 @@
       "family": "candidate_history",
       "kind": "feature_coverage",
       "path": "runs/candidate_history_audit/summary.json",
-      "pointer": ["features", "author_positive_recency"],
+      "pointer": [
+        "features",
+        "author_positive_recency"
+      ],
       "validation_only": true,
       "optional": true,
       "applies_to": {
-        "features": {"author_positive_recency": true}
+        "features": {
+          "author_positive_recency": true
+        }
       }
     },
     {
@@ -282,11 +491,16 @@
       "family": "candidate_history",
       "kind": "feature_coverage",
       "path": "runs/candidate_history_audit/summary.json",
-      "pointer": ["features", "prior_video_count"],
+      "pointer": [
+        "features",
+        "prior_video_count"
+      ],
       "validation_only": true,
       "optional": true,
       "applies_to": {
-        "features": {"prior_video_count": true}
+        "features": {
+          "prior_video_count": true
+        }
       }
     },
     {
@@ -294,11 +508,16 @@
       "family": "candidate_history",
       "kind": "feature_coverage",
       "path": "runs/candidate_history_audit/summary.json",
-      "pointer": ["features", "previous_author_same"],
+      "pointer": [
+        "features",
+        "previous_author_same"
+      ],
       "validation_only": true,
       "optional": true,
       "applies_to": {
-        "features": {"previous_author_same": true}
+        "features": {
+          "previous_author_same": true
+        }
       }
     },
     {
@@ -306,10 +525,15 @@
       "family": "global_target_statistics",
       "kind": "leakage_status",
       "path": "configs/feature_leakage_registry.json",
-      "pointer": ["features", "user_long_view_rate"],
+      "pointer": [
+        "features",
+        "user_long_view_rate"
+      ],
       "validation_only": true,
       "applies_to": {
-        "features": {"user_long_view_rate": true}
+        "features": {
+          "user_long_view_rate": true
+        }
       }
     },
     {
@@ -317,10 +541,15 @@
       "family": "global_target_statistics",
       "kind": "leakage_status",
       "path": "configs/feature_leakage_registry.json",
-      "pointer": ["features", "item_long_view_rate"],
+      "pointer": [
+        "features",
+        "item_long_view_rate"
+      ],
       "validation_only": true,
       "applies_to": {
-        "features": {"item_long_view_rate": true}
+        "features": {
+          "item_long_view_rate": true
+        }
       }
     },
     {
@@ -328,10 +557,15 @@
       "family": "global_target_statistics",
       "kind": "leakage_status",
       "path": "configs/feature_leakage_registry.json",
-      "pointer": ["features", "continuous_history_stats"],
+      "pointer": [
+        "features",
+        "continuous_history_stats"
+      ],
       "validation_only": true,
       "applies_to": {
-        "features": {"continuous_history_stats": true}
+        "features": {
+          "continuous_history_stats": true
+        }
       }
     },
     {
@@ -339,10 +573,15 @@
       "family": "target_rate_crosses",
       "kind": "leakage_status",
       "path": "configs/feature_leakage_registry.json",
-      "pointer": ["features", "user_tab_long_view_rate"],
+      "pointer": [
+        "features",
+        "user_tab_long_view_rate"
+      ],
       "validation_only": true,
       "applies_to": {
-        "features": {"user_tab_long_view_rate": true}
+        "features": {
+          "user_tab_long_view_rate": true
+        }
       }
     },
     {
@@ -350,10 +589,15 @@
       "family": "explicit_crosses",
       "kind": "leakage_status",
       "path": "configs/feature_leakage_registry.json",
-      "pointer": ["features", "user_tab_cross"],
+      "pointer": [
+        "features",
+        "user_tab_cross"
+      ],
       "validation_only": true,
       "applies_to": {
-        "features": {"user_tab_cross": true}
+        "features": {
+          "user_tab_cross": true
+        }
       }
     },
     {
@@ -361,10 +605,15 @@
       "family": "explicit_crosses",
       "kind": "leakage_status",
       "path": "configs/feature_leakage_registry.json",
-      "pointer": ["features", "user_author_cross"],
+      "pointer": [
+        "features",
+        "user_author_cross"
+      ],
       "validation_only": true,
       "applies_to": {
-        "features": {"user_author_cross": true}
+        "features": {
+          "user_author_cross": true
+        }
       }
     },
     {
@@ -372,10 +621,15 @@
       "family": "temporal_counts",
       "kind": "leakage_status",
       "path": "configs/feature_leakage_registry.json",
-      "pointer": ["features", "user_recent_3d_activity"],
+      "pointer": [
+        "features",
+        "user_recent_3d_activity"
+      ],
       "validation_only": true,
       "applies_to": {
-        "features": {"user_recent_3d_activity": true}
+        "features": {
+          "user_recent_3d_activity": true
+        }
       }
     },
     {
@@ -383,10 +637,15 @@
       "family": "temporal_counts",
       "kind": "leakage_status",
       "path": "configs/feature_leakage_registry.json",
-      "pointer": ["features", "item_recent_3d_exposure"],
+      "pointer": [
+        "features",
+        "item_recent_3d_exposure"
+      ],
       "validation_only": true,
       "applies_to": {
-        "features": {"item_recent_3d_exposure": true}
+        "features": {
+          "item_recent_3d_exposure": true
+        }
       }
     },
     {
@@ -394,10 +653,15 @@
       "family": "candidate_history",
       "kind": "leakage_status",
       "path": "configs/feature_leakage_registry.json",
-      "pointer": ["features", "prior_video_positive"],
+      "pointer": [
+        "features",
+        "prior_video_positive"
+      ],
       "validation_only": true,
       "applies_to": {
-        "features": {"prior_video_positive": true}
+        "features": {
+          "prior_video_positive": true
+        }
       }
     },
     {
@@ -405,10 +669,15 @@
       "family": "candidate_history",
       "kind": "leakage_status",
       "path": "configs/feature_leakage_registry.json",
-      "pointer": ["features", "author_positive_recency"],
+      "pointer": [
+        "features",
+        "author_positive_recency"
+      ],
       "validation_only": true,
       "applies_to": {
-        "features": {"author_positive_recency": true}
+        "features": {
+          "author_positive_recency": true
+        }
       }
     },
     {
@@ -416,10 +685,15 @@
       "family": "candidate_history",
       "kind": "leakage_status",
       "path": "configs/feature_leakage_registry.json",
-      "pointer": ["features", "prior_video_count"],
+      "pointer": [
+        "features",
+        "prior_video_count"
+      ],
       "validation_only": true,
       "applies_to": {
-        "features": {"prior_video_count": true}
+        "features": {
+          "prior_video_count": true
+        }
       }
     },
     {
@@ -427,10 +701,47 @@
       "family": "candidate_history",
       "kind": "leakage_status",
       "path": "configs/feature_leakage_registry.json",
-      "pointer": ["features", "previous_author_same"],
+      "pointer": [
+        "features",
+        "previous_author_same"
+      ],
       "validation_only": true,
       "applies_to": {
-        "features": {"previous_author_same": true}
+        "features": {
+          "previous_author_same": true
+        }
+      }
+    },
+    {
+      "id": "leakage_prior_video_exposure_v1",
+      "family": "candidate_history",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": [
+        "features",
+        "prior_video_exposure"
+      ],
+      "validation_only": true,
+      "applies_to": {
+        "features": {
+          "prior_video_exposure": true
+        }
+      }
+    },
+    {
+      "id": "leakage_author_recency_v1",
+      "family": "candidate_history",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": [
+        "features",
+        "author_recency"
+      ],
+      "validation_only": true,
+      "applies_to": {
+        "features": {
+          "author_recency": true
+        }
       }
     },
     {
@@ -438,10 +749,127 @@
       "family": "global_context",
       "kind": "leakage_status",
       "path": "configs/feature_leakage_registry.json",
-      "pointer": ["features", "global_context"],
+      "pointer": [
+        "features",
+        "global_context"
+      ],
       "validation_only": true,
       "applies_to": {
-        "features": {"global_context": true}
+        "features": {
+          "global_context": true
+        }
+      }
+    },
+    {
+      "id": "leakage_video_tag_v1",
+      "family": "content_metadata",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": [
+        "features",
+        "video_tag"
+      ],
+      "validation_only": true,
+      "applies_to": {
+        "features": {
+          "video_tag": true
+        }
+      }
+    },
+    {
+      "id": "leakage_video_upload_type_v1",
+      "family": "content_metadata",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": [
+        "features",
+        "video_upload_type"
+      ],
+      "validation_only": true,
+      "applies_to": {
+        "features": {
+          "video_upload_type": true
+        }
+      }
+    },
+    {
+      "id": "leakage_user_active_degree_v1",
+      "family": "user_metadata",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": [
+        "features",
+        "user_active_degree"
+      ],
+      "validation_only": true,
+      "applies_to": {
+        "features": {
+          "user_active_degree": true
+        }
+      }
+    },
+    {
+      "id": "leakage_user_register_days_range_v1",
+      "family": "user_metadata",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": [
+        "features",
+        "user_register_days_range"
+      ],
+      "validation_only": true,
+      "applies_to": {
+        "features": {
+          "user_register_days_range": true
+        }
+      }
+    },
+    {
+      "id": "leakage_duration_semantic_bucket_v1",
+      "family": "duration_nonlinearity",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": [
+        "features",
+        "duration_semantic_bucket"
+      ],
+      "validation_only": true,
+      "applies_to": {
+        "features": {
+          "duration_semantic_bucket": true
+        }
+      }
+    },
+    {
+      "id": "leakage_video_music_type_v1",
+      "family": "content_metadata",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": [
+        "features",
+        "video_music_type"
+      ],
+      "validation_only": true,
+      "applies_to": {
+        "features": {
+          "video_music_type": true
+        }
+      }
+    },
+    {
+      "id": "leakage_video_tag_components_v1",
+      "family": "content_metadata",
+      "kind": "leakage_status",
+      "path": "configs/feature_leakage_registry.json",
+      "pointer": [
+        "features",
+        "video_tag_components"
+      ],
+      "validation_only": true,
+      "applies_to": {
+        "features": {
+          "video_tag_components": true
+        }
       }
     }
   ]

@@ -79,6 +79,49 @@ class CandidatePlanningTests(unittest.TestCase):
             self.assertIn(key, payload)
         self.assertEqual(ranked[0].candidate.action_type, "TRY_MODEL")
 
+    def test_censored_watchtime_is_distinct_legal_research_family(self):
+        rows = rank_candidates(load_config(), [])
+        censored = next(
+            row for row in rows if row.candidate.family == "censored_watchtime"
+        )
+        self.assertEqual(censored.candidate.changes["auxiliary_signals"], "censored_watch")
+        self.assertEqual(censored.candidate.changes["training_objective"], "bce")
+        self.assertEqual(censored.candidate.changes["learning_rate"], 0.001)
+
+    def test_uncertain_submission_eligible_policy_boosts_without_confirming(self):
+        config = apply_changes(
+            load_config(), {"training_objective": "bpr", "learning_rate": 0.0003}
+        )
+        evidence = {
+            "family_policies": [{
+                "family": "global_context",
+                "policy": "gather_evidence",
+                "scientific_verdict": "UNCERTAIN",
+                "competition_status": "ELIGIBLE",
+                "confidence": 0.7,
+                "applies_to": {
+                    "task": "long_view",
+                    "feature_schema": "v3",
+                    "models": ["fm"],
+                    "training_objectives": ["bpr"],
+                    "features": {"global_context": True},
+                    "hyperparameters": {},
+                },
+            }]
+        }
+        selected = next(
+            row for row in rank_candidates(config, [], prior_evidence=evidence)
+            if row.candidate.family == "global_context"
+        )
+        control = next(
+            row for row in rank_candidates(config, [], memory_mode="no_memory")
+            if row.candidate.family == "global_context"
+        )
+        self.assertGreater(selected.score, control.score)
+        self.assertFalse(selected.direction_stopped)
+        self.assertEqual(selected.retrieved_pattern["scientific_verdict"], "UNCERTAIN")
+        self.assertEqual(selected.retrieved_pattern["competition_status"], "ELIGIBLE")
+
     def test_repeated_noise_stops_a_direction_without_slice_or_diversity_gain(self):
         history = []
         for iteration in (1, 2):
@@ -105,6 +148,38 @@ class CandidatePlanningTests(unittest.TestCase):
         )
         self.assertFalse(no_memory.hard_blocked)
         self.assertEqual(no_memory.evidence_reasons, ("missing_leakage_evidence",))
+
+    def test_unseen_ensemble_calibration_variant_survives_family_noise(self):
+        base = load_config()
+        bpr = apply_changes(base, {
+            "training_objective": "bpr", "learning_rate": 0.0003,
+        })
+        ensemble = apply_changes(bpr, {
+            "model": "ensemble", "training_objective": "hybrid",
+            "ensemble_deepfm_weight": 0.4,
+        })
+        calibrated = apply_changes(ensemble, {
+            "ensemble_normalization": "fm_zscore_deepfm_rank",
+        })
+        history = [
+            {"iteration": 0, "config": base, "changes": {}},
+            {"iteration": 1, "config": bpr, "changes": {"training_objective": "bpr"}},
+            {"iteration": 2, "config": ensemble,
+             "changes": {"model": "ensemble", "ensemble_deepfm_weight": 0.4},
+             "candidate_selection": {"selected_family": "heterogeneous_ensemble"},
+             "delta_from_parent": 0.0001, "critique": {"verdict": "noise"},
+             "diagnostics": {}},
+            {"iteration": 3, "config": calibrated,
+             "changes": {"ensemble_normalization": "fm_zscore_deepfm_rank"},
+             "candidate_selection": {"selected_family": "heterogeneous_ensemble"},
+             "delta_from_parent": 0.0001, "critique": {"verdict": "noise"},
+             "diagnostics": {}},
+        ]
+        weight = next(
+            row for row in rank_candidates(calibrated, history)
+            if row.candidate.changes == {"ensemble_deepfm_weight": 0.65}
+        )
+        self.assertFalse(weight.direction_stopped)
 
 
 class AutonomousControlTests(unittest.TestCase):

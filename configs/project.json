@@ -47,6 +47,12 @@
     "strong_slice_gain": 0.002,
     "automatic_placebo": true,
     "placebo_trigger_delta": 0.002,
+    "evidence_escalation": {
+      "minimum_delta": 0.0002,
+      "high_novelty": 0.8,
+      "rolling_wins_required": 2,
+      "paired_seeds": [0, 1, 2, 3]
+    },
     "candidate_scoring": {
       "expected_gain": 0.35,
       "evidence_strength": 0.25,

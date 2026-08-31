@@ -5,7 +5,7 @@
 
 ## 一页结论
 
-当前提交候选：
+当前提交候选（按验证集峰值）：
 
 ```text
 FM + BPR                    60%
@@ -16,6 +16,16 @@ Rolling validation      3/3 folds 提升
 Rolling mean delta      +0.001123（相对 FM+BPR）
 ```
 
+最新候选：在同一 FM+BPR 与 DeepFM+BCE 上，把 DeepFM 分支改为用户内
+rank 校准，并将权重设为 `0.63`，Validation Primary **0.605365**。
+它相对原冠军 `0.604713` 增加 **+0.000652**；这是固定模型输出上的局部权重扫描结果，
+尚未作为一次新的完整 Agent 训练轨迹。原 `0.65` 候选为 **0.605291**，rolling
+相对原冠军为 `+0.001029 / -0.000504 / +0.000547`，2/3 folds、平均 **+0.000357**。
+因此 `0.605365` 是当前验证集峰值，`0.604713` 仍是 rolling 3/3 的稳健参考。
+随后按固定 seeds `0–3` 做 paired-seed confirmation：3/4 个 seed 为正，平均
+`+0.000403`，近似 95% 区间为 `[-0.000074, +0.000880]`。区间跨 0，所以科学状态是
+`UNCERTAIN`，但比赛提交状态仍为 `ELIGIBLE`；不能把它写成“已统计确认的稳健冠军”。
+
 值得保留、但不能直接替换冠军的单模型方向：
 
 | 候选 | 单次 Primary | 稳定性证据 | 当前定位 |
@@ -24,7 +34,7 @@ Rolling mean delta      +0.001123（相对 FM+BPR）
 | Low-rank DCNv2 | 0.604164 | rolling 3/3，平均 +0.000248 vs DeepFM | 有效单模型，但不适合当前融合 |
 | FM+BPR + `global_context` | 0.604394 | rolling 3/3；paired seeds 3/4 | 有希望，但统计区间跨 0 |
 
-已有充分负面证据的路线：全局 target rate、稀疏显式交叉、更多随机负样本、当前 semi-hard negative、BCE+BPR hybrid、3-day temporal counts、candidate-history 标量、completion/log-watch auxiliary，以及把 DCNv2 直接塞进现有 ensemble。
+已有充分负面证据的路线：全局 target rate、稀疏显式交叉、更多随机负样本、当前 semi-hard negative、BCE+BPR hybrid、3-day temporal counts、candidate-history 标量、简单 completion/capped-log-watch auxiliary、已测 pairwise censored-watch，以及把 DCNv2 直接塞进现有 ensemble。Pointwise censored-watch 仅为证据不足，不等于整个 watch-time 研究方向被否定。
 
 稳健性提醒：`0.604713` 是 standard-exposure validation 冠军；在开发期 random exposure 上，ensemble 比 FM+BPR 低 `0.000155`，不能把它描述成对曝光策略变化也稳定。
 
@@ -70,6 +80,66 @@ Rolling mean delta      +0.001123（相对 FM+BPR）
 | 13 | 正式 `global_context` | 0.604394 | +0.000431 | 候选；rolling 3/3、平均 +0.000810，但 paired seeds 仅 3/4 |
 | 13 | `global_context` paired seeds 0–3 | mean +0.000333 | 3/4 seeds 为正 | 区间 [-0.000427, +0.001092] 跨 0，不能宣称已统计确认 |
 | 13 | Global-context FM + DeepFM | 0.604674 | -0.000039 vs champion | rolling 3/3、平均 +0.000460；暂列候选，不替换冠军 |
+| 14 | DeepFM + one-sided censored watch-time | 0.603939 | +0.000077 vs DeepFM | INSUFFICIENT；机制不同于 capped MSE，但增量仍是噪声量级 |
+| 14 | BPR + one-sided censored watch-time | 0.602523 | -0.001339 vs DeepFM | REJECT exact config；pairwise 主任务进一步下降 |
+| 15 | `video_music_type`（视频静态 metadata）+ FM+BPR | 0.604077 | +0.000114 vs FM+BPR | 小幅单 split，未超过 ensemble；暂不纳入冠军 |
+| 15 | `video_tag_components`（拆分多值 tag）+ FM+BPR | 0.604302 | +0.000339 vs FM+BPR | 比 exact tag 表示更好，但仍低于 ensemble |
+| 15 | `video_tag_components` ensemble | 0.604415 | -0.000298 vs 原冠军 | 组件信息没有形成互补，REJECT |
+| 16 | FM z-score + DeepFM rank，weight=0.4 | 0.604746 | +0.000033 vs 原冠军 | 校准方式本身有微小收益 |
+| 16 | FM z-score + DeepFM rank，weight=0.65 | **0.605291** | **+0.000578 vs 原冠军** | Validation-best candidate；rolling 2/3、均值 +0.000357；paired seeds 后为 `UNCERTAIN / ELIGIBLE` |
+| 17 | Autonomous follow-up：rank calibration 后自动测试 weight=0.65 | **0.605291** | **+0.003821 vs FM+BCE；+0.000578 vs 原冠军** | Agent 自主选中；rolling 2/3，paired seeds 3/4，区间跨 0 |
+| 20 | Rank-calibrated ensemble paired seeds 0–3 | mean delta **+0.000403** | 3/4 seeds 为正；区间 `[-0.000074, +0.000880]` | `UNCERTAIN / ELIGIBLE`；不能宣称统计确认 |
+| 21 | Rank-calibrated local weight scan：weight=0.63 | **0.605365** | +0.000652 vs 原冠军 | 新 validation peak；固定输出、尚未通过独立 seed 确认 |
+| 21 | Rank-calibrated local weight scan：weight=0.64 | 0.605352 | +0.000639 vs 原冠军 | 接近峰值；rolling 2/3、均值 +0.000350 |
+| 21 | weight=0.63 paired seeds 0–3（复用相同组件 checkpoint） | mean delta **+0.000430** | 4/4 seeds 为正；区间 `[-0.000061, +0.000922]` | `UNCERTAIN / ELIGIBLE`；区间仍跨 0 |
+| 22 | Train-only shadow validation：weight=0.63 | mean delta **+0.000085** | 3/4 窗口提升；第 4 窗口 -0.000484 | 有轻微跨时间优势，但增益接近噪声 |
+| 18 | `prior_video_exposure`（严格过去的同视频曝光） | 0.604123 | +0.000160 vs FM+BPR | 比 positive-history 更接近同学实现，但仍低于 ensemble；不确认 |
+| 18 | `author_recency`（严格过去的同 author 任意曝光） | 0.604005 | +0.000042 vs FM+BPR | 没有可检测增益；不确认 |
+| 19 | FM+BPR + censored watch-time head | 0.604108 | +0.000145 vs FM+BPR | 这是同学 `fm_watchtime` 思路的直接对照；小于当前波动 |
+| 19 | 上述 watch-time + `prior_video_exposure` + `author_recency` | 0.604222 | +0.000114 vs watch-time FM | 7-field 组合仍未接近 0.607；不能把外部结果归因于这两个字段 |
+
+## 为什么最近很难继续涨
+
+这不是单一原因，而是三个因素叠加：
+
+1. 许多新增特征来自同一类全局统计或稀疏交叉，和 FM/BPR 已有信号高度重复；因此单 split 的 `+0.0000x` 很容易只是噪声。
+2. 评分是用户内排序（GAUC、nDCG@5），不是分类 accuracy。改变概率校准或增加相似字段，未必改变用户内排序。
+3. 官方 `convergence_epsilon=0.002` 大于大多数真实增益；默认循环会在连续小改动后结束。研究时必须显式使用 `--research-after-convergence`，但仍要保留官方收敛点。
+
+这轮真正有效的变化不是新 feature，而是对同一两个模型的分数做用户内 rank calibration，再重新检查融合权重。局部扫描把 validation peak 从 `0.605291` 推到 `0.605365`；同一批四个 seed 的组件 checkpoint 上，`0.63` 的融合增量为 4/4 正、均值 `+0.000430`，但区间仍跨 0。当前规则是：`0.605365` 可作为 validation-best 提交候选，rolling 3/3 的 `0.604713` 保留为稳健 fallback。
+
+## Shadow validation：模拟未见时间段
+
+为了测试“validation 上的权重是否能泛化到其他未来窗口”，新增
+`scripts/run_shadow_validation.py`。它只使用官方 train period `20220408–20220420`，
+切出四组严格按时间排列的 train/holdout，不读取官方 validation 或 test label：
+
+```bash
+python scripts/run_shadow_validation.py
+```
+
+比较参考融合 `weight=0.4 + z-score` 与候选 `weight=0.63 + fm_zscore_deepfm_rank`：
+
+| Shadow fold | Candidate delta |
+|---|---:|
+| shadow_1 | +0.000275 |
+| shadow_2 | +0.000206 |
+| shadow_3 | +0.000345 |
+| shadow_4 | -0.000484 |
+
+汇总为 **3/4** 窗口提升、平均 **+0.000085**。这不是新的 leaderboard 分数，而是
+对时间泛化的额外 sanity check；它支持“候选可能有轻微优势”，同时也证明优势很容易
+随时间段消失，因此不能据此宣称 `.605365` 一定优于稳健 fallback。
+
+## 外部 `0.607` 结果的可比性
+
+同学记录中的 `0.6071/0.6073` 来自另一套 pipeline：它把
+`prior_exposure`、`author_recency` 作为固定输入，并使用了独立的
+`fm_watchtime`、`finalmlp`、`LightGCN` 成员和不同的 baseline 口径。我们补做了
+同视频曝光、author recency 以及 FM+BPR censored watch-time 的受控实验，最高为
+`0.604222`，因此目前没有证据说明仅靠这几个信号就能复现 `0.607`。外部记录中的
+`0.607` 应写成其 validation peak；其 test 结果约 `0.602`，不能当作同一 evaluator
+下的最终 leaderboard 分数。
 
 ## 评价口径
 
@@ -169,6 +239,33 @@ DeepFM+BCE 在相同基础字段上得到 `0.603862`。它没有超过 FM+BPR，
 
 结论：当前最好方案不是最强单模型，而是 ranking signal 与 nonlinear pointwise signal 的融合。
 
+### I. 测试融合校准，而不是继续堆 feature
+
+此前 ensemble 先对两个模型都做用户内 z-score，再按 `0.6/0.4` 融合。由于
+官方评估只看同一用户内部排序，模型分数的绝对尺度并不重要；因此新增一个
+严格对照：FM 保留 z-score，DeepFM 改成用户内 rank，模型和输入完全不变。
+
+| 融合方式 | DeepFM 权重 | Official validation Primary |
+|---|---:|---:|
+| 两边 z-score（原冠军） | 0.40 | 0.604713 |
+| FM z-score + DeepFM rank | 0.40 | 0.604746 |
+| FM z-score + DeepFM rank | **0.65** | **0.605291** |
+
+rolling 对照以“两边 z-score、weight=0.40”为基准：
+
+| Fold | 基准 | rank-calibrated / 0.65 | Delta |
+|---|---:|---:|---:|
+| Fold 1 | 0.611392 | 0.612421 | +0.001029 |
+| Fold 2 | 0.581429 | 0.580925 | -0.000504 |
+| Fold 3 | 0.588308 | 0.588855 | +0.000547 |
+| Mean delta | — | — | **+0.000357，2/3** |
+
+这次提升来自“融合排序校准 + weight”，不是新特征或换模型。它解释了为什么
+之前继续加 tag、duration、user metadata 都只能带来 `0.0001~0.0004`：当前单模型
+已经相近，瓶颈更多在如何组合它们。由于 rolling 仍有一个负 fold，当前策略是：
+把 `0.605291` 作为 validation submission candidate，保留 `0.604713` 作为稳健参考，
+后续用预先声明的 paired seeds 决定最终提交。
+
 ### E. 用 rolling validation 推翻单切分假象
 
 严格过去的 3-day user activity 和 item exposure 在单个 validation 上把 ensemble 推到 `0.605010`，看起来超过冠军。
@@ -192,7 +289,7 @@ DeepFM+BCE 在相同基础字段上得到 `0.603862`。它没有超过 FM+BPR，
 
 EDA 中 watch ratio 与互动强相关，但相关性不等于辅助监督一定有效。这里 completion 和 log-watch 都与主标签高度耦合，真正提供不同信息的是稀疏的 like 行为。
 
-结论：保留 like-only Multi-task DeepFM；不继续堆 watch-time 变换或组合辅助任务。
+结论：保留 like-only Multi-task DeepFM；简单 completion 与 capped log-watch 不再继续扫。真正的 one-sided censored objective 在后续独立对照中验证。
 
 ### G. 审计 candidate-specific history
 
@@ -407,6 +504,20 @@ learning_rate = 0.001
 
 结论：保留 pairwise multi-task 的可执行能力和单元测试，但自动 memory 对上述两个精确配置标记 `STOP_DIRECTION`。只有获得对方 loss/target/sampler 代码，或提出实质不同的机制，才重新打开这个方向。
 
+### N. One-sided censored watch-time 对照
+
+这次补测的不是 `min(play_time, duration)` 的普通 MSE。对未播完样本使用精确的 `log1p(play_time)`；对播完样本只知道真实兴趣时长至少达到视频长度，因此使用 `log1p(duration)` 下界，并且只在预测低于下界时惩罚。目标按 train P99 缩放，反馈只参与训练，不进入推理字段。
+
+| 配置 | GAUC | nDCG@5 | Primary | 相对 DeepFM |
+|---|---:|---:|---:|---:|
+| DeepFM+BCE 对照 | 0.670187 | 0.537537 | 0.603862 | — |
+| BCE + censored-watch auxiliary | 0.670416 | 0.537462 | 0.603939 | +0.000077 |
+| BPR + censored-watch auxiliary | 0.668208 | 0.536837 | 0.602523 | -0.001339 |
+
+Pointwise 版本的 GAUC 略升但 nDCG 略降，最终 Primary 只增加 `0.000077`，不足以支持 rolling 或替换 like-only；科学状态记为 `INSUFFICIENT`，提交状态记为 `RESEARCH_ONLY`。Pairwise 版本明确下降，当前精确配置记为 `REJECTED / NOT_ELIGIBLE`。
+
+路线变化：不能再说“censored watch-time 没测过”，也不能把微小正值写成有效提升。只在提出不同的 survival likelihood、共享结构或经过预声明的强假设时才重开，不继续扫辅助权重。
+
 ---
 
 ## 当前资产与状态
@@ -421,7 +532,7 @@ learning_rate = 0.001
 | 0.6 FM + 0.4 DeepFM ensemble | 是 | 当前冠军 |
 | Rolling validation | 是 | 新方法稳定性门槛 |
 | Candidate-history causal encoding | 是 | 信号无效，但实现和审计保留 |
-| Auxiliary click/like/completion/log-watch | 是 | 仅 like 有可靠价值 |
+| Auxiliary click/like/completion/log-watch/censored-watch | 是 | 仅 like 有可靠价值；pointwise censored-watch 证据不足 |
 | Pairwise BPR + like auxiliary | 是 | k16/aux0.1 与报告配置 k32/aux0.3 均低于 BCE，拒绝 |
 | Prediction correlation analysis | 是 | 用于判断 ensemble 互补性 |
 | Conditional complementarity | 是 | 分析 user/history/popularity/duration/time 条件差异与 pair error recovery |
@@ -449,7 +560,7 @@ learning_rate = 0.001
 更多全局 target rate
 更多 user×author/user×tab 显式交叉
 更多 hard-negative pool
-更多 completion/watch-time 变换
+重复简单 completion、capped log-watch 或当前 pairwise censored-watch
 重复当前 pairwise multi-task 两个已测配置
 围绕 0.604713 细扫 ensemble 权重
 挑选表现最好的 seed
@@ -464,6 +575,7 @@ python scripts/run_rolling_validation.py
 # Multi-task 辅助信号拆解
 python scripts/run_auxiliary_ablation.py
 python scripts/run_multitask_rolling.py
+python scripts/run_censored_watchtime_ablation.py
 
 # Candidate history、placebo 与数据覆盖
 python analysis/candidate_history_audit.py

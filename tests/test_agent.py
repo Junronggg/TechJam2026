@@ -178,6 +178,30 @@ class AgentTests(unittest.TestCase):
         )
         self.assertTrue(np.isfinite(regression_loss))
 
+        below = MultiTaskDeepFM(
+            4, fields=2, embedding_dim=4, hidden_dim=4,
+            learning_rate=0.0, seed=2, auxiliary_tasks=1,
+        )
+        above = MultiTaskDeepFM(
+            4, fields=2, embedding_dim=4, hidden_dim=4,
+            learning_rate=0.0, seed=2, auxiliary_tasks=1,
+        )
+        below.A.fill(0.0)
+        above.A.fill(0.0)
+        below.ab.fill(np.log(0.2 / 0.8))
+        above.ab.fill(np.log(0.8 / 0.2))
+        target = np.full((2, 1), 0.5, dtype=np.float32)
+        censored = np.ones((2, 1), dtype=np.float32)
+        below_loss = below.multitask_step(
+            X, main, target, 0.1, auxiliary_loss="censored_mse",
+            auxiliary_censored=censored,
+        )
+        above_loss = above.multitask_step(
+            X, main, target, 0.1, auxiliary_loss="censored_mse",
+            auxiliary_censored=censored,
+        )
+        self.assertGreater(below_loss, above_loss)
+
     def test_pairwise_multitask_improves_ranking_and_auxiliary_head(self):
         from techjam_agent.deepfm import MultiTaskDeepFM
 
@@ -282,7 +306,9 @@ class AgentTests(unittest.TestCase):
             import numpy as np
         except ModuleNotFoundError:
             self.skipTest("NumPy unavailable in this interpreter")
-        from techjam_agent.feedback import LOG_FILES, align_auxiliary_feedback
+        from techjam_agent.feedback import (
+            LOG_FILES, align_auxiliary_feedback, align_censored_watch_feedback,
+        )
 
         header = (
             "user_id,video_id,date,is_click,is_like,long_view,play_time_ms,"
@@ -300,6 +326,12 @@ class AgentTests(unittest.TestCase):
             labels, masks = align_auxiliary_feedback(data_dir, splits)
             np.testing.assert_array_equal(labels["train"], [[1.0, 0.0, 1.0, 1.0]])
             np.testing.assert_array_equal(masks["train"], [[1.0, 1.0, 1.0, 1.0]])
+            targets, watch_masks, censored = align_censored_watch_feedback(
+                data_dir, splits
+            )
+            np.testing.assert_array_equal(watch_masks["train"], [[1.0]])
+            np.testing.assert_array_equal(censored["train"], [[1.0]])
+            np.testing.assert_array_equal(targets["train"], [[1.0]])
 
     def test_hybrid_objective_is_a_legal_fm_configuration(self):
         hybrid = apply_changes(
@@ -413,6 +445,12 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(values["valid"]["previous_author_same"].tolist(), [0, 1])
         self.assertEqual(values["test"]["prior_video_count"].tolist(), [2])
         self.assertEqual(values["test"]["previous_author_same"].tolist(), [0])
+        self.assertEqual(values["train"]["prior_video_exposure"].tolist(), [1, 0, 0])
+        self.assertEqual(values["valid"]["prior_video_exposure"].tolist(), [1, 0])
+        self.assertEqual(values["test"]["prior_video_exposure"].tolist(), [1])
+        self.assertEqual(values["train"]["author_recency"].tolist(), [1, 0, 0])
+        self.assertEqual(values["valid"]["author_recency"].tolist(), [2, 3])
+        self.assertEqual(values["test"]["author_recency"].tolist(), [5])
 
         changed = {name: list(rows) for name, rows in splits.items()}
         changed["valid"] = [row[:-1] + (1 - row[-1],) for row in splits["valid"]]
@@ -428,8 +466,13 @@ class AgentTests(unittest.TestCase):
             {"model": "ensemble", "training_objective": "hybrid",
              "ensemble_deepfm_weight": 0.4},
         )
+        calibrated = apply_changes(
+            ensemble, {"ensemble_normalization": "fm_zscore_deepfm_rank"}
+        )
+        tuned = apply_changes(calibrated, {"ensemble_deepfm_weight": 0.65})
         proposal = DeterministicResearcher().propose(
-            ensemble, [{"config": self.config}, {"config": ensemble}]
+            ensemble, [{"config": self.config}, {"config": ensemble},
+                       {"config": calibrated}, {"config": tuned}]
         )
         self.assertEqual(proposal.changes, {
             "model": "multitask_deepfm",
@@ -443,6 +486,10 @@ class AgentTests(unittest.TestCase):
             {"model": "ensemble", "training_objective": "hybrid",
              "ensemble_deepfm_weight": 0.4},
         )
+        calibrated = apply_changes(
+            ensemble, {"ensemble_normalization": "fm_zscore_deepfm_rank"}
+        )
+        tuned = apply_changes(calibrated, {"ensemble_deepfm_weight": 0.65})
         multitask = apply_changes(
             ensemble,
             {"model": "multitask_deepfm", "training_objective": "bce",
@@ -453,6 +500,8 @@ class AgentTests(unittest.TestCase):
             [
                 {"config": self.config},
                 {"config": ensemble},
+                {"config": calibrated},
+                {"config": tuned},
                 {"config": multitask},
             ],
         )
@@ -462,12 +511,16 @@ class AgentTests(unittest.TestCase):
             "learning_rate": 0.001,
         })
 
-    def test_researcher_tests_dcnv2_after_both_multitask_objectives(self):
+    def test_researcher_tests_new_censored_objective_before_dcnv2(self):
         ensemble = apply_changes(
             self.config,
             {"model": "ensemble", "training_objective": "hybrid",
              "ensemble_deepfm_weight": 0.4},
         )
+        calibrated = apply_changes(
+            ensemble, {"ensemble_normalization": "fm_zscore_deepfm_rank"}
+        )
+        tuned = apply_changes(calibrated, {"ensemble_deepfm_weight": 0.65})
         pointwise = apply_changes(
             ensemble,
             {"model": "multitask_deepfm", "training_objective": "bce",
@@ -481,7 +534,29 @@ class AgentTests(unittest.TestCase):
         proposal = DeterministicResearcher().propose(
             ensemble,
             [{"config": self.config}, {"config": ensemble},
-             {"config": pointwise}, {"config": pairwise}],
+             {"config": calibrated}, {"config": tuned}, {"config": pointwise},
+             {"config": pairwise}],
+        )
+        self.assertEqual(proposal.changes, {
+            "model": "multitask_deepfm",
+            "training_objective": "bce",
+            "auxiliary_signals": "censored_watch",
+            "learning_rate": 0.001,
+        })
+
+        censored_pointwise = apply_changes(ensemble, proposal.changes)
+        censored_pairwise = apply_changes(ensemble, {
+            "model": "multitask_deepfm",
+            "training_objective": "bpr",
+            "auxiliary_signals": "censored_watch",
+            "learning_rate": 0.001,
+        })
+        proposal = DeterministicResearcher().propose(
+            ensemble,
+            [{"config": self.config}, {"config": ensemble},
+             {"config": calibrated}, {"config": tuned}, {"config": pointwise},
+             {"config": pairwise},
+             {"config": censored_pointwise}, {"config": censored_pairwise}],
         )
         self.assertEqual(proposal.changes, {
             "model": "dcnv2",

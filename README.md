@@ -85,11 +85,42 @@ reflects on the result, updates structured memory, and repeats. Ranking uses typ
 actions plus hard/soft evidence and feasibility filtering. It never gives an LLM
 permission to edit the repository.
 
+The architecture separates three responsibilities:
+
+- `research_prompt.py` defines the scientist mindset: validation-only reasoning,
+  novelty, falsification, confirmation, attribution, and uncertainty.
+- `skills.py` is the executable lab-instrument registry. Every candidate is bound to
+  one available primary skill plus explicit evidence skills.
+- `controller.py` owns hard safety rules such as budgets, isolated timeouts, the pinned
+  evaluator, test-label exclusion, and rejection of unregistered skill bindings.
+
+The initial registry intentionally contains ten reusable capabilities: memory read/write,
+candidate profiling, ordinary and auxiliary training, feature construction, placebo,
+rolling, paired seeds, and prediction-diversity analysis. Skills describe capabilities,
+not answers such as “BPR is best.” The LLM still returns a compact hypothesis/reason plus
+one exact ranked config; expected gain, family, skill, risk, and required confirmation are
+copied from trusted planner/registry data into an audited `decision_record`. This avoids
+asking the LLM to self-report values the Controller can derive deterministically.
+
+Unregistered capabilities are reported as gaps and cannot execute. Automatic code/model
+generation is deliberately disabled; current declared gaps include a graph trainer and a
+safe new-model-family builder.
+
 The memory has two levels: per-experiment hypotheses and family-level distilled
 research patterns. Patterns can request confirmation, ensemble-only evaluation,
 matched controls, one cheap evidence-gathering run, or stopping a repeatedly weak
 direction. This updates the planning policy from experiment history; it is not RL or
 parameter-level self-learning.
+
+With `--auto-confirm`, a positive discovery is no longer merely tagged for later
+human review. A deterministic evidence escalator can schedule expanding-window rolling
+validation and, only after rolling passes, paired-seed confirmation. These are separate
+confirmation actions: they cannot replace the champion, do not update the official
+convergence streak, never read test labels, and consume both the action and wall-clock
+budgets. Small redundant gains below `0.0002` stop before this expensive stage unless
+the candidate has high novelty or a measured diversity advantage. Use
+`--research-after-convergence` as well when the predeclared research run should finish
+queued confirmation after the official convergence point has been recorded.
 
 For categorical history features, a small apparent gain automatically schedules
 constant, shuffled, and same-cardinality random controls. Control runs cannot become
@@ -104,13 +135,14 @@ rows use leave-one-out target statistics; validation and test use train statisti
 The FM branch also supports `training_objective: "bpr"`. BPR samples positive/negative
 pairs within the same user and optimizes the positive item to rank above the negative
 item, while leaving the model structure, features, split, and official evaluator
-unchanged. The first Person 1 seed-0 comparison in TRY.md improved validation primary
-from `0.601470` to `0.603396`; this should be repeated across seeds before claiming a
-stable gain.
+unchanged. The selected seed-0 configuration (`lr=0.0003`) improved validation Primary
+from `0.601470` to `0.603963`; paired seeds 0–3 improved by `+0.002344` on average.
 
 The NumPy model suite also includes DeepFM, `multitask_deepfm`, and low-rank DCNv2.
-The multi-task model can isolate click, like, censored completion, and capped
-log-watch targets; the current evidence-backed default is like-only. Auxiliary
+The multi-task model can isolate click, like, censored completion, capped log-watch,
+and one-sided censored-watch targets; the current evidence-backed default is like-only.
+The one-sided objective treats incomplete watch time as exact and a completed play as
+a duration lower bound, so it is not capped MSE. Auxiliary
 outcomes are training-only targets and are never passed as prediction-time features.
 Multi-task DeepFM can also combine a within-user BPR long-view objective with the
 pointwise auxiliary head. In the Person 1 controlled like-only experiment this scored
@@ -135,6 +167,7 @@ python scripts/evaluate_history_gated_ensemble.py
 python scripts/run_lightweight_sequence_ablation.py
 python scripts/evaluate_random_exposure_robustness.py
 python scripts/run_pairwise_multitask_ablation.py
+python scripts/run_censored_watchtime_ablation.py
 ```
 
 Run a full-cap validation-only development loop first. Omitting `--max-iterations`
@@ -211,6 +244,12 @@ at OpenRouter's OpenAI-compatible endpoint and `openai/gpt-4.1-mini`; set
 The connection checker reports only status, provider, model, and token usage—it
 never prints the key.
 
+The LLM is a constrained selector, not a code editor: it must return one complete
+`changes` object exactly as listed in the deterministic top-five candidate ranking.
+Invalid, incomplete, modified, or duplicate choices are retried and then audited before
+deterministic fallback. `configs/research_context.json` supplies training-only dataset
+facts and conditional method guidance; it contains no validation/test answer sheet.
+
 Both the deterministic planner and the LLM receive validation-only persistent evidence from
 `configs/research_evidence.json`. Before every run, `configs/evidence_manifest.json`
 routes selected rolling, placebo, and paired-seed artifacts through the deterministic
@@ -219,6 +258,37 @@ scientific verdicts, and competition status; they override old manual policies o
 the same family and matching scope. Override the files with `--evidence-file PATH` and
 `--evidence-manifest PATH`. Test-split metric fields are not part of planning evidence
 and are removed before an LLM prompt is sent.
+
+Official convergence and optional research exploration are recorded separately. The
+default command still stops after the organizer rule (`epsilon=0.002` for three rounds).
+For a predeclared research run that records that point but continues within the same
+iteration/time limits, use:
+
+```bash
+python3 scripts/run_agent.py --researcher llm --research-after-convergence
+```
+
+To enable the automatic evidence ladder for promising discoveries, run:
+
+```bash
+python3 scripts/run_agent.py \
+  --researcher llm \
+  --research-after-convergence \
+  --auto-confirm
+```
+
+The ladder is `single validation discovery → 3-fold rolling → paired seeds 0–3`.
+`summary.json` separates discovery, placebo-control, and confirmation actions and also
+reports the underlying confirmation training-run count. Detailed records are stored in
+`confirmation_history.jsonl` and `confirmations/`. A real executor smoke check reproduced
+the existing `global_context` rolling result (3/3 wins, mean delta `+0.000810`, six
+training runs); this validates orchestration and is not a new model-score claim.
+
+Every run writes `submission_candidates.json`. A configuration's scientific verdict
+(`VALIDATED`, `UNCERTAIN`, `REJECTED`, and so on) remains distinct from its competition
+status (`ELIGIBLE`, `RESEARCH_ONLY`, or `NOT_ELIGIBLE`). This allows a promising but
+not statistically confirmed candidate to remain comparable without presenting it as
+a confirmed research result.
 
 Audit whether the committed policy snapshot still matches the current artifacts:
 

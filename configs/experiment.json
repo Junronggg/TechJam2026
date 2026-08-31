@@ -14,6 +14,7 @@
     "deepfm_hidden_dim": 32,
     "hybrid_bpr_weight": 0.5,
     "ensemble_deepfm_weight": 0.4,
+    "ensemble_normalization": "zscore",
     "auxiliary_loss_weight": 0.1,
     "auxiliary_signals": "like",
     "dcn_cross_layers": 2,
@@ -35,7 +36,16 @@
     "author_positive_recency": false,
     "prior_video_count": false,
     "previous_author_same": false,
-    "global_context": false
+    "prior_video_exposure": false,
+    "author_recency": false,
+    "global_context": false,
+    "video_tag": false,
+    "video_upload_type": false,
+    "user_active_degree": false,
+    "user_register_days_range": false,
+    "duration_semantic_bucket": false,
+    "video_music_type": false,
+    "video_tag_components": false
   },
   "lightgbm_hyperparameters": {
     "learning_rate": 0.05,

@@ -166,7 +166,8 @@ class ActionTypeContractTests(unittest.TestCase):
                 set(candidate.changes).issubset(
                     set(FEATURE_KEYS) | {"model", "training_objective",
                                          "learning_rate", "embedding_dim", "l2",
-                                         "batch_size", "ensemble_deepfm_weight"}
+                                         "batch_size", "ensemble_deepfm_weight",
+                                         "auxiliary_signals"}
                 )
             )
 

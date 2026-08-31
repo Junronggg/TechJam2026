@@ -55,7 +55,7 @@ def legal_changes() -> dict:
     return {
         "hypothesis": "Try pairwise BPR instead of pointwise BCE.",
         "reason": "Ranking metrics should match a ranking loss.",
-        "changes": {"training_objective": "bpr"},
+        "changes": {"training_objective": "bpr", "learning_rate": 0.0003},
     }
 
 
@@ -136,7 +136,7 @@ class PromptTests(unittest.TestCase):
         self.assertIn("training_objective", prompt["allowed_values"])
         self.assertIn("model", prompt["allowed_values"])
         self.assertEqual(prompt["allowed_values"]["max_change_fields"], MAX_CHANGE_FIELDS)
-        self.assertIn("1 and 3", CHANGE_RULE)
+        self.assertIn("1 and 4", CHANGE_RULE)
         self.assertIn("LightGBM", prompt["change_rule"])
         self.assertEqual(prompt["global_best"]["validation_metrics"]["primary"], 0.6015)
         self.assertEqual(prompt["history"][0]["hypothesis"], "Reproduce the official FM baseline.")
@@ -202,6 +202,19 @@ class ParseContractTests(unittest.TestCase):
         }, "llm")
         self.assertEqual(len(proposal.changes), 2)
 
+    def test_parse_allows_four_fields_for_one_atomic_mechanism(self) -> None:
+        proposal = Proposal.parse({
+            "hypothesis": "Try censored watch-time supervision.",
+            "reason": "The model, objective, target, and learning rate define one mechanism.",
+            "changes": {
+                "model": "multitask_deepfm",
+                "training_objective": "bpr",
+                "auxiliary_signals": "censored_watch",
+                "learning_rate": 0.001,
+            },
+        }, "llm")
+        self.assertEqual(len(proposal.changes), 4)
+
 
 class TokenUsageTests(unittest.TestCase):
     def test_missing_usage_is_zeros(self) -> None:
@@ -237,7 +250,7 @@ class LlmResearcherTests(unittest.TestCase):
         proposal = researcher.propose(load_config(), [])
         self.assertEqual(len(opener.calls), 1)
         self.assertEqual(opener.calls[0]["timeout"], HTTP_TIMEOUT_SECONDS)
-        self.assertEqual(proposal.changes, {"training_objective": "bpr"})
+        self.assertEqual(proposal.changes, legal_changes()["changes"])
         self.assertEqual(proposal.token_usage["total_tokens"], 15)
         self.assertEqual(proposal.source, "llm")
         self.assertEqual(proposal.llm_attempts, 1)
@@ -282,29 +295,51 @@ class LlmResearcherTests(unittest.TestCase):
         ])
         proposal = researcher.propose(load_config(), [])
         self.assertEqual(len(opener.calls), 2)
-        self.assertEqual(proposal.changes, {"training_objective": "bpr"})
+        self.assertEqual(proposal.changes, legal_changes()["changes"])
+
+    def test_valid_but_unranked_change_is_repaired(self) -> None:
+        researcher, opener = self._researcher([
+            chat_payload({
+                "hypothesis": "Try a valid but unranked setting.",
+                "reason": "Probe the contract.",
+                "changes": {"learning_rate": 0.005},
+            }),
+            chat_payload(legal_changes()),
+        ])
+        proposal = researcher.propose(load_config(), [])
+        self.assertEqual(proposal.changes, legal_changes()["changes"])
+        self.assertEqual(len(opener.calls), 2)
 
     def test_duplicate_change_then_new_change_retries(self) -> None:
         bpr = json.loads(json.dumps(load_config()))
         bpr["training_objective"] = "bpr"
+        bpr["hyperparameters"]["learning_rate"] = 0.0003
         researcher, opener = self._researcher([
             chat_payload(legal_changes()),
             chat_payload({
-                "hypothesis": "Tune the FM learning rate.",
-                "reason": "Test one legal optimization variable.",
-                "changes": {"learning_rate": 0.002},
+                "hypothesis": "Use like auxiliary supervision.",
+                "reason": "Select the next ranked mechanism.",
+                "changes": {
+                    "model": "multitask_deepfm",
+                    "training_objective": "bce",
+                    "learning_rate": 0.001,
+                },
             }),
         ])
         proposal = researcher.propose(load_config(), [{"config": bpr}])
         self.assertEqual(len(opener.calls), 2)
-        self.assertEqual(proposal.changes, {"learning_rate": 0.002})
+        self.assertEqual(proposal.changes, {
+            "model": "multitask_deepfm",
+            "training_objective": "bce",
+            "learning_rate": 0.001,
+        })
 
     def test_ten_mocked_calls_return_legal_structured_proposals(self) -> None:
         for _ in range(10):
             researcher, opener = self._researcher([chat_payload(legal_changes())])
             proposal = researcher.propose(load_config(), [])
             self.assertEqual(len(opener.calls), 1)
-            self.assertEqual(proposal.changes, {"training_objective": "bpr"})
+            self.assertEqual(proposal.changes, legal_changes()["changes"])
             self.assertEqual(set(proposal.as_dict()), {
                 "hypothesis", "reason", "changes", "source", "token_usage", "llm_attempts",
             })
@@ -376,12 +411,17 @@ class LlmResearcherTests(unittest.TestCase):
             urlopen=capturing_urlopen,
             prior_evidence={
                 "rolling": "ensemble won 3/3 folds",
+                "dataset_facts": {"long_view_rate": 0.3366, "test_primary": 0.999},
+                "method_reference": {"bpr": {"use_when": "within-user ranking"}},
                 "final_test_metrics": {"primary": 0.999},
             },
         )
         researcher.propose(load_config(), [])
         prompt = json.loads(captured["messages"][1]["content"])
         self.assertEqual(prompt["prior_evidence"]["rolling"], "ensemble won 3/3 folds")
+        self.assertEqual(prompt["dataset_facts"]["long_view_rate"], 0.3366)
+        self.assertNotIn("test_primary", prompt["dataset_facts"])
+        self.assertIn("bpr", prompt["method_reference"])
         self.assertNotIn("final_test_metrics", prompt["prior_evidence"])
         self.assertIn("multiple rolling folds", captured["messages"][0]["content"])
 

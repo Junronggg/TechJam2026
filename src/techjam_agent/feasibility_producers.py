@@ -214,6 +214,101 @@ LEAKAGE_AUDIT: dict[str, dict[str, Any]] = {
             "No labels are read for this flag."
         ),
     },
+    "prior_video_exposure": {
+        "status": "safe",
+        "leakage_safe": True,
+        "strict_past": True,
+        "implementation_source": (
+            "src/techjam_agent/sequence_features.py:strict_sequence_categories"
+        ),
+        "rationale": (
+            "The exposure count is built from interactions strictly earlier than "
+            "the current timestamp. Validation and test labels are never used to "
+            "construct the feature."
+        ),
+    },
+    "author_recency": {
+        "status": "safe",
+        "leakage_safe": True,
+        "strict_past": True,
+        "implementation_source": (
+            "src/techjam_agent/sequence_features.py:strict_sequence_categories"
+        ),
+        "rationale": (
+            "The author recency bucket uses only prior interaction timestamps; "
+            "validation and test labels cannot update the state used for a row."
+        ),
+    },
+    "video_tag": {
+        "status": "safe",
+        "leakage_safe": True,
+        "strict_past": True,
+        "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+        "rationale": (
+            "Video metadata is available before the impression and is not "
+            "computed from target labels or future interactions."
+        ),
+    },
+    "video_upload_type": {
+        "status": "safe",
+        "leakage_safe": True,
+        "strict_past": True,
+        "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+        "rationale": (
+            "Upload type is static video metadata known before ranking and "
+            "does not read validation or test labels."
+        ),
+    },
+    "user_active_degree": {
+        "status": "safe",
+        "leakage_safe": True,
+        "strict_past": True,
+        "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+        "rationale": (
+            "User activity degree is a pre-impression metadata field; it is "
+            "not a target-derived or future-updated statistic."
+        ),
+    },
+    "user_register_days_range": {
+        "status": "safe",
+        "leakage_safe": True,
+        "strict_past": True,
+        "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+        "rationale": (
+            "Registration-age bucket is fixed user metadata available before "
+            "the impression and independent of labels."
+        ),
+    },
+    "duration_semantic_bucket": {
+        "status": "safe",
+        "leakage_safe": True,
+        "strict_past": True,
+        "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+        "rationale": (
+            "The duration bucket is derived from the video's known duration "
+            "before serving and uses no target or future data."
+        ),
+    },
+    "video_music_type": {
+        "status": "safe",
+        "leakage_safe": True,
+        "strict_past": True,
+        "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+        "rationale": (
+            "Music type is static video metadata available at ranking time; "
+            "no labels are read."
+        ),
+    },
+    "video_tag_components": {
+        "status": "safe",
+        "leakage_safe": True,
+        "strict_past": True,
+        "implementation_source": "src/techjam_agent/runner.py:_encoded_for",
+        "rationale": (
+            "Tag components are deterministic metadata transformations and "
+            "cannot include validation/test target information."
+        ),
+    },
     "global_context": {
         "status": "safe",
         "leakage_safe": True,
