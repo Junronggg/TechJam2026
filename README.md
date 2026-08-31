@@ -110,9 +110,9 @@ The FM branch also supports `training_objective: "bpr"`. BPR samples positive/ne
 pairs within the same user and optimizes the positive item to rank above the negative
 item, while leaving the model structure, features, split, and official evaluator
 unchanged. With learning rate `0.0005`, it improved all five paired seeds: mean
-validation Primary rose from `0.601572` (BCE) to `0.603521` (BPR). Averaging tuned
-BPR seeds 3 and 4 produced the current validation-best `0.604216`. This seed pair was
-selected from a validation-only subset audit, so it is a candidate rather than a test claim.
+validation Primary rose from `0.601572` (BCE) to `0.603521` (BPR). This is a historical
+replication result; the current durable winner is the hybrid-blend configuration
+reported below.
 
 The operator registry also exposes request hour/weekday, upload age/freshness, user
 activity, video type, time-decayed item/author/tag popularity, recent-history candidate
@@ -137,10 +137,51 @@ Both remain executable negative controls. Their results do not justify adding a 
 Transformer blindly; a future SASRec candidate must introduce richer sequence evidence
 while preserving candidate metadata/context.
 
-The current direct validation benchmark of the heterogeneous base blend scored GAUC
-`0.671602`, nDCG@5 `0.537974`, and Primary `0.604788`. This is a strict `+0.000248`
-over the previous `0.604540` incumbent, but it is below the `0.002` confirmation
-threshold and must be replicated before being presented as a robust gain.
+The current durable validation winner is a `hybrid_blend` with BPR, two sampled
+negatives, same-author negative sampling, train-fitted duration buckets, and raw tags.
+It scored GAUC `0.6732213`, nDCG@5 `0.5385662`, and Primary `0.6058938` on the
+validation split. Relative to the official baseline Primary `0.6016`, this is an
+absolute improvement of approximately `+0.0043`.
+
+After the validation winner was frozen, the explicit final-evaluation command produced
+the following local test-split result:
+
+| Split/result | GAUC | nDCG@5 | Primary |
+| --- | ---: | ---: | ---: |
+| Official baseline (validation) | 0.6674 | 0.5357 | 0.6016 |
+| Validation-best hybrid blend | 0.6732213 | 0.5385662 | 0.6058938 |
+| Final local test evaluation | 0.6665823 | 0.5314327 | 0.5990075 |
+| Validation delta over official baseline | +0.0058213 | +0.0028662 | +0.0042938 |
+
+The final local test metrics are:
+
+```text
+GAUC:    0.6665823
+nDCG@5:  0.5314327
+Primary: 0.5990075
+Users:   23,875
+Rows:    170,588
+```
+
+These are local test metrics only. They were not supplied to the Planner and are not a
+hidden-test result; the competition organizers evaluate the submitted `final.csv` on
+the hidden test set.
+
+### Reproducible run evidence
+
+The two representative runs used for the submission record are:
+
+| Run | Researcher | Iterations | Candidate experiments | Manual interventions | LLM requests/failures | Best validation Primary |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `run_20260831T171347Z` | Deterministic, autonomous | 4 | 3 | 0 | 0 / 0 | 0.6058938 |
+| `run_20260831T131357Z` | OpenAI-compatible LLM with fallback | 6 | 5 | 0 | 5 / 5 authentication failures; deterministic fallback | 0.6053735 |
+
+Each run directory contains `run_meta.json`, `iteration_*.json`, `summary.json`,
+`research_trajectory.json`, `tree_snapshot.json`, and `experiment_history.jsonl`.
+The LLM run also contains the sanitized/redacted `llm_calls.jsonl` audit. Review it
+before upload and remove any provider-specific or secret-bearing fields. The per-iteration
+records include the hypothesis, candidate/configuration diff, validation metrics,
+errors or recovery actions, and promotion decision required by the Starter Kit.
 
 For top-five experiments, set the legal `validation_metric` hyperparameter to
 `"nDCG@5"`. This changes only epoch stopping and blend-weight selection; the
@@ -173,6 +214,18 @@ To let an OpenAI-compatible model choose experiments, set `OPENAI_API_KEY` and r
 python3 scripts/run_agent.py --researcher llm --open-ended --autonomous --model gpt-4.1 --max-iterations 10
 ```
 
+For OpenRouter on Windows PowerShell, the client still uses the OpenAI-compatible
+environment-variable names:
+
+```powershell
+$env:OPENAI_API_KEY = "your-openrouter-key"
+$env:OPENAI_BASE_URL = "https://openrouter.ai/api/v1"
+$env:OPENAI_MODEL = "openai/gpt-4.1-mini"
+.\.venv\Scripts\python.exe -X utf8 .\scripts\run_agent.py --researcher llm --open-ended --autonomous --max-iterations 10
+```
+
+Never put the real key in `.env.example`, source files, logs, or the Git history.
+
 To run a validation-only top-five trial directly:
 
 ```powershell
@@ -197,6 +250,37 @@ only when a run meets or beats the durable incumbent, so a weaker fresh run cann
 erase the project best. All ranking metrics still come from the untouched organizer
 `kuairand-starter-kit/evaluate.py`. Use `--final-eval` only after selecting the final
 validation winner, or run `scripts/final_evaluate.py` explicitly.
+
+To evaluate the already-selected validation winner and create the submission file:
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 .\scripts\final_evaluate.py `
+  --data-dir .\data\KuaiRand-Pure\data `
+  --output .\submissions\final.csv
+```
+
+The command reads `artifacts/best_config.json` and `artifacts/best_model.npz`, then
+writes `artifacts/final_test_metrics.json` and `submissions/final.csv`.
+
+### GitHub/submission package
+
+Commit the reproducible implementation and a small, curated evidence set:
+
+- `README.md`, `docs/`, `requirements.txt`, and `.env.example`
+- `src/techjam_agent/` (controller, planner/researcher, memory, models, features, and evaluator glue)
+- `scripts/` (setup, profiling, validation, agent execution, and final evaluation)
+- `configs/` (project, experiment, feature-leakage, evidence, and research settings)
+- `tests/`
+- `kuairand-starter-kit/` including the organizer evaluator and reference baseline
+- The selected run-log directories listed above, or an equivalent sanitized archive
+- `submissions/final.csv`, `artifacts/best_config.json`, `artifacts/best_manifest.json`,
+  `artifacts/best_metrics.json`, `artifacts/best_model.npz`, and
+  `artifacts/final_test_metrics.json`
+
+Do not commit `.env` or any API key, `.venv/`, the KuaiRand data/archive, feature/data
+caches, Python bytecode, or every exploratory artifact from `artifacts/`, `logs/`, and
+`submissions/`. If logs or final artifacts are kept under the repository's ignored
+paths, add only the selected files explicitly (for example with `git add -f`).
 
 ### Research safety and evidence
 

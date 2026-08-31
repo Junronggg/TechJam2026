@@ -1,0 +1,728 @@
+{
+  "scope": "validation only; row slices recompute ranking within each slice",
+  "overall": {
+    "GAUC": 0.6698939007895643,
+    "nDCG@5": 0.5367178275209697,
+    "primary": 0.6033058641552671
+  },
+  "structural": {
+    "validation_users": 22377,
+    "zero_positive_users": 6785,
+    "zero_positive_user_rate": 0.3032131206149171,
+    "maximum_dataset_ndcg": 0.6967868793850829
+  },
+  "worst_slices": [
+    {
+      "dimension": "tab",
+      "value": "8",
+      "rows": 547,
+      "users": 340,
+      "positive_rate": 0.021937843412160873,
+      "GAUC": 0.2685185185185185,
+      "nDCG@5": 0.025250956840972595,
+      "primary": 0.14688473767974555
+    },
+    {
+      "dimension": "tab",
+      "value": "0",
+      "rows": 13726,
+      "users": 5579,
+      "positive_rate": 0.034824419766664505,
+      "GAUC": 0.543362094355978,
+      "nDCG@5": 0.06263692650380959,
+      "primary": 0.3029995104298938
+    },
+    {
+      "dimension": "tab",
+      "value": "5",
+      "rows": 291,
+      "users": 129,
+      "positive_rate": 0.10309278219938278,
+      "GAUC": 0.5,
+      "nDCG@5": 0.10962235223186544,
+      "primary": 0.3048111761159327
+    },
+    {
+      "dimension": "tab",
+      "value": "6",
+      "rows": 5170,
+      "users": 2212,
+      "positive_rate": 0.09613152593374252,
+      "GAUC": 0.6135531135531135,
+      "nDCG@5": 0.10574646246365624,
+      "primary": 0.3596497880083849
+    },
+    {
+      "dimension": "hour",
+      "value": "3",
+      "rows": 1284,
+      "users": 936,
+      "positive_rate": 0.33255451917648315,
+      "GAUC": 0.48636363636363644,
+      "nDCG@5": 0.3858694465065429,
+      "primary": 0.4361165414350897
+    },
+    {
+      "dimension": "tab",
+      "value": "12",
+      "rows": 226,
+      "users": 112,
+      "positive_rate": 0.13274335861206055,
+      "GAUC": 0.7017543859649124,
+      "nDCG@5": 0.17616348037730342,
+      "primary": 0.4389589331711079
+    },
+    {
+      "dimension": "hour",
+      "value": "8",
+      "rows": 3776,
+      "users": 2829,
+      "positive_rate": 0.3355402648448944,
+      "GAUC": 0.6057838660578387,
+      "nDCG@5": 0.38485028483361106,
+      "primary": 0.4953170754457249
+    },
+    {
+      "dimension": "hour",
+      "value": "11",
+      "rows": 5949,
+      "users": 4234,
+      "positive_rate": 0.3151790201663971,
+      "GAUC": 0.6240776699029127,
+      "nDCG@5": 0.3692377843870718,
+      "primary": 0.49665772714499223
+    }
+  ],
+  "slices": [
+    {
+      "dimension": "candidate_count",
+      "value": "3-5",
+      "rows": 26987,
+      "users": 7006,
+      "positive_rate": 0.3494274914264679,
+      "GAUC": 0.6657040013393607,
+      "nDCG@5": 0.6025989316230008,
+      "primary": 0.6341514664811807
+    },
+    {
+      "dimension": "candidate_count",
+      "value": "1-2",
+      "rows": 10579,
+      "users": 7248,
+      "positive_rate": 0.3839682340621948,
+      "GAUC": 0.651685393258427,
+      "nDCG@5": 0.4536180343612036,
+      "primary": 0.5526517138098153
+    },
+    {
+      "dimension": "candidate_count",
+      "value": "6-10",
+      "rows": 39587,
+      "users": 5225,
+      "positive_rate": 0.32452571392059326,
+      "GAUC": 0.6779489715763464,
+      "nDCG@5": 0.5933437585273886,
+      "primary": 0.6356463650518676
+    },
+    {
+      "dimension": "candidate_count",
+      "value": "11+",
+      "rows": 47756,
+      "users": 2898,
+      "positive_rate": 0.2678825557231903,
+      "GAUC": 0.666349061695568,
+      "nDCG@5": 0.4831891166770132,
+      "primary": 0.5747690891862905
+    },
+    {
+      "dimension": "positive_count",
+      "value": "0",
+      "rows": 21807,
+      "users": 6785,
+      "positive_rate": 0.0,
+      "GAUC": 0.5,
+      "nDCG@5": 0.0,
+      "primary": 0.25
+    },
+    {
+      "dimension": "positive_count",
+      "value": "3-5",
+      "rows": 36232,
+      "users": 4218,
+      "positive_rate": 0.4262254238128662,
+      "GAUC": 0.6753135805625756,
+      "nDCG@5": 0.7426437780154717,
+      "primary": 0.7089786792890236
+    },
+    {
+      "dimension": "positive_count",
+      "value": "1-2",
+      "rows": 47013,
+      "users": 10119,
+      "positive_rate": 0.2933444082736969,
+      "GAUC": 0.6710197693900104,
+      "nDCG@5": 0.7915164145415184,
+      "primary": 0.7312680919657644
+    },
+    {
+      "dimension": "positive_count",
+      "value": "6-10",
+      "rows": 15919,
+      "users": 1101,
+      "positive_rate": 0.4945034384727478,
+      "GAUC": 0.6638107246796797,
+      "nDCG@5": 0.6871933471284789,
+      "primary": 0.6755020359040793
+    },
+    {
+      "dimension": "positive_count",
+      "value": "11+",
+      "rows": 3938,
+      "users": 154,
+      "positive_rate": 0.5144743323326111,
+      "GAUC": 0.6492670650657147,
+      "nDCG@5": 0.7253824469687639,
+      "primary": 0.6873247560172393
+    },
+    {
+      "dimension": "train_history",
+      "value": "6-10",
+      "rows": 5469,
+      "users": 1735,
+      "positive_rate": 0.36862313747406006,
+      "GAUC": 0.6385910505002149,
+      "nDCG@5": 0.5381666265475807,
+      "primary": 0.5883788385238978
+    },
+    {
+      "dimension": "train_history",
+      "value": "11+",
+      "rows": 113135,
+      "users": 18716,
+      "positive_rate": 0.30681928992271423,
+      "GAUC": 0.6707302423148026,
+      "nDCG@5": 0.5369868155504168,
+      "primary": 0.6038585289326097
+    },
+    {
+      "dimension": "train_history",
+      "value": "cold",
+      "rows": 1990,
+      "users": 422,
+      "positive_rate": 0.36080402135849,
+      "GAUC": 0.6854471478672644,
+      "nDCG@5": 0.5274398002178448,
+      "primary": 0.6064434740425546
+    },
+    {
+      "dimension": "train_history",
+      "value": "1-2",
+      "rows": 1634,
+      "users": 572,
+      "positive_rate": 0.3831089437007904,
+      "GAUC": 0.6748048964449876,
+      "nDCG@5": 0.5173615368921393,
+      "primary": 0.5960832166685635
+    },
+    {
+      "dimension": "train_history",
+      "value": "3-5",
+      "rows": 2681,
+      "users": 932,
+      "positive_rate": 0.3953748643398285,
+      "GAUC": 0.6806976334304767,
+      "nDCG@5": 0.5446996724685204,
+      "primary": 0.6126986529494985
+    },
+    {
+      "dimension": "tab",
+      "value": "0",
+      "rows": 13726,
+      "users": 5579,
+      "positive_rate": 0.034824419766664505,
+      "GAUC": 0.543362094355978,
+      "nDCG@5": 0.06263692650380959,
+      "primary": 0.3029995104298938
+    },
+    {
+      "dimension": "tab",
+      "value": "1",
+      "rows": 92672,
+      "users": 20119,
+      "positive_rate": 0.3562133014202118,
+      "GAUC": 0.6198892285678674,
+      "nDCG@5": 0.5405215627647453,
+      "primary": 0.5802053956663064
+    },
+    {
+      "dimension": "tab",
+      "value": "6",
+      "rows": 5170,
+      "users": 2212,
+      "positive_rate": 0.09613152593374252,
+      "GAUC": 0.6135531135531135,
+      "nDCG@5": 0.10574646246365624,
+      "primary": 0.3596497880083849
+    },
+    {
+      "dimension": "tab",
+      "value": "8",
+      "rows": 547,
+      "users": 340,
+      "positive_rate": 0.021937843412160873,
+      "GAUC": 0.2685185185185185,
+      "nDCG@5": 0.025250956840972595,
+      "primary": 0.14688473767974555
+    },
+    {
+      "dimension": "tab",
+      "value": "4",
+      "rows": 7877,
+      "users": 4209,
+      "positive_rate": 0.45880410075187683,
+      "GAUC": 0.5829129086686526,
+      "nDCG@5": 0.5484108080542566,
+      "primary": 0.5656618583614546
+    },
+    {
+      "dimension": "tab",
+      "value": "2",
+      "rows": 3834,
+      "users": 1126,
+      "positive_rate": 0.35706833004951477,
+      "GAUC": 0.6470799797419257,
+      "nDCG@5": 0.5155725673256637,
+      "primary": 0.5813262735337947
+    },
+    {
+      "dimension": "tab",
+      "value": "12",
+      "rows": 226,
+      "users": 112,
+      "positive_rate": 0.13274335861206055,
+      "GAUC": 0.7017543859649124,
+      "nDCG@5": 0.17616348037730342,
+      "primary": 0.4389589331711079
+    },
+    {
+      "dimension": "tab",
+      "value": "5",
+      "rows": 291,
+      "users": 129,
+      "positive_rate": 0.10309278219938278,
+      "GAUC": 0.5,
+      "nDCG@5": 0.10962235223186544,
+      "primary": 0.3048111761159327
+    },
+    {
+      "dimension": "hour",
+      "value": "16",
+      "rows": 6858,
+      "users": 4727,
+      "positive_rate": 0.29629629850387573,
+      "GAUC": 0.6452742799247358,
+      "nDCG@5": 0.3573182215464142,
+      "primary": 0.501296250735575
+    },
+    {
+      "dimension": "hour",
+      "value": "18",
+      "rows": 7129,
+      "users": 5024,
+      "positive_rate": 0.3062140643596649,
+      "GAUC": 0.6711772486772486,
+      "nDCG@5": 0.36278964833695804,
+      "primary": 0.5169834485071033
+    },
+    {
+      "dimension": "hour",
+      "value": "22",
+      "rows": 8592,
+      "users": 5598,
+      "positive_rate": 0.299464613199234,
+      "GAUC": 0.6698781838316722,
+      "nDCG@5": 0.36801380844759307,
+      "primary": 0.5189459961396327
+    },
+    {
+      "dimension": "hour",
+      "value": "17",
+      "rows": 7390,
+      "users": 5041,
+      "positive_rate": 0.3125845789909363,
+      "GAUC": 0.6634384384384384,
+      "nDCG@5": 0.37839745804693203,
+      "primary": 0.5209179482426852
+    },
+    {
+      "dimension": "hour",
+      "value": "13",
+      "rows": 6962,
+      "users": 4869,
+      "positive_rate": 0.3217466175556183,
+      "GAUC": 0.6205986808726535,
+      "nDCG@5": 0.3788775807041705,
+      "primary": 0.499738130788412
+    },
+    {
+      "dimension": "hour",
+      "value": "23",
+      "rows": 7799,
+      "users": 4961,
+      "positive_rate": 0.29978203773498535,
+      "GAUC": 0.6646052553355923,
+      "nDCG@5": 0.3747109416018424,
+      "primary": 0.5196580984687174
+    },
+    {
+      "dimension": "hour",
+      "value": "12",
+      "rows": 6808,
+      "users": 4814,
+      "positive_rate": 0.33445945382118225,
+      "GAUC": 0.6542406311637082,
+      "nDCG@5": 0.39741893999069894,
+      "primary": 0.5258297855772036
+    },
+    {
+      "dimension": "hour",
+      "value": "21",
+      "rows": 8073,
+      "users": 5558,
+      "positive_rate": 0.3090548813343048,
+      "GAUC": 0.653075599556833,
+      "nDCG@5": 0.3760028936892169,
+      "primary": 0.514539246623025
+    },
+    {
+      "dimension": "hour",
+      "value": "20",
+      "rows": 7618,
+      "users": 5290,
+      "positive_rate": 0.30506694316864014,
+      "GAUC": 0.6718176393364365,
+      "nDCG@5": 0.36499426995351514,
+      "primary": 0.5184059546449757
+    },
+    {
+      "dimension": "hour",
+      "value": "2",
+      "rows": 2018,
+      "users": 1411,
+      "positive_rate": 0.31070366501808167,
+      "GAUC": 0.6306306306306306,
+      "nDCG@5": 0.3715540804415852,
+      "primary": 0.501092355536108
+    },
+    {
+      "dimension": "hour",
+      "value": "9",
+      "rows": 4628,
+      "users": 3347,
+      "positive_rate": 0.3195765018463135,
+      "GAUC": 0.6495539334955392,
+      "nDCG@5": 0.37645431294483445,
+      "primary": 0.5130041232201868
+    },
+    {
+      "dimension": "hour",
+      "value": "19",
+      "rows": 6820,
+      "users": 4861,
+      "positive_rate": 0.30791789293289185,
+      "GAUC": 0.6763339070567986,
+      "nDCG@5": 0.3636180924872706,
+      "primary": 0.5199759997720346
+    },
+    {
+      "dimension": "hour",
+      "value": "3",
+      "rows": 1284,
+      "users": 936,
+      "positive_rate": 0.33255451917648315,
+      "GAUC": 0.48636363636363644,
+      "nDCG@5": 0.3858694465065429,
+      "primary": 0.4361165414350897
+    },
+    {
+      "dimension": "hour",
+      "value": "14",
+      "rows": 6003,
+      "users": 4316,
+      "positive_rate": 0.31067800521850586,
+      "GAUC": 0.6326734875444839,
+      "nDCG@5": 0.36312164347130355,
+      "primary": 0.49789756550789377
+    },
+    {
+      "dimension": "hour",
+      "value": "11",
+      "rows": 5949,
+      "users": 4234,
+      "positive_rate": 0.3151790201663971,
+      "GAUC": 0.6240776699029127,
+      "nDCG@5": 0.3692377843870718,
+      "primary": 0.49665772714499223
+    },
+    {
+      "dimension": "hour",
+      "value": "1",
+      "rows": 3055,
+      "users": 2094,
+      "positive_rate": 0.31554827094078064,
+      "GAUC": 0.6683125599232982,
+      "nDCG@5": 0.3773433571634849,
+      "primary": 0.5228279585433915
+    },
+    {
+      "dimension": "hour",
+      "value": "8",
+      "rows": 3776,
+      "users": 2829,
+      "positive_rate": 0.3355402648448944,
+      "GAUC": 0.6057838660578387,
+      "nDCG@5": 0.38485028483361106,
+      "primary": 0.4953170754457249
+    },
+    {
+      "dimension": "hour",
+      "value": "5",
+      "rows": 1182,
+      "users": 856,
+      "positive_rate": 0.3096446692943573,
+      "GAUC": 0.701310861423221,
+      "nDCG@5": 0.3817576350159047,
+      "primary": 0.5415342482195629
+    },
+    {
+      "dimension": "hour",
+      "value": "15",
+      "rows": 6058,
+      "users": 4291,
+      "positive_rate": 0.3180917799472809,
+      "GAUC": 0.6298585673585674,
+      "nDCG@5": 0.3780148470146204,
+      "primary": 0.5039367071865939
+    },
+    {
+      "dimension": "hour",
+      "value": "4",
+      "rows": 1000,
+      "users": 755,
+      "positive_rate": 0.32100000977516174,
+      "GAUC": 0.6271794871794871,
+      "nDCG@5": 0.3752695901546058,
+      "primary": 0.5012245386670464
+    },
+    {
+      "dimension": "hour",
+      "value": "10",
+      "rows": 5239,
+      "users": 3782,
+      "positive_rate": 0.32258063554763794,
+      "GAUC": 0.6381243386243386,
+      "nDCG@5": 0.37546701937923893,
+      "primary": 0.5067956790017888
+    },
+    {
+      "dimension": "hour",
+      "value": "0",
+      "rows": 5275,
+      "users": 3450,
+      "positive_rate": 0.3141232132911682,
+      "GAUC": 0.6501984126984127,
+      "nDCG@5": 0.3858534472652911,
+      "primary": 0.5180259299818519
+    },
+    {
+      "dimension": "hour",
+      "value": "6",
+      "rows": 2196,
+      "users": 1631,
+      "positive_rate": 0.32422587275505066,
+      "GAUC": 0.6888185654008439,
+      "nDCG@5": 0.3705617718792097,
+      "primary": 0.5296901686400268
+    },
+    {
+      "dimension": "hour",
+      "value": "7",
+      "rows": 3197,
+      "users": 2421,
+      "positive_rate": 0.3387550711631775,
+      "GAUC": 0.6325126646403242,
+      "nDCG@5": 0.38853026838995164,
+      "primary": 0.5105214665151379
+    },
+    {
+      "dimension": "weekday",
+      "value": "4",
+      "rows": 22283,
+      "users": 10747,
+      "positive_rate": 0.3185836672782898,
+      "GAUC": 0.6580378077719883,
+      "nDCG@5": 0.43292924830143475,
+      "primary": 0.5454835280367115
+    },
+    {
+      "dimension": "weekday",
+      "value": "0",
+      "rows": 14911,
+      "users": 8297,
+      "positive_rate": 0.3123197555541992,
+      "GAUC": 0.6554160222871876,
+      "nDCG@5": 0.40960127840308413,
+      "primary": 0.532508650345136
+    },
+    {
+      "dimension": "weekday",
+      "value": "3",
+      "rows": 13972,
+      "users": 7807,
+      "positive_rate": 0.2898654341697693,
+      "GAUC": 0.6733562561263464,
+      "nDCG@5": 0.39236460819412433,
+      "primary": 0.5328604321602354
+    },
+    {
+      "dimension": "weekday",
+      "value": "1",
+      "rows": 14530,
+      "users": 8121,
+      "positive_rate": 0.3114246428012848,
+      "GAUC": 0.6364361466901448,
+      "nDCG@5": 0.40239494302162804,
+      "primary": 0.5194155448558864
+    },
+    {
+      "dimension": "weekday",
+      "value": "2",
+      "rows": 14328,
+      "users": 8062,
+      "positive_rate": 0.2973199188709259,
+      "GAUC": 0.669135205165008,
+      "nDCG@5": 0.39059027811543,
+      "primary": 0.5298627416402191
+    },
+    {
+      "dimension": "weekday",
+      "value": "6",
+      "rows": 18240,
+      "users": 9336,
+      "positive_rate": 0.3031249940395355,
+      "GAUC": 0.6513078383524863,
+      "nDCG@5": 0.4020800784704417,
+      "primary": 0.526693958411464
+    },
+    {
+      "dimension": "weekday",
+      "value": "5",
+      "rows": 26645,
+      "users": 11612,
+      "positive_rate": 0.3382247984409332,
+      "GAUC": 0.6595796564630966,
+      "nDCG@5": 0.4541584361227756,
+      "primary": 0.5568690462929361
+    },
+    {
+      "dimension": "upload_age",
+      "value": "8-14d",
+      "rows": 63856,
+      "users": 18343,
+      "positive_rate": 0.32394763827323914,
+      "GAUC": 0.66986319307542,
+      "nDCG@5": 0.4987494585432576,
+      "primary": 0.5843063258093388
+    },
+    {
+      "dimension": "upload_age",
+      "value": "15d+",
+      "rows": 61053,
+      "users": 17662,
+      "positive_rate": 0.30213093757629395,
+      "GAUC": 0.6651865799248383,
+      "nDCG@5": 0.48468413263236193,
+      "primary": 0.5749353562786002
+    },
+    {
+      "dimension": "video_type",
+      "value": "NORMAL",
+      "rows": 123772,
+      "users": 22348,
+      "positive_rate": 0.3123808205127716,
+      "GAUC": 0.6700164688447952,
+      "nDCG@5": 0.5359832249801236,
+      "primary": 0.6029998469124593
+    },
+    {
+      "dimension": "video_type",
+      "value": "AD",
+      "rows": 1128,
+      "users": 1046,
+      "positive_rate": 0.4104609787464142,
+      "GAUC": 0.59375,
+      "nDCG@5": 0.42622659326003864,
+      "primary": 0.5099882966300193
+    },
+    {
+      "dimension": "user_activity",
+      "value": "full_active",
+      "rows": 88623,
+      "users": 15506,
+      "positive_rate": 0.2959841191768646,
+      "GAUC": 0.6692414656385333,
+      "nDCG@5": 0.5232448317807274,
+      "primary": 0.5962431487096304
+    },
+    {
+      "dimension": "user_activity",
+      "value": "high_active",
+      "rows": 24077,
+      "users": 4682,
+      "positive_rate": 0.3503758907318115,
+      "GAUC": 0.6659275117374498,
+      "nDCG@5": 0.5598258804555882,
+      "primary": 0.6128766960965191
+    },
+    {
+      "dimension": "user_activity",
+      "value": "middle_active",
+      "rows": 8350,
+      "users": 1520,
+      "positive_rate": 0.37916168570518494,
+      "GAUC": 0.6836397504274486,
+      "nDCG@5": 0.5909743928622845,
+      "primary": 0.6373070716448666
+    },
+    {
+      "dimension": "user_activity",
+      "value": "low_active",
+      "rows": 643,
+      "users": 115,
+      "positive_rate": 0.4276827275753021,
+      "GAUC": 0.6583488358357326,
+      "nDCG@5": 0.629464712001565,
+      "primary": 0.6439067739186488
+    },
+    {
+      "dimension": "user_activity",
+      "value": "2_14_day_new",
+      "rows": 2813,
+      "users": 489,
+      "positive_rate": 0.3114112913608551,
+      "GAUC": 0.6814300765336863,
+      "nDCG@5": 0.548758911716438,
+      "primary": 0.6150944941250621
+    },
+    {
+      "dimension": "user_activity",
+      "value": "single_low_active",
+      "rows": 258,
+      "users": 40,
+      "positive_rate": 0.3759689927101135,
+      "GAUC": 0.6689705467400039,
+      "nDCG@5": 0.54784300722844,
+      "primary": 0.608406776984222
+    }
+  ]
+}

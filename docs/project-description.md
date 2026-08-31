@@ -100,13 +100,18 @@ experiments.
 Our strongest completed validation run currently records:
 
 ```text
-GAUC:    0.6728
-nDCG@5:  0.5386
-Primary: 0.6057
+GAUC:    0.6732213
+nDCG@5:  0.5385662
+Primary: 0.6058938
 ```
 
 These are validation results, not hidden-test results. The competition organizers
 perform the hidden evaluation after submission.
+
+The explicit final evaluation of the frozen validation winner on the local test split
+returned GAUC `0.6665823`, nDCG@5 `0.5314327`, and Primary `0.5990075` across 170,588
+rows and 23,875 users. Test metrics were computed after research and were not exposed
+to the Planner; the hidden competition score is determined by the organizers.
 
 ## Development tools
 
@@ -150,4 +155,3 @@ code diff, validation metrics, errors, recovery actions, runtime, and promotion
 decision. The run directory also contains the research trajectory, tree snapshot,
 LLM request audit, and the run's best checkpoint. This makes the agent's decisions
 inspectable from the first baseline reproduction through the final validation winner.
-

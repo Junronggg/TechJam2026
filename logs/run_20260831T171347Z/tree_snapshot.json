@@ -1,0 +1,365 @@
+{
+  "nodes": [
+    {
+      "node_id": "baseline",
+      "parent_id": null,
+      "branch": "baseline",
+      "status": "success",
+      "decision": "KEEP",
+      "primary": 0.6054142399875351,
+      "config": {
+        "model": "hybrid_blend",
+        "training_objective": "bpr",
+        "hyperparameters": {
+          "embedding_dim": 16,
+          "learning_rate": 0.0005,
+          "epochs": 40,
+          "l2": 1e-06,
+          "batch_size": 8192,
+          "patience": 4,
+          "seed": 1,
+          "ensemble_size": 1,
+          "ensemble_seed_set": "sequential",
+          "negatives_per_positive": 2,
+          "negative_sampling_strategy": "same_author",
+          "hard_negative_pool_size": 0,
+          "dropout": 0.1,
+          "sequence_length": 20,
+          "auxiliary_weight": 0.2,
+          "graph_layers": 2,
+          "validation_metric": "nDCG@5",
+          "blend_mode": "rank"
+        },
+        "features": {
+          "user_long_view_rate": false,
+          "item_long_view_rate": false,
+          "continuous_history_stats": false,
+          "user_tab_long_view_rate": false,
+          "duration_fine_bucket": true,
+          "tag": true,
+          "user_tag_impression_count": false,
+          "user_tag_long_view_rate": false,
+          "author_impression_count": false,
+          "author_long_view_count": false,
+          "author_long_view_rate": false,
+          "user_author_impression_count": false,
+          "user_author_long_view_count": false,
+          "user_author_long_view_rate": false,
+          "hour": false,
+          "weekday": false,
+          "upload_age_bucket": false,
+          "freshness_decay": false,
+          "user_activity": false,
+          "video_type": false,
+          "time_decay_item_popularity": false,
+          "time_decay_author_popularity": false,
+          "time_decay_tag_popularity": false,
+          "recent_history_similarity": false
+        },
+        "lightgbm_hyperparameters": {
+          "learning_rate": 0.05,
+          "num_leaves": 31,
+          "n_estimators": 500,
+          "min_child_samples": 100,
+          "subsample": 0.9,
+          "colsample_bytree": 0.9,
+          "reg_lambda": 0.0001,
+          "early_stopping_rounds": 30
+        }
+      },
+      "research_phase": null,
+      "expansion_mode": null,
+      "strategy_id": null,
+      "reference_ids": [],
+      "search_outcome": "valid_nonimproving",
+      "search_reward": 0
+    },
+    {
+      "node_id": "exp_001",
+      "parent_id": "baseline",
+      "branch": "optimization",
+      "status": "success",
+      "decision": "KEEP",
+      "primary": 0.6058937506913209,
+      "config": {
+        "model": "hybrid_blend",
+        "training_objective": "bpr",
+        "hyperparameters": {
+          "embedding_dim": 16,
+          "learning_rate": 0.0005,
+          "epochs": 40,
+          "l2": 1e-06,
+          "batch_size": 8192,
+          "patience": 4,
+          "seed": 1,
+          "ensemble_size": 1,
+          "ensemble_seed_set": "sequential",
+          "negatives_per_positive": 2,
+          "negative_sampling_strategy": "same_author",
+          "hard_negative_pool_size": 0,
+          "dropout": 0.0,
+          "sequence_length": 20,
+          "auxiliary_weight": 0.2,
+          "graph_layers": 2,
+          "validation_metric": "nDCG@5",
+          "blend_mode": "rank"
+        },
+        "features": {
+          "user_long_view_rate": false,
+          "item_long_view_rate": false,
+          "continuous_history_stats": false,
+          "user_tab_long_view_rate": false,
+          "duration_fine_bucket": true,
+          "tag": true,
+          "user_tag_impression_count": false,
+          "user_tag_long_view_rate": false,
+          "author_impression_count": false,
+          "author_long_view_count": false,
+          "author_long_view_rate": false,
+          "user_author_impression_count": false,
+          "user_author_long_view_count": false,
+          "user_author_long_view_rate": false,
+          "hour": false,
+          "weekday": false,
+          "upload_age_bucket": false,
+          "freshness_decay": false,
+          "user_activity": false,
+          "video_type": false,
+          "time_decay_item_popularity": false,
+          "time_decay_author_popularity": false,
+          "time_decay_tag_popularity": false,
+          "recent_history_similarity": false
+        },
+        "lightgbm_hyperparameters": {
+          "learning_rate": 0.05,
+          "num_leaves": 31,
+          "n_estimators": 500,
+          "min_child_samples": 100,
+          "subsample": 0.9,
+          "colsample_bytree": 0.9,
+          "reg_lambda": 0.0001,
+          "early_stopping_rounds": 30
+        }
+      },
+      "research_phase": "explore",
+      "expansion_mode": "primary",
+      "strategy_id": "strategy_optimization_stability",
+      "reference_ids": [
+        "prior_run_20260831T151900Z_5",
+        "prior_run_20260831T155936Z_5",
+        "prior_run_20260831T155936Z_4",
+        "prior_run_20260831T155936Z_3"
+      ],
+      "search_outcome": "valid_nonimproving",
+      "search_reward": 0
+    },
+    {
+      "node_id": "exp_002",
+      "parent_id": "baseline",
+      "branch": "ranking_objective",
+      "status": "success",
+      "decision": "REJECT",
+      "primary": 0.6057048420448574,
+      "config": {
+        "model": "hybrid_blend",
+        "training_objective": "bpr",
+        "hyperparameters": {
+          "embedding_dim": 16,
+          "learning_rate": 0.0005,
+          "epochs": 40,
+          "l2": 1e-06,
+          "batch_size": 8192,
+          "patience": 4,
+          "seed": 1,
+          "ensemble_size": 1,
+          "ensemble_seed_set": "sequential",
+          "negatives_per_positive": 4,
+          "negative_sampling_strategy": "same_author",
+          "hard_negative_pool_size": 0,
+          "dropout": 0.1,
+          "sequence_length": 20,
+          "auxiliary_weight": 0.2,
+          "graph_layers": 2,
+          "validation_metric": "nDCG@5",
+          "blend_mode": "rank"
+        },
+        "features": {
+          "user_long_view_rate": false,
+          "item_long_view_rate": false,
+          "continuous_history_stats": false,
+          "user_tab_long_view_rate": false,
+          "duration_fine_bucket": true,
+          "tag": true,
+          "user_tag_impression_count": false,
+          "user_tag_long_view_rate": false,
+          "author_impression_count": false,
+          "author_long_view_count": false,
+          "author_long_view_rate": false,
+          "user_author_impression_count": false,
+          "user_author_long_view_count": false,
+          "user_author_long_view_rate": false,
+          "hour": false,
+          "weekday": false,
+          "upload_age_bucket": false,
+          "freshness_decay": false,
+          "user_activity": false,
+          "video_type": false,
+          "time_decay_item_popularity": false,
+          "time_decay_author_popularity": false,
+          "time_decay_tag_popularity": false,
+          "recent_history_similarity": false
+        },
+        "lightgbm_hyperparameters": {
+          "learning_rate": 0.05,
+          "num_leaves": 31,
+          "n_estimators": 500,
+          "min_child_samples": 100,
+          "subsample": 0.9,
+          "colsample_bytree": 0.9,
+          "reg_lambda": 0.0001,
+          "early_stopping_rounds": 30
+        }
+      },
+      "research_phase": "focus",
+      "expansion_mode": "primary",
+      "strategy_id": "strategy_ranking_alignment",
+      "reference_ids": [
+        "prior_run_20260831T151900Z_5",
+        "prior_run_20260831T155936Z_3",
+        "prior_run_20260831T155936Z_5",
+        "prior_run_20260831T155936Z_4"
+      ],
+      "search_outcome": "valid_nonimproving",
+      "search_reward": 0
+    },
+    {
+      "node_id": "exp_003",
+      "parent_id": "baseline",
+      "branch": "ranking_objective",
+      "status": "success",
+      "decision": "REJECT",
+      "primary": 0.6054493755427861,
+      "config": {
+        "model": "hybrid_blend",
+        "training_objective": "bpr",
+        "hyperparameters": {
+          "embedding_dim": 16,
+          "learning_rate": 0.0005,
+          "epochs": 40,
+          "l2": 1e-06,
+          "batch_size": 8192,
+          "patience": 4,
+          "seed": 1,
+          "ensemble_size": 1,
+          "ensemble_seed_set": "sequential",
+          "negatives_per_positive": 8,
+          "negative_sampling_strategy": "same_author",
+          "hard_negative_pool_size": 0,
+          "dropout": 0.1,
+          "sequence_length": 20,
+          "auxiliary_weight": 0.2,
+          "graph_layers": 2,
+          "validation_metric": "nDCG@5",
+          "blend_mode": "rank"
+        },
+        "features": {
+          "user_long_view_rate": false,
+          "item_long_view_rate": false,
+          "continuous_history_stats": false,
+          "user_tab_long_view_rate": false,
+          "duration_fine_bucket": true,
+          "tag": true,
+          "user_tag_impression_count": false,
+          "user_tag_long_view_rate": false,
+          "author_impression_count": false,
+          "author_long_view_count": false,
+          "author_long_view_rate": false,
+          "user_author_impression_count": false,
+          "user_author_long_view_count": false,
+          "user_author_long_view_rate": false,
+          "hour": false,
+          "weekday": false,
+          "upload_age_bucket": false,
+          "freshness_decay": false,
+          "user_activity": false,
+          "video_type": false,
+          "time_decay_item_popularity": false,
+          "time_decay_author_popularity": false,
+          "time_decay_tag_popularity": false,
+          "recent_history_similarity": false
+        },
+        "lightgbm_hyperparameters": {
+          "learning_rate": 0.05,
+          "num_leaves": 31,
+          "n_estimators": 500,
+          "min_child_samples": 100,
+          "subsample": 0.9,
+          "colsample_bytree": 0.9,
+          "reg_lambda": 0.0001,
+          "early_stopping_rounds": 30
+        }
+      },
+      "research_phase": "confirm",
+      "expansion_mode": "primary",
+      "strategy_id": "strategy_ranking_alignment",
+      "reference_ids": [
+        "prior_run_20260831T151900Z_5",
+        "prior_run_20260831T155936Z_3",
+        "prior_run_20260831T155936Z_4",
+        "prior_run_20260830T103426Z_1"
+      ],
+      "search_outcome": "valid_nonimproving",
+      "search_reward": 0
+    }
+  ],
+  "reference_edges": [
+    {
+      "reference_id": "prior_run_20260831T151900Z_5",
+      "node_id": "exp_001"
+    },
+    {
+      "reference_id": "prior_run_20260831T155936Z_5",
+      "node_id": "exp_001"
+    },
+    {
+      "reference_id": "prior_run_20260831T155936Z_4",
+      "node_id": "exp_001"
+    },
+    {
+      "reference_id": "prior_run_20260831T155936Z_3",
+      "node_id": "exp_001"
+    },
+    {
+      "reference_id": "prior_run_20260831T151900Z_5",
+      "node_id": "exp_002"
+    },
+    {
+      "reference_id": "prior_run_20260831T155936Z_3",
+      "node_id": "exp_002"
+    },
+    {
+      "reference_id": "prior_run_20260831T155936Z_5",
+      "node_id": "exp_002"
+    },
+    {
+      "reference_id": "prior_run_20260831T155936Z_4",
+      "node_id": "exp_002"
+    },
+    {
+      "reference_id": "prior_run_20260831T151900Z_5",
+      "node_id": "exp_003"
+    },
+    {
+      "reference_id": "prior_run_20260831T155936Z_3",
+      "node_id": "exp_003"
+    },
+    {
+      "reference_id": "prior_run_20260831T155936Z_4",
+      "node_id": "exp_003"
+    },
+    {
+      "reference_id": "prior_run_20260830T103426Z_1",
+      "node_id": "exp_003"
+    }
+  ]
+}
