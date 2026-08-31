@@ -518,6 +518,40 @@ Pointwise 版本的 GAUC 略升但 nDCG 略降，最终 Primary 只增加 `0.000
 
 路线变化：不能再说“censored watch-time 没测过”，也不能把微小正值写成有效提升。只在提出不同的 survival likelihood、共享结构或经过预声明的强假设时才重开，不继续扫辅助权重。
 
+### O. FM+BPR + censored watch-time 复跑
+
+为核对外部报告中的 fm_watchtime 思路，重新运行：
+python scripts/run_fm_watchtime_ablation.py。主任务是 FM+BPR，辅助目标使用
+one-sided censored watch-time；当前脚本的辅助权重为 **0.3**，因此不是外部文字中
+提到的 lambda=0.2 的完全相同配置。只使用 validation，test_labels_used=false。
+
+| 配置 | GAUC | nDCG@5 | Primary | 对 FM+BPR 0.603963 |
+|---|---:|---:|---:|---:|
+| FM+BPR baseline | — | — | 0.603963 | — |
+| FM+BPR + censored watch-time | 0.670766 | 0.537451 | **0.604108** | **+0.000145** |
+| 上述模型 + prior_video_exposure + author_recency | 0.670981 | 0.537463 | **0.604222** | **+0.000259** |
+
+解释：这个目标比 capped/log-watch regression 更接近外部报告的共享 embedding
+辅助监督，确实复现了一个小的 validation 增量；但增量仍小于当前运行波动，
+且两种配置都低于 0.604713 的稳健 ensemble（分别低 0.000605 和
+0.000491）。因此本次结论是 **PROMISING / RESEARCH_ONLY**，不能把它写成
+新的冠军，也不能据此声称已经复现外部 0.607。若要严格验证外部 lambda=0.2
+结论，应单独预注册并运行该权重的对照，不能把 0.3 的结果当成 0.2。
+
+随后用相同代码、相同 seed 和相同数据单独复现外部文字中的
+lambda=0.2（输出目录 runs/fm_watchtime_ablation_lambda02/）：
+
+| 配置 | GAUC | nDCG@5 | Primary | 对 FM+BPR 0.603963 |
+|---|---:|---:|---:|---:|
+| FM+BPR + censored watch-time，lambda=0.2 | 0.671008 | 0.537393 | **0.604201** | **+0.000238** |
+| 上述模型 + prior_video_exposure + author_recency | 0.670770 | 0.537537 | **0.604154** | **+0.000191** |
+
+lambda=0.2 的纯 watch-time 版本比当前脚本的 lambda=0.3 高 0.000092，
+但仍比稳健 ensemble 低 0.000512。加两个历史字段后反而比纯版本低
+0.000047，没有形成叠加收益。结论更新为：**lambda=0.2 是目前该 FM
+watch-time 分支的最好单次结果，但仍是小幅、未做 rolling/paired-seed
+确认的候选，不能替换 ensemble。**
+
 ---
 
 ## 当前资产与状态
@@ -607,3 +641,49 @@ python scripts/evaluate_global_context_ensemble.py
 Agent 自主运行、memory ablation、运行耗时和停止原因单独记录在 [`AGENT-TRY.md`](AGENT-TRY.md)。
 
 最后更新结论：**当前 ML 冠军仍为 0.6 FM+BPR + 0.4 DeepFM+BCE，Validation Primary 0.604713；已知失败 feature 不再重复。**
+
+## P. 借鉴外部方案：缓存预测后的异构 ensemble 搜索
+
+外部高分方案最值得借鉴的不是照抄某一个模型，而是把训练结果保存成
+validation prediction cache，再离线比较不同模型子集、分数校准和粗粒度权重。这样一次训练可以支持很多融合假设，也能检查“单模型不强但是否互补”。本次新增：
+
+```bash
+python scripts/search_heterogeneous_ensemble.py --max-members 3
+```
+
+搜索约束是预先固定的：最多 3 个成员、z-score/rank/混合校准、少量权重网格；只读 validation cache 或已有 checkpoint 推理，不读取 test label、不重新训练。结果写入
+`runs/heterogeneous_ensemble_search/summary.json`，并缓存 DCNv2/轻量序列模型的 validation prediction，之后重复搜索无需再次构造序列。
+
+### 本次候选池与结果
+
+| 组件 | Validation Primary | 作用解释 |
+|---|---:|---|
+| FM+BPR | 0.603963 | 主 ranking 信号 |
+| DeepFM+BCE | 0.603862 | 非线性交互信号 |
+| Multi-task like | 0.604400 | like 辅助监督 |
+| Censored watch-time BCE | 0.603939 | watch-time 辅助监督 |
+| LambdaRank | 0.598493 | 与 FM/DeepFM 相关性较低的 ranking 视角 |
+| DCNv2 | 0.604164 | 交叉网络，单模型较强但与 DeepFM 高相关 |
+| Lightweight sequence | 0.603369 | 顺序信息候选；当前单模型较弱 |
+
+| 融合 | Primary | 相对稳健冠军 0.604713 |
+|---|---:|---:|
+| `multitask_like + LambdaRank + DCNv2`，z-score/rank，权重 `0.6/0.2/0.2` | 0.605263 | +0.000550 |
+| `fm_watchtime + LambdaRank + DCNv2`，z-score/rank，权重 `0.2/0.3/0.5` | **0.605309** | **+0.000596** |
+
+### 学到的东西与判断
+
+1. **低单模型分数不等于没有 ensemble 价值。** LambdaRank 单独只有 0.598493，但与 watch-time/DCNv2 的 within-user prediction correlation 约 `0.872–0.880`，明显低于 FM/DeepFM 家族的约 `0.946–0.997`；它提供了不同的排序视角，进入前三名候选。
+2. **真正有收益的是“不同信息源 + 缓存搜索”，不是继续堆同一 FM 变体。** 当前最好组合包含 watch-time 或 like 辅助、LambdaRank 和交叉网络，和现有 FM/DeepFM 预测并不完全相同。
+3. **仍不能宣布超过 0.605365。** `0.605309` 只比稳健冠军高 `0.000596`，但比已有单 split 峰值 `0.605365` 低 `0.000056`，且本轮尚未做 rolling/paired-seed；状态为 `RESEARCH_ONLY`，不替换最终冠军。
+4. **搜索本身也可能过拟合 validation。** 所以后续必须对搜索选出的一个组合预先固定配置，再做 rolling 和 paired seeds；不能继续在同一 split 上无限细扫。
+
+之后若新增训练模型，只需要保存其 `*_validation.npz`（字段 `users/labels/scores`），即可通过：
+
+```bash
+python scripts/search_heterogeneous_ensemble.py \
+  --cache bst=path/to/bst_validation.npz \
+  --max-members 3
+```
+
+接入候选池。这个接口保留了外部方案的可扩展性，同时把模型选择、融合网格和最终确认分开，避免把一次 validation 峰值误当成泛化结论。
