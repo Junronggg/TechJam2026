@@ -152,15 +152,15 @@ On macOS or Linux, use:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python3 run_agent.py --researcher deterministic
+python3 scripts/run_agent.py --researcher deterministic
 ```
 
 Run the deterministic planner memory ablation with the same experiment budget:
 
 ```bash
-python3 run_agent.py --researcher deterministic --memory-mode no_memory
-python3 run_agent.py --researcher deterministic --memory-mode raw_history
-python3 run_agent.py --researcher deterministic --memory-mode distilled_patterns
+python3 scripts/run_agent.py --researcher deterministic --memory-mode no_memory
+python3 scripts/run_agent.py --researcher deterministic --memory-mode raw_history
+python3 scripts/run_agent.py --researcher deterministic --memory-mode distilled_patterns
 ```
 
 Each run records `planner_memory_mode` in `run_meta.json` and `summary.json`.
@@ -233,7 +233,7 @@ Development runs do not evaluate test by default. After the autonomous trajector
 finished and frozen, run the one intended final test evaluation with:
 
 ```bash
-python3 run_agent.py --researcher llm --finalize-test
+python3 scripts/run_agent.py --researcher llm --finalize-test
 ```
 
 A validation-only deterministic reference trajectory completed five experiments,
