@@ -16,6 +16,14 @@ from .memory import (
     collect_tried_keys,
     distill_research_patterns,
 )
+from .research_prompt import (
+    RESEARCH_PRINCIPLES,
+    capability_policy,
+    controller_guards,
+    decision_record_contract,
+    system_prompt,
+)
+from .skills import default_skill_registry
 from .tree import branch_name, node_id_for, select_parent
 
 # One experiment may change 1-4 allow-listed fields. A single field is preferred,
@@ -39,6 +47,7 @@ BLOCKED_EVIDENCE_KEYS = frozenset({
     "test_gauc",
     "test_ndcg",
 })
+SKILL_REGISTRY = default_skill_registry()
 CHANGE_RULE = (
     "Propose exactly one legal experiment. Change between 1 and "
     f"{MAX_CHANGE_FIELDS} allow-listed fields. Prefer a single-field change; "
@@ -279,6 +288,7 @@ def build_planner_prompt(
     budget: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the planner context. Does not call an HTTP API."""
+    SKILL_REGISTRY.require("read_research_memory")
     planning_config = expansion_config or best_config
     sanitized_evidence = sanitize_prior_evidence(prior_evidence or {})
     ranked_candidates = rank_candidates(
@@ -290,6 +300,11 @@ def build_planner_prompt(
             "(mean of validation GAUC and nDCG@5)."
         ),
         "change_rule": CHANGE_RULE,
+        "research_principles": list(RESEARCH_PRINCIPLES),
+        "skill_catalog": SKILL_REGISTRY.catalog(),
+        "controller_guards": controller_guards(),
+        "audited_decision_record": decision_record_contract(),
+        "capability_policy": capability_policy(),
         "official_baseline_primary": official_baseline_primary,
         "epsilon": epsilon,
         "budget": budget or {
@@ -683,12 +698,25 @@ class OpenAICompatibleResearcher:
             self.last_selection = {
                 "selected_family": selected_row.get("family", "llm_generated"),
                 "selected_score": selected_row.get("score"),
+                "selected_skill": selected_row.get("skill_id"),
                 "criteria": (
                     "LLM selected one legal action after reviewing ranked candidates, "
                     "validation memory, cost budget, and prior evidence"
                 ),
                 "ranked_candidates": prompt.get("candidate_ranking", []),
                 "retrieved_pattern": selected_row.get("retrieved_pattern"),
+                "decision_record": {
+                    "hypothesis": proposal.hypothesis,
+                    "mechanism_basis": proposal.reason,
+                    "family": selected_row.get("family"),
+                    "proposed_action": selected_row.get("skill_id"),
+                    "expected_gain": selected_row.get("expected_gain"),
+                    "novelty": selected_row.get("novelty"),
+                    "risk": selected_row.get("risk"),
+                    "required_confirmation": selected_row.get(
+                        "required_confirmation", []
+                    ),
+                },
             }
             self.last_error = None
             return Proposal(
@@ -709,18 +737,7 @@ class OpenAICompatibleResearcher:
         messages = [
             {
                 "role": "system",
-                "content": (
-                    "You are a cautious autonomous ML researcher. Treat prior_evidence as "
-                    "authoritative experimental memory and dataset_facts as training-only "
-                    "observations. Use method_reference as conditional guidance, not as proof. "
-                    "Select one candidate_ranking changes object exactly; do not edit, add, "
-                    "or omit its fields. "
-                    "Do not repeat rejected mechanisms "
-                    "unless the proposed legal action tests a materially different hypothesis. "
-                    "Prefer evidence from multiple rolling folds over a single split. Propose "
-                    "only values explicitly listed in allowed_values; roadmap items are not "
-                    "currently executable actions."
-                ),
+                "content": system_prompt(),
             },
             {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
         ]

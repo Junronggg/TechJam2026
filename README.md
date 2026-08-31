@@ -89,6 +89,27 @@ compute cost, and redundancy, selects one, trains it, evaluates validation ranki
 reflects on the result, updates structured memory, and repeats. It never gives an LLM
 permission to edit the repository.
 
+The architecture separates three responsibilities:
+
+- `research_prompt.py` defines the scientist mindset: validation-only reasoning,
+  novelty, falsification, confirmation, attribution, and uncertainty.
+- `skills.py` is the executable lab-instrument registry. Every candidate is bound to
+  one available primary skill plus explicit evidence skills.
+- `controller.py` owns hard safety rules such as budgets, isolated timeouts, the pinned
+  evaluator, test-label exclusion, and rejection of unregistered skill bindings.
+
+The initial registry intentionally contains ten reusable capabilities: memory read/write,
+candidate profiling, ordinary and auxiliary training, feature construction, placebo,
+rolling, paired seeds, and prediction-diversity analysis. Skills describe capabilities,
+not answers such as “BPR is best.” The LLM still returns a compact hypothesis/reason plus
+one exact ranked config; expected gain, family, skill, risk, and required confirmation are
+copied from trusted planner/registry data into an audited `decision_record`. This avoids
+asking the LLM to self-report values the Controller can derive deterministically.
+
+Unregistered capabilities are reported as gaps and cannot execute. Automatic code/model
+generation is deliberately disabled; current declared gaps include a graph trainer and a
+safe new-model-family builder.
+
 The memory has two levels: per-experiment hypotheses and family-level distilled
 research patterns. Patterns can request confirmation, ensemble-only evaluation,
 matched controls, one cheap evidence-gathering run, or stopping a repeatedly weak

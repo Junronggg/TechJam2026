@@ -15,6 +15,7 @@ from .interventions import InterventionLogger
 from .memory import build_structured_research_memory, is_duplicate_config
 from .proposals import DeterministicResearcher, Proposal
 from .research_diagnostics import placebo_verdict
+from .skills import SKILL_REGISTRY_VERSION, default_skill_registry
 from .sequence_features import SEQUENCE_FEATURE_DIMS
 from .tree import (
     ExperimentParent,
@@ -83,6 +84,7 @@ class Controller:
         self.competition_converged_at: int | None = None
         self.competition_best_at_convergence: dict[str, Any] | None = None
         self.evidence_escalator = EvidenceEscalator.from_project(project)
+        self.skill_registry = default_skill_registry()
         self.auto_confirm = False
         self._confirmation_queue: list[ConfirmationAction] = []
         self.confirmations: list[dict[str, Any]] = []
@@ -94,6 +96,7 @@ class Controller:
         self.interventions = InterventionLogger(self.run_dir / "manual_interventions.jsonl")
 
     def _record(self, item: dict[str, Any], parent_id: str | None) -> None:
+        self.skill_registry.require("update_research_memory")
         self.history.append(item)
         self.tree.add(item["iteration"], parent_id, item)
         _write_json(self.run_dir / f"iteration_{item['iteration']:03d}.json", item)
@@ -114,6 +117,8 @@ class Controller:
         return config["hyperparameters"].get("feature_control", "real") != "real"
 
     def _diagnose(self, checkpoint: Path, champion: Path | None) -> dict[str, Any] | None:
+        self.skill_registry.require("profile_candidate")
+        self.skill_registry.require("analyze_prediction_diversity")
         diagnose = getattr(self.runner, "diagnose", None)
         if not callable(diagnose):
             return None
@@ -256,6 +261,7 @@ class Controller:
         self._pending_diagnostic = None
 
     def _maybe_schedule_placebos(self, item: dict[str, Any], checkpoint: Path) -> None:
+        self.skill_registry.require("run_placebo")
         policy = self.project.get("autonomy", {})
         if not bool(policy.get("automatic_placebo", True)):
             return
@@ -345,6 +351,13 @@ class Controller:
         action_iteration: int,
         action: ConfirmationAction,
     ) -> None:
+        confirmation_skill = {
+            "rolling": "run_rolling",
+            "paired_seeds": "run_paired_seeds",
+        }.get(action.kind)
+        if confirmation_skill is None:
+            raise ValueError(f"unsupported confirmation kind: {action.kind}")
+        self.skill_registry.require(confirmation_skill)
         output_dir = self.run_dir / "confirmations" / action.action_id
         record: dict[str, Any] = {
             "action_iteration": action_iteration,
@@ -663,6 +676,28 @@ class Controller:
             except (KeyError, TypeError, ValueError) as exc:
                 last_problem = ("search_exhausted", f"invalid proposal: {type(exc).__name__}: {exc}")
                 continue
+            selection = (
+                self._pending_candidate_selection
+                if isinstance(self._pending_candidate_selection, dict) else {}
+            )
+            family = str(selection.get("selected_family") or "unknown")
+            expected_skill = self.skill_registry.primary_for_candidate(
+                family, proposal.changes
+            )
+            try:
+                self.skill_registry.require(expected_skill)
+            except ValueError as exc:
+                last_problem = ("missing_capability", str(exc))
+                continue
+            selected_skill = selection.get("selected_skill")
+            if selected_skill not in (None, expected_skill):
+                last_problem = (
+                    "invalid_skill_binding",
+                    f"planner selected {selected_skill!r}, expected {expected_skill!r}",
+                )
+                continue
+            selection["selected_skill"] = expected_skill
+            self._pending_candidate_selection = selection
             if is_duplicate_config(candidate, self.history):
                 last_problem = ("duplicate_configuration",
                                 "candidate configuration already executed")
@@ -706,6 +741,10 @@ class Controller:
             "researcher": type(self.researcher).__name__,
             "research_after_convergence": bool(research_after_convergence),
             "auto_confirm": self.auto_confirm,
+            "skill_registry_version": SKILL_REGISTRY_VERSION,
+            "available_skills": [
+                row["skill_id"] for row in self.skill_registry.catalog()
+            ],
         })
         baseline = Proposal("Reproduce the official FM baseline.",
                             "A verified baseline anchors every subsequent comparison.", {}, "system")
@@ -826,6 +865,10 @@ class Controller:
                    "competition_best_at_convergence": self.competition_best_at_convergence,
                    "research_after_convergence": bool(research_after_convergence),
                    "auto_confirm": self.auto_confirm,
+                   "skill_registry_version": SKILL_REGISTRY_VERSION,
+                   "available_skills": [
+                       row["skill_id"] for row in self.skill_registry.catalog()
+                   ],
                    "research_exhausted": stop_reason == "search_exhausted",
                    "submission_candidate_count": sum(
                        row["submission_status"] == "ALLOW"

@@ -303,7 +303,60 @@ python scripts/run_agent.py \
 | Runtime | 232.1 秒 |
 | Test labels | 未使用 |
 
-它与已有专用脚本结果一致，证明通用执行器能正确执行任意合法 config 的 reference/candidate 对照；这不是新的 `0.604713` 以上结果。自动化测试覆盖 discovery 筛选、rolling 失败停止、rolling 后 paired seeds、区间跨 0 的双状态、已有 artifact 去重、预算计数和提交池状态。当前全套测试为 187 项。
+它与已有专用脚本结果一致，证明通用执行器能正确执行任意合法 config 的 reference/candidate 对照；这不是新的 `0.604713` 以上结果。自动化测试覆盖 discovery 筛选、rolling 失败停止、rolling 后 paired seeds、区间跨 0 的双状态、已有 artifact 去重、预算计数和提交池状态。
+
+### Run J：Prompt / Skill / Controller 分层
+
+这次是架构重构，不是 feature engineering，因此同样不改 `TRY.md` 的模型排行榜。
+
+```text
+Prompt
+= 研究原则与判断方式（软约束）
+
+Skill Registry
+= 当前真正可执行的实验能力
+
+Controller
+= test、预算、超时、evaluator、能力绑定等硬约束
+```
+
+Prompt 独立定义以下原则：只使用 train/validation、优先新 information source、尊重 `STOP_DIRECTION`、小涨需要 confirmation、新 categorical history feature 需要 placebo、ensemble 前检查 diversity，并区分 observation / interpretation。
+
+第一版 Registry 只注册 10 个复用能力：
+
+| 类别 | Skills |
+|---|---|
+| Discovery | `profile_candidate`, `build_feature` |
+| Training | `train_model`, `train_with_auxiliary_loss` |
+| Evidence | `run_placebo`, `run_rolling`, `run_paired_seeds`, `analyze_prediction_diversity` |
+| Memory | `read_research_memory`, `update_research_memory` |
+
+每个 skill 都有稳定 `skill_id`、owner、真实 handler、状态和 `test_labels_allowed=false`。每个 ranked candidate 现在额外包含：
+
+```text
+skill_id
+required_confirmation
+risk
+```
+
+Planner 选择后会生成固定的 audited decision record：
+
+```text
+hypothesis
+mechanism_basis
+family
+proposed_action
+expected_gain
+novelty
+risk
+required_confirmation
+```
+
+其中 expected gain、family、skill 和 confirmation 由可信 registry/ranking 填入，不要求 LLM 自报，避免 LLM 修改或编造这些字段。Controller 执行前重新解析 config 对应的 skill；未注册 skill 或绑定不一致会返回 `missing_capability` / `invalid_skill_binding`，不会开始训练。Run metadata 和 summary 也会记录 registry version 与 available skills。
+
+当前 `capability_builder_enabled=false`，并明确记录 `train_graph`、`build_new_model_family` 是能力缺口。也就是说系统已经能区分“不会做”和“实验失败”，但还不能让 LLM 自动写新模型代码。这是下一阶段受限 Capability Builder 的输入接口，而不是伪装成已经完成。
+
+验证结果：全套 **191 tests passed**，原 deterministic 首选仍是 BPR，已有模型结果与冠军 `0.604713` 没有改变。
 
 ## Memory 机制
 
@@ -356,9 +409,9 @@ created_from: artifact path + sha256 + extracted validation result
 
 优先级：
 
-1. 建立显式 `Capability Registry`，区分已实现、可生成、仅有想法和已否定的 experiment family。
-2. 让 planner 在现有动作不足时先输出结构化 `capability_need`，再由受限 builder 生成 schema / runner / smoke test；暂不允许 LLM 任意改代码。
-3. 优先增加真正不同的信息源：leakage-safe lightweight sequence encoder，其次是 LightGCN；不要把旧参数换名当作新 family。
+1. 当已注册动作不足时，让 planner 输出结构化 `capability_need`，明确缺少的信息源、接口和验证标准，而不是幻觉式选择不存在的 skill。
+2. 实现受限 Capability Builder：只能填充预定义 model/schema/runner/test 模板，通过 smoke test 后才允许注册；仍不允许 LLM 任意修改仓库。
+3. 现有 leakage-safe lightweight sequence 已进入 `train_model` 能力；下一个真正不同的缺口优先考虑 LightGCN/graph family。
 4. 做 planner replay 的 pre/post contract 对照，并比较 budgeted one-step lookahead 与当前 greedy planner。
 
 暂不宣称：

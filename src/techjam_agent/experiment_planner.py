@@ -12,6 +12,7 @@ from .config import (
     experiment_key,
 )
 from .memory import collect_tried_keys, distill_research_patterns
+from .skills import default_skill_registry
 
 
 FEATURE_FAMILIES = {
@@ -58,6 +59,7 @@ PRIOR_POLICIES = {
     "retest_with_control",
     "stop_direction",
 }
+SKILL_REGISTRY = default_skill_registry()
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,9 @@ class CandidateExperiment:
     novelty: float
     compute_cost: float
     redundancy: float
+    skill_id: str
+    required_confirmation: tuple[str, ...]
+    risk: str
 
 
 @dataclass(frozen=True)
@@ -103,9 +108,21 @@ def _candidate(
     prior: tuple[float, float, float, float, float] | None = None,
 ) -> CandidateExperiment:
     expected, evidence, novelty, cost, redundancy = prior or FAMILY_PRIORS[family]
+    skill_id = SKILL_REGISTRY.primary_for_candidate(family, changes)
+    SKILL_REGISTRY.require(skill_id)
+    confirmations = SKILL_REGISTRY.evidence_for_candidate(family, changes)
+    if cost >= 0.8:
+        risk = "high_compute_cost"
+    elif redundancy >= 0.8:
+        risk = "high_redundancy"
+    elif evidence < 0.5:
+        risk = "weak_prior_evidence"
+    else:
+        risk = "moderate"
     return CandidateExperiment(
         hypothesis, reason, changes, family,
         expected, evidence, novelty, cost, redundancy,
+        skill_id, confirmations, risk,
     )
 
 
@@ -507,6 +524,7 @@ class AutonomousExperimentPlanner:
             "memory_mode": self.memory_mode,
             "selected_family": winner.candidate.family,
             "selected_score": float(winner.score),
+            "selected_skill": winner.candidate.skill_id,
             "criteria": (
                 "expected_gain + evidence_strength + novelty - compute_cost - redundancy; "
                 "scoped artifact policies override family-level patterns only when the "
@@ -525,5 +543,17 @@ class AutonomousExperimentPlanner:
                 for choice in counterfactual_choices.values()
             ),
             "ranked_candidates": [row.as_dict() for row in ranked[:5]],
+            "decision_record": {
+                "hypothesis": winner.candidate.hypothesis,
+                "mechanism_basis": winner.candidate.reason,
+                "family": winner.candidate.family,
+                "proposed_action": winner.candidate.skill_id,
+                "expected_gain": winner.candidate.expected_gain,
+                "novelty": winner.candidate.novelty,
+                "risk": winner.candidate.risk,
+                "required_confirmation": list(
+                    winner.candidate.required_confirmation
+                ),
+            },
         }
         return winner.candidate
