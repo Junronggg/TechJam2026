@@ -32,7 +32,7 @@ def row(iteration: int, primary: float | None, changes: dict, *, parent_id: str 
         "iteration": iteration,
         "parent_id": parent_id,
         "status": status,
-        "decision": "KEEP" if iteration == 0 else "REJECT",
+        "decision": "KEEP" if iteration == 0 or verdict == "promote" else "REJECT",
         "changes": changes,
         "config": config,
         "metrics": metrics,
@@ -44,9 +44,12 @@ class FrontierTests(unittest.TestCase):
     def test_frontier_keeps_at_most_three_distinct_branches(self) -> None:
         history = [
             row(0, 0.6015, {}, parent_id=None),
-            row(1, 0.6020, {"training_objective": "bpr"}, parent_id="baseline"),
-            row(2, 0.6018, {"model": "lightgbm"}, parent_id="baseline"),
-            row(3, 0.6017, {"learning_rate": 0.002}, parent_id="baseline"),
+            row(1, 0.6020, {"training_objective": "bpr"}, parent_id="baseline",
+                verdict="promote"),
+            row(2, 0.6018, {"model": "lightgbm"}, parent_id="baseline",
+                verdict="promote"),
+            row(3, 0.6017, {"learning_rate": 0.002}, parent_id="baseline",
+                verdict="promote"),
         ]
         frontier = TreeSearchPolicy(TreePolicyConfig(max_active_branches=3)).frontier(history)
         self.assertEqual(len(frontier), 3)
@@ -66,7 +69,7 @@ class FrontierTests(unittest.TestCase):
         self.assertEqual(selection.parent.node_id, "exp_001")
         self.assertEqual(selection.exploitation, 0.6200)
 
-    def test_rejected_and_failure_producing_branch_is_deprioritized(self) -> None:
+    def test_rejected_and_failure_producing_branch_is_not_expandable(self) -> None:
         history = [
             row(0, 0.6015, {}, parent_id=None),
             row(1, 0.6016, {"model": "lightgbm"}, parent_id="baseline", verdict="reject"),
@@ -75,11 +78,10 @@ class FrontierTests(unittest.TestCase):
         ]
         selection = TreeSearchPolicy().select(history, remaining_seconds=3600)
         self.assertEqual(selection.parent.node_id, "baseline")
-        model_candidate = next(
-            candidate for candidate in TreeSearchPolicy().frontier(history)
-            if candidate.node_id == "exp_001"
+        self.assertEqual(
+            [candidate.node_id for candidate in TreeSearchPolicy().frontier(history)],
+            ["baseline"],
         )
-        self.assertEqual(model_candidate.branch, "model")
         self.assertGreaterEqual(selection.priority, selection.exploitation)
 
     def test_selection_is_deterministic_and_json_safe(self) -> None:

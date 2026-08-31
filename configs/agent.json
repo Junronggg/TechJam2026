@@ -1,5 +1,7 @@
 {
   "architecture": "planner_critic_tree_search",
+  "autonomous_mode": true,
+  "dynamic_candidate_bundles": true,
   "llm": {
     "provider": null,
     "model": null,

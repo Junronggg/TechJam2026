@@ -5,171 +5,190 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .operator_registry import (
+    ALLOWED_VALUES,
+    FEATURE_FIELDS,
+    HYPERPARAMETER_FIELDS,
+    MODEL_SPECS,
+    MODELS,
+    OBJECTIVES,
+    OPERATORS,
+    ROOT_FIELDS,
+)
 
-ALLOWED_VALUES = {
-    "embedding_dim": (8, 16, 24, 32, 48, 64),
-    "learning_rate": (0.0003, 0.0005, 0.001, 0.002, 0.005),
-    "epochs": (10, 20, 30, 40),
-    "l2": (0.0, 1e-6, 1e-5, 1e-4),
-    "batch_size": (4096, 8192, 16384),
-    "patience": (3, 4, 5),
-    "pairs_per_positive": (1, 2, 4),
-    "negative_sampling": ("random", "hard"),
-    "hard_negative_candidates": (2, 4),
-    "deepfm_hidden_dim": (16, 32, 64),
-    "hybrid_bpr_weight": (0.25, 0.5, 0.75),
-    # The 0.63/0.64 neighbors were added after a fixed-output local scan
-    # found a narrow optimum around the earlier 0.65 candidate.  They remain
-    # ordinary legal candidates; rolling/seed evidence still decides whether
-    # either is safe to promote.
-    "ensemble_deepfm_weight": (0.3, 0.4, 0.5, 0.6, 0.63, 0.64, 0.65, 0.7),
-    # Ranking is invariant to monotone score transforms within a user.  Keep
-    # the default z-score blend for backwards compatibility, but let the
-    # planner test a rank-calibrated DeepFM branch without changing either
-    # trained model.
-    "ensemble_normalization": (
-        "zscore", "fm_zscore_deepfm_rank", "fm_rank_deepfm_zscore"
-    ),
-    "auxiliary_loss_weight": (0.05, 0.1, 0.2, 0.3, 0.5),
-    "auxiliary_signals": (
-        "click", "like", "completion", "click_like", "click_like_completion",
-        "log_watch", "censored_watch"
-    ),
-    "dcn_cross_layers": (1, 2, 3),
-    "dcn_low_rank": (8, 16, 32),
-    "sequence_length": (16, 32),
-    "feature_control": ("real", "constant", "shuffled", "random_same_cardinality"),
-    "seed": (0, 1, 2, 3, 4),
-}
-FEATURE_KEYS = (
-    "user_long_view_rate",
-    "item_long_view_rate",
-    "continuous_history_stats",
-    "user_tab_long_view_rate",
-    "user_tab_cross",
-    "user_author_cross",
-    "user_recent_3d_activity",
-    "item_recent_3d_exposure",
-    "prior_video_positive",
-    "author_positive_recency",
-    "prior_video_count",
-    "previous_author_same",
-    "prior_video_exposure",
-    "author_recency",
-    "global_context",
-    # Static metadata known before an impression; unlike target statistics,
-    # these fields are not computed from validation/test labels.
-    "video_tag",
-    "video_upload_type",
-    "user_active_degree",
-    "user_register_days_range",
-    "duration_semantic_bucket",
-    "video_music_type",
-    "video_tag_components",
-)
-MODELS = (
-    "fm", "deepfm", "multitask_deepfm", "sequence_deepfm", "dcnv2",
-    "ensemble", "lightgbm",
-)
-OBJECTIVES = ("bce", "bpr", "hybrid")
+FEATURE_KEYS = FEATURE_FIELDS
+# Compatibility marker used by the validation-only evidence producers imported
+# from the main branch.  Feature semantics remain defined by FEATURE_FIELDS and
+# the operator registry; this version is metadata, not a model setting.
+FEATURE_SCHEMA_VERSION = "v3"
 LIGHTGBM_KEYS = {
     "learning_rate", "num_leaves", "n_estimators", "min_child_samples", "subsample",
     "colsample_bytree", "reg_lambda", "early_stopping_rounds",
 }
-FEATURE_SCHEMA_VERSION = "v3"
 
 
 def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Backfill optional fields added after an experiment was archived."""
+    normalized = copy.deepcopy(config)
+    features = normalized.get("features")
+    if isinstance(features, dict):
+        for key in FEATURE_KEYS:
+            features.setdefault(key, False)
+    hyperparameters = normalized.get("hyperparameters")
+    if isinstance(hyperparameters, dict):
+        for key in HYPERPARAMETER_FIELDS:
+            default = OPERATORS[key].default
+            if default is not None:
+                hyperparameters.setdefault(key, default)
+    return normalized
+
+
 def validate_config(config: dict[str, Any]) -> None:
+    config = normalize_config(config)
     if config.get("model") not in MODELS:
         raise ValueError(f"model must be one of {MODELS}")
     if config.get("training_objective") not in OBJECTIVES:
         raise ValueError(f"training_objective must be one of {OBJECTIVES}")
-    if config["model"] == "lightgbm" and config["training_objective"] != "bce":
-        raise ValueError("LightGBM currently supports only the BCE objective")
-    if config["model"] == "ensemble" and config["training_objective"] != "hybrid":
-        raise ValueError("The FM/DeepFM ensemble requires training_objective='hybrid'")
-    if (config["model"] == "multitask_deepfm"
-            and config["training_objective"] not in ("bce", "bpr")):
-        raise ValueError("Multi-task DeepFM supports BCE or BPR, but not hybrid")
-    if config["model"] == "dcnv2" and config["training_objective"] != "bce":
-        raise ValueError("DCNv2 currently supports only the BCE objective")
-    if config["model"] == "sequence_deepfm" and config["training_objective"] != "bce":
-        raise ValueError("Sequence DeepFM currently supports only the BCE objective")
+    model_spec = MODEL_SPECS[config["model"]]
+    if config["model"] == "custom":
+        branch = config.get("code_branch")
+        if not isinstance(branch, str) or not branch.strip():
+            raise ValueError("custom model requires a non-empty code_branch path")
+    if config["training_objective"] not in model_spec.objectives:
+        raise ValueError(
+            f"{config['model']} does not support objective="
+            f"{config['training_objective']!r}"
+        )
     hp = config.get("hyperparameters")
     if not isinstance(hp, dict):
         raise ValueError("hyperparameters must be an object")
-    unknown = set(hp) - set(ALLOWED_VALUES)
+    unknown = set(hp) - set(HYPERPARAMETER_FIELDS)
     if unknown:
         raise ValueError(f"unsupported hyperparameters: {sorted(unknown)}")
-    missing = set(ALLOWED_VALUES) - set(hp)
+    missing = set(HYPERPARAMETER_FIELDS) - set(hp)
     if missing:
         raise ValueError(f"missing hyperparameters: {sorted(missing)}")
     for key, allowed in ALLOWED_VALUES.items():
         if hp[key] not in allowed:
             raise ValueError(f"{key}={hp[key]!r} is outside the allowed experiment space")
+        spec = OPERATORS[key]
+        if (spec.default is not None and hp[key] != spec.default and
+                config["model"] not in spec.models):
+            raise ValueError(f"{key} is not compatible with model={config['model']!r}")
+        if (spec.default is not None and hp[key] != spec.default and
+                config["training_objective"] not in spec.objectives):
+            raise ValueError(
+                f"{key} is not compatible with training_objective="
+                f"{config['training_objective']!r}"
+            )
+    ensemble_size = hp["ensemble_size"]
+    if config["model"] == "fm_ensemble" and ensemble_size <= 1:
+        raise ValueError("fm_ensemble requires ensemble_size greater than 1")
+    if config["model"] != "fm_ensemble" and ensemble_size != 1:
+        raise ValueError("ensemble_size greater than 1 requires model='fm_ensemble'")
+    ensemble_seed_set = hp["ensemble_seed_set"]
+    if config["model"] != "fm_ensemble" and ensemble_seed_set != "sequential":
+        raise ValueError("a custom ensemble_seed_set requires model='fm_ensemble'")
+    if ensemble_seed_set != "sequential":
+        seeds = [int(value) for value in ensemble_seed_set.split(",")]
+        if len(seeds) != ensemble_size or len(set(seeds)) != len(seeds):
+            raise ValueError("ensemble_seed_set must contain ensemble_size unique seeds")
+        if any(seed not in ALLOWED_VALUES["seed"] for seed in seeds):
+            raise ValueError("ensemble_seed_set contains an unsupported seed")
     features = config.get("features")
     if not isinstance(features, dict) or set(features) != set(FEATURE_KEYS):
         raise ValueError(f"features must contain exactly: {list(FEATURE_KEYS)}")
     if any(type(features[key]) is not bool for key in FEATURE_KEYS):
         raise ValueError("feature flags must be booleans")
-    if hp["feature_control"] != "real":
-        controlled = [key for key in (
-            "prior_video_positive", "author_positive_recency",
-            "prior_video_count", "previous_author_same",
-            "prior_video_exposure", "author_recency",
-        ) if features[key]]
-        if len(controlled) != 1:
+    if not model_spec.supports_engineered_features and any(features.values()):
+        raise ValueError(
+            f"{config['model']} currently supports base fields only; disable engineered features"
+        )
+    for key in FEATURE_KEYS:
+        if not features[key]:
+            continue
+        spec = OPERATORS[key]
+        if config["model"] not in spec.models:
+            raise ValueError(f"{key} is not compatible with model={config['model']!r}")
+        if config["training_objective"] not in spec.objectives:
             raise ValueError(
-                "a placebo feature_control requires exactly one supported categorical history feature"
+                f"{key} is not compatible with training_objective="
+                f"{config['training_objective']!r}"
             )
+        for required_field, required_value in spec.requires:
+            actual = config.get(required_field)
+            if actual != required_value:
+                raise ValueError(
+                    f"{key} requires {required_field}={required_value!r}, got {actual!r}"
+                )
     lgb = config.get("lightgbm_hyperparameters")
     if not isinstance(lgb, dict) or set(lgb) != LIGHTGBM_KEYS:
         raise ValueError(f"lightgbm_hyperparameters must contain exactly: {sorted(LIGHTGBM_KEYS)}")
-    if config["model"] in ("fm", "deepfm", "multitask_deepfm", "sequence_deepfm", "dcnv2") and any(features[key] for key in
-                                                       ("continuous_history_stats", "user_tab_long_view_rate")):
-        raise ValueError("continuous statistical features require model='lightgbm'")
-    if config["model"] == "lightgbm" and any(features[key] for key in
-                                              ("user_tab_cross", "user_author_cross",
-                                               "user_recent_3d_activity",
-                                               "item_recent_3d_exposure",
-                                               "prior_video_positive",
-                                               "author_positive_recency",
-                                               "prior_video_count",
-                                               "previous_author_same",
-                                               "prior_video_exposure",
-                                               "author_recency",
-                                               "global_context")):
-        raise ValueError("categorical crosses and temporal buckets require an FM-family model")
-    if config["model"] == "lightgbm" and any(features[key] for key in
-                                              ("video_tag", "user_active_degree",
-                                              "video_upload_type",
-                                              "user_register_days_range",
-                                              "duration_semantic_bucket",
-                                              "video_music_type",
-                                              "video_tag_components")):
-        raise ValueError("static metadata fields currently require an FM-family model")
 
 
 def apply_changes(base: dict[str, Any], changes: dict[str, Any]) -> dict[str, Any]:
     if not changes or not isinstance(changes, dict):
         raise ValueError("proposal changes must be a non-empty object")
-    allowed = set(ALLOWED_VALUES) | set(FEATURE_KEYS) | {"model", "training_objective"}
+    allowed = set(OPERATORS)
     if set(changes) - allowed:
         raise ValueError(f"unsupported proposal keys: {sorted(set(changes) - allowed)}")
-    candidate = copy.deepcopy(base)
+    candidate = normalize_config(base)
     for key, value in changes.items():
-        if key in ("model", "training_objective"):
+        target_name = OPERATORS[key].target
+        if target_name == "root":
             candidate[key] = value
         else:
-            target = candidate["features"] if key in FEATURE_KEYS else candidate["hyperparameters"]
-            target[key] = value
+            candidate[target_name][key] = value
+    # Branch metadata belongs to the generated source, not to a built-in
+    # configuration transition. Clear stale hashes when replacing a branch so
+    # candidate IDs and duplicate detection remain content-based.
+    if candidate.get("model") != "custom":
+        candidate.pop("code_branch", None)
+        candidate.pop("code_branch_sha256", None)
+        candidate.pop("code_branch_name", None)
+    elif "code_branch" in changes:
+        candidate.pop("code_branch_sha256", None)
+        candidate.pop("code_branch_name", None)
     validate_config(candidate)
+    for key, value in changes.items():
+        spec = OPERATORS[key]
+        if (spec.target == "root" or
+                (spec.target == "features" and not value) or
+                (spec.default is not None and value == spec.default)):
+            continue
+        if candidate["model"] not in spec.models:
+            raise ValueError(f"{key} is not compatible with model={candidate['model']!r}")
+        if candidate["training_objective"] not in spec.objectives:
+            raise ValueError(
+                f"{key} is not compatible with training_objective="
+                f"{candidate['training_objective']!r}"
+            )
     return candidate
 
 
 def experiment_key(config: dict[str, Any]) -> str:
-    return json.dumps(config, sort_keys=True, separators=(",", ":"))
+    """Return a scientific key that ignores inactive model-specific knobs.
+
+    For example, FM learning rate is carried through a switch to LightGBM for
+    schema stability but does not affect that experiment. Treating it as active
+    would let the agent unknowingly repeat the same LightGBM run.
+    """
+    canonical = normalize_config(config)
+    # Display metadata must not make the same generated source look like a
+    # different scientific experiment.
+    canonical.pop("code_branch_name", None)
+    model = canonical.get("model")
+    objective = canonical.get("training_objective")
+    hyperparameters = canonical.get("hyperparameters")
+    if isinstance(hyperparameters, dict):
+        for key in tuple(hyperparameters):
+            spec = OPERATORS.get(key)
+            if spec is None:
+                continue
+            if model not in spec.models or objective not in spec.objectives:
+                hyperparameters.pop(key, None)
+    return json.dumps(canonical, sort_keys=True, separators=(",", ":"))

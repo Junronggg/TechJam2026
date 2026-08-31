@@ -15,8 +15,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from techjam_agent.config import FEATURE_SCHEMA_VERSION
 from techjam_agent.controller import Controller
+from techjam_agent.config import apply_changes
 from techjam_agent.proposals import (
     CHANGE_RULE,
     CONVERGENCE_EPSILON,
@@ -29,8 +29,10 @@ from techjam_agent.proposals import (
     build_planner_prompt,
     DeterministicResearcher,
     extract_token_usage,
-    sanitize_prior_evidence,
     validation_metrics_only,
+    candidate_id_for,
+    legal_candidate_catalog,
+    standardize_proposal,
 )
 
 
@@ -52,10 +54,20 @@ def chat_payload(content: str | dict, usage: dict | None = None) -> dict:
 
 
 def legal_changes() -> dict:
+    candidate = apply_changes(load_config(), {"training_objective": "bpr"})
     return {
+        "proposal_type": "config",
+        "candidate_id": candidate_id_for(candidate),
+        "observation": "The benchmark uses ranking metrics while the baseline uses BCE.",
+        "diagnosis": "The pointwise objective may be misaligned with within-user ranking.",
         "hypothesis": "Try pairwise BPR instead of pointwise BCE.",
+        "evidence_ids": ["benchmark_reference"],
         "reason": "Ranking metrics should match a ranking loss.",
-        "changes": {"training_objective": "bpr", "learning_rate": 0.0003},
+        "changes": [{"field": "training_objective", "value": "bpr"}],
+        "expected_effect": {"GAUC": "increase", "nDCG@5": "increase", "primary": "increase"},
+        "risk": "A single-seed improvement may stay inside epsilon.",
+        "estimated_cost": "medium",
+        "success_condition": "Validation Primary exceeds the selected parent.",
     }
 
 
@@ -66,6 +78,8 @@ class FakeHTTPResponse:
         else:
             raw = payload.encode() if isinstance(payload, str) else payload
         self._raw = raw
+        self.status = 200
+        self.headers = {"x-request-id": "req_test"}
 
     def read(self):
         return self._raw
@@ -133,20 +147,20 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(prompt["epsilon"], 0.002)
         self.assertIn("budget", prompt)
         self.assertIn("remaining_seconds", prompt["budget"])
-        self.assertIn("training_objective", prompt["allowed_values"])
-        self.assertIn("model", prompt["allowed_values"])
-        self.assertEqual(prompt["allowed_values"]["max_change_fields"], MAX_CHANGE_FIELDS)
         self.assertIn("1 and 4", CHANGE_RULE)
-        self.assertIn("LightGBM", prompt["change_rule"])
+        self.assertIn("lightgbm", prompt["remaining"]["models"])
+        self.assertIn("ranked_candidates", prompt["research_search"])
+        self.assertLessEqual(len(prompt["legal_candidates"]), 5)
+        self.assertIn("benchmark_reference", prompt["valid_evidence_ids"])
+        self.assertTrue(prompt["evidence_catalog"])
+        self.assertTrue(all("candidate_id" in item for item in prompt["legal_candidates"]))
         self.assertEqual(prompt["global_best"]["validation_metrics"]["primary"], 0.6015)
-        self.assertEqual(prompt["history"][0]["hypothesis"], "Reproduce the official FM baseline.")
-        self.assertEqual(prompt["history"][0]["critique"]["observation"], "Validation Primary=0.601500")
-        self.assertEqual(prompt["history"][0]["decision"], "KEEP")
+        evidence = next(
+            item for item in prompt["evidence_catalog"]
+            if item["evidence_id"] == "iteration_000"
+        )
+        self.assertEqual(evidence["primary"], 0.6015)
         self.assertIn("remaining", prompt)
-        self.assertIn("research_patterns", prompt)
-        self.assertIsInstance(prompt["research_patterns"], list)
-        import techjam_agent.proposals as proposals_mod
-        self.assertTrue(hasattr(proposals_mod, "distill_research_patterns"))
         self.assertIn("bpr", prompt["remaining"]["training_objectives"])
 
     def test_prompt_excludes_test_metrics(self) -> None:
@@ -156,6 +170,11 @@ class PromptTests(unittest.TestCase):
             "metrics": {"GAUC": 0.6671, "nDCG@5": 0.5358, "primary": 0.6015,
                         "test_GAUC": 0.6621, "test": {"primary": 0.5953}},
             "final_test_metrics": {"primary": 0.5953},
+            "critique": {
+                "verdict": "noise",
+                "test_primary": 0.4321,
+                "metric_deltas": {"primary": 0.0, "test": 0.4321},
+            },
         }]
         prompt = build_planner_prompt(load_config(), history)
         blob = json.dumps(prompt)
@@ -163,8 +182,12 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("0.6621", blob)
         self.assertNotIn("test_GAUC", blob)
         self.assertNotIn("final_test_metrics", blob)
-        self.assertEqual(prompt["history"][0]["metrics"],
-                         {"GAUC": 0.6671, "nDCG@5": 0.5358, "primary": 0.6015})
+        self.assertNotIn("0.4321", blob)
+        evidence = next(
+            item for item in prompt["evidence_catalog"]
+            if item["evidence_id"] == "iteration_000"
+        )
+        self.assertEqual(evidence["primary"], 0.6015)
 
     def test_validation_metrics_only_drops_foreign_keys(self) -> None:
         self.assertEqual(
@@ -172,21 +195,82 @@ class PromptTests(unittest.TestCase):
             {"GAUC": 1, "nDCG@5": 0, "primary": 0.5},
         )
 
-    def test_prior_evidence_is_included_without_test_metrics(self) -> None:
-        evidence = {
-            "supported": ["ensemble improved 3/3 rolling folds"],
-            "test_metrics": {"primary": 0.999},
-            "nested": {"test_GAUC": 0.998, "validation_delta": 0.001123},
+    def test_candidate_catalog_is_legal_and_excludes_full_history(self) -> None:
+        base = load_config()
+        bpr = apply_changes(base, {"training_objective": "bpr"})
+        catalog = legal_candidate_catalog(base, [{"config": bpr}])
+        self.assertTrue(catalog)
+        self.assertNotIn(
+            candidate_id_for(bpr),
+            {candidate["candidate_id"] for candidate in catalog},
+        )
+        for item in catalog:
+            resolved = apply_changes(base, item["changes"])
+            self.assertEqual(item["candidate_id"], candidate_id_for(resolved))
+
+    def test_autonomous_catalog_adds_composite_candidates(self) -> None:
+        base = load_config()
+        regular = legal_candidate_catalog(base, [])
+        autonomous = legal_candidate_catalog(base, [], autonomous=True)
+        regular_ids = {item["candidate_id"] for item in regular}
+        composites = [
+            item for item in autonomous
+            if item.get("candidate_kind") == "autonomous_composite"
+        ]
+        self.assertTrue(composites)
+        self.assertGreater(len(autonomous), len(regular))
+        for item in composites:
+            self.assertNotIn(item["candidate_id"], regular_ids)
+            self.assertGreaterEqual(len(item["changes"]), 2)
+            self.assertLessEqual(len(item["changes"]), MAX_CHANGE_FIELDS)
+            self.assertEqual(
+                item["candidate_id"],
+                candidate_id_for(apply_changes(base, item["changes"])),
+            )
+
+    def test_autonomous_prompt_advertises_self_expanding_search(self) -> None:
+        prompt = build_planner_prompt(load_config(), [], autonomous=True)
+        self.assertTrue(prompt["autonomy"]["autonomous_mode"])
+        self.assertGreater(prompt["remaining"]["autonomous_composite_candidates"], 0)
+        self.assertTrue(
+            any(item.get("candidate_kind") == "autonomous_composite"
+                for item in legal_candidate_catalog(load_config(), [], autonomous=True))
+        )
+
+    def test_catalog_skips_epoch_cap_after_observed_early_stop(self) -> None:
+        base = load_config()
+        history = [{
+            "config": base,
+            "status": "success",
+            "metrics": {"primary": 0.6, "best_epoch": 5},
+        }]
+        catalog = legal_candidate_catalog(base, history)
+        epoch_values = {
+            item["changes"]["epochs"]
+            for item in catalog if set(item["changes"]) == {"epochs"}
         }
-        prompt = build_planner_prompt(load_config(), [], prior_evidence=evidence)
-        blob = json.dumps(prompt)
-        self.assertIn("ensemble improved 3/3 rolling folds", blob)
-        self.assertIn("0.001123", blob)
-        self.assertNotIn("0.999", blob)
-        self.assertNotIn("0.998", blob)
-        self.assertNotIn("test_metrics", blob)
-        self.assertNotIn("test_GAUC", blob)
-        self.assertEqual(sanitize_prior_evidence((1, 2)), [1, 2])
+        self.assertNotIn(10, epoch_values)
+        self.assertNotIn(20, epoch_values)
+        self.assertNotIn(30, epoch_values)
+
+    def test_global_best_config_and_metrics_come_from_same_record(self) -> None:
+        base = load_config()
+        tagged = apply_changes(base, {"tag": True})
+        history = [{
+            "iteration": 0, "status": "success", "decision": "KEEP",
+            "config": base,
+            "metrics": {"GAUC": 0.61, "nDCG@5": 0.59, "primary": 0.60},
+            "changes": {},
+        }, {
+            "iteration": 1, "status": "success", "decision": "KEEP",
+            "config": tagged,
+            "metrics": {"GAUC": 0.62, "nDCG@5": 0.60, "primary": 0.61},
+            "changes": {"tag": True},
+        }]
+        prompt = build_planner_prompt(base, history)
+        self.assertTrue(prompt["global_best"]["config"]["features"]["tag"])
+        self.assertEqual(prompt["global_best"]["validation_metrics"]["primary"], 0.61)
+        self.assertEqual(prompt["global_best"]["evidence_id"], "iteration_001")
 
 
 class ParseContractTests(unittest.TestCase):
@@ -195,25 +279,18 @@ class ParseContractTests(unittest.TestCase):
             Proposal.parse({**legal_changes(), "temperature": 0.2}, "llm")
 
     def test_parse_allows_model_and_objective_together(self) -> None:
-        proposal = Proposal.parse({
+        payload = legal_changes()
+        payload.update({
             "hypothesis": "Try LightGBM on the base fields.",
             "reason": "Isolate model class after BPR.",
-            "changes": {"model": "lightgbm", "training_objective": "bce"},
-        }, "llm")
+            "changes": [
+                {"field": "model", "value": "lightgbm"},
+                {"field": "training_objective", "value": "bce"},
+            ],
+            "candidate_id": "candidate_parse_contract",
+        })
+        proposal = Proposal.parse(payload, "llm")
         self.assertEqual(len(proposal.changes), 2)
-
-    def test_parse_allows_four_fields_for_one_atomic_mechanism(self) -> None:
-        proposal = Proposal.parse({
-            "hypothesis": "Try censored watch-time supervision.",
-            "reason": "The model, objective, target, and learning rate define one mechanism.",
-            "changes": {
-                "model": "multitask_deepfm",
-                "training_objective": "bpr",
-                "auxiliary_signals": "censored_watch",
-                "learning_rate": 0.001,
-            },
-        }, "llm")
-        self.assertEqual(len(proposal.changes), 4)
 
 
 class TokenUsageTests(unittest.TestCase):
@@ -233,6 +310,20 @@ class TokenUsageTests(unittest.TestCase):
                          {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
         self.assertEqual(proposal.source, "deterministic")
 
+    def test_deterministic_uses_same_candidate_and_evidence_contract(self) -> None:
+        config = load_config()
+        raw = DeterministicResearcher().propose(config, [])
+        proposal = standardize_proposal(raw, config, [])
+        self.assertEqual(
+            proposal.candidate_id,
+            candidate_id_for(apply_changes(config, proposal.changes)),
+        )
+        self.assertIn("benchmark_reference", proposal.evidence_ids)
+        self.assertTrue(any(item.startswith("strategy_") for item in proposal.evidence_ids))
+        self.assertIsNotNone(proposal.observation)
+        self.assertIsNotNone(proposal.diagnosis)
+        self.assertEqual(set(proposal.expected_effect), {"GAUC", "nDCG@5", "primary"})
+
 
 class LlmResearcherTests(unittest.TestCase):
     def _researcher(self, payloads: list) -> tuple[OpenAICompatibleResearcher, ScriptedUrlOpen]:
@@ -250,10 +341,36 @@ class LlmResearcherTests(unittest.TestCase):
         proposal = researcher.propose(load_config(), [])
         self.assertEqual(len(opener.calls), 1)
         self.assertEqual(opener.calls[0]["timeout"], HTTP_TIMEOUT_SECONDS)
-        self.assertEqual(proposal.changes, legal_changes()["changes"])
+        self.assertEqual(proposal.changes, {"training_objective": "bpr"})
         self.assertEqual(proposal.token_usage["total_tokens"], 15)
         self.assertEqual(proposal.source, "llm")
         self.assertEqual(proposal.llm_attempts, 1)
+        self.assertEqual(proposal.observation, legal_changes()["observation"])
+        self.assertEqual(proposal.evidence_ids, ("benchmark_reference",))
+        self.assertEqual(len(researcher.last_call_records), 1)
+        audit = researcher.last_call_records[0]
+        self.assertEqual(audit["result"], "success")
+        self.assertEqual(audit["http_status"], 200)
+        self.assertEqual(audit["provider_request_id"], "req_test")
+        self.assertEqual(audit["usage"]["total_tokens"], 15)
+        self.assertNotIn("sk-test-not-real", json.dumps(audit))
+
+    def test_data_profile_findings_are_valid_citable_evidence(self) -> None:
+        payload = legal_changes()
+        payload["evidence_ids"] = ["profile_affinity_coverage"]
+        opener = ScriptedUrlOpen([chat_payload(payload)])
+        researcher = OpenAICompatibleResearcher(
+            "gpt-test", api_key="sk-test-not-real", urlopen=opener,
+            retry_backoff_seconds=0,
+            data_profile={
+                "evidence_id": "data_profile_summary",
+                "key_findings": [{"evidence_id": "profile_affinity_coverage"}],
+            },
+        )
+        proposal = researcher.propose(load_config(), [])
+        self.assertEqual(proposal.evidence_ids, ("profile_affinity_coverage",))
+        prompt = researcher.last_call_records[0]["prompt"]
+        self.assertEqual(prompt["data_profile"]["evidence_id"], "data_profile_summary")
 
     def test_invalid_then_valid_succeeds_after_retry(self) -> None:
         researcher, opener = self._researcher([
@@ -287,68 +404,89 @@ class LlmResearcherTests(unittest.TestCase):
         self.assertIn("after 3 attempts", str(raised.exception))
         self.assertNotIn("sk-test-not-real", str(raised.exception))
         self.assertEqual(len(opener.calls), MAX_LLM_ATTEMPTS)
+        self.assertEqual(
+            [record["error"]["category"] for record in researcher.last_call_records],
+            ["network"] * MAX_LLM_ATTEMPTS,
+        )
+
+    def test_authentication_error_does_not_retry(self) -> None:
+        unauthorized = urllib.error.HTTPError(
+            "https://api.openai.com/v1/chat/completions", 401, "Unauthorized", {}, None
+        )
+        researcher, opener = self._researcher([unauthorized])
+        with self.assertRaises(RuntimeError) as raised:
+            researcher.propose(load_config(), [])
+        self.assertEqual(len(opener.calls), 1)
+        self.assertIn("authentication", str(raised.exception))
+        self.assertEqual(researcher.last_call_records[0]["http_status"], 401)
+        self.assertFalse(researcher.last_call_records[0]["error"]["retryable"])
 
     def test_illegal_change_then_valid_response_retries(self) -> None:
         researcher, opener = self._researcher([
-            chat_payload({**legal_changes(), "changes": {"dropout": 0.5}}),
+            chat_payload({**legal_changes(), "changes": [{"field": "dropout", "value": 0.5}]}),
             chat_payload(legal_changes()),
         ])
         proposal = researcher.propose(load_config(), [])
         self.assertEqual(len(opener.calls), 2)
-        self.assertEqual(proposal.changes, legal_changes()["changes"])
+        self.assertEqual(proposal.changes, {"training_objective": "bpr"})
 
-    def test_valid_but_unranked_change_is_repaired(self) -> None:
+    def test_candidate_id_and_changes_must_match(self) -> None:
+        wrong = legal_changes()
+        wrong["changes"] = [{"field": "learning_rate", "value": 0.002}]
         researcher, opener = self._researcher([
-            chat_payload({
-                "hypothesis": "Try a valid but unranked setting.",
-                "reason": "Probe the contract.",
-                "changes": {"learning_rate": 0.005},
-            }),
+            chat_payload(wrong),
             chat_payload(legal_changes()),
         ])
         proposal = researcher.propose(load_config(), [])
-        self.assertEqual(proposal.changes, legal_changes()["changes"])
         self.assertEqual(len(opener.calls), 2)
+        self.assertEqual(proposal.changes, {"training_objective": "bpr"})
+        self.assertEqual(
+            researcher.last_call_records[0]["error"]["category"],
+            "candidate_validation",
+        )
 
     def test_duplicate_change_then_new_change_retries(self) -> None:
         bpr = json.loads(json.dumps(load_config()))
         bpr["training_objective"] = "bpr"
-        bpr["hyperparameters"]["learning_rate"] = 0.0003
+        prompt = build_planner_prompt(load_config(), [{"config": bpr}])
+        selected = prompt["legal_candidates"][0]
+        repaired = {
+            **legal_changes(),
+            "hypothesis": "Use the highest-ranked available repair candidate.",
+            "reason": "The original BPR candidate is already present in memory.",
+            "candidate_id": selected["candidate_id"],
+            "changes": [
+                {"field": field, "value": value}
+                for field, value in selected["changes"].items()
+            ],
+        }
         researcher, opener = self._researcher([
             chat_payload(legal_changes()),
-            chat_payload({
-                "hypothesis": "Use like auxiliary supervision.",
-                "reason": "Select the next ranked mechanism.",
-                "changes": {
-                    "model": "multitask_deepfm",
-                    "training_objective": "bce",
-                    "learning_rate": 0.001,
-                },
-            }),
+            chat_payload(repaired),
         ])
         proposal = researcher.propose(load_config(), [{"config": bpr}])
         self.assertEqual(len(opener.calls), 2)
-        self.assertEqual(proposal.changes, {
-            "model": "multitask_deepfm",
-            "training_objective": "bce",
-            "learning_rate": 0.001,
-        })
+        self.assertEqual(proposal.changes, selected["changes"])
 
     def test_ten_mocked_calls_return_legal_structured_proposals(self) -> None:
         for _ in range(10):
             researcher, opener = self._researcher([chat_payload(legal_changes())])
             proposal = researcher.propose(load_config(), [])
             self.assertEqual(len(opener.calls), 1)
-            self.assertEqual(proposal.changes, legal_changes()["changes"])
-            self.assertEqual(set(proposal.as_dict()), {
-                "hypothesis", "reason", "changes", "source", "token_usage", "llm_attempts",
-            })
+            self.assertEqual(proposal.changes, {"training_objective": "bpr"})
+            self.assertTrue({
+                "proposal_type", "observation", "diagnosis", "hypothesis", "evidence_ids",
+                "candidate_id",
+                "reason", "changes", "expected_effect", "risk", "success_condition",
+                "estimated_cost",
+                "source", "token_usage", "llm_attempts", "llm_call_ids", "fallback",
+            }.issubset(proposal.as_dict()))
 
     def test_three_invalid_responses_raise_clear_error(self) -> None:
         payloads = [
             chat_payload("nope", {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}),
             chat_payload("{", {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}),
-            chat_payload({"hypothesis": "", "reason": "x", "changes": {"training_objective": "bpr"}},
+            chat_payload({**legal_changes(), "hypothesis": ""},
                          {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}),
         ]
         researcher, opener = self._researcher(payloads)
@@ -393,40 +531,59 @@ class LlmResearcherTests(unittest.TestCase):
         researcher.propose(load_config(), [])
         self.assertEqual(len(opener.bodies[0]["messages"]), 2)
         self.assertEqual(len(opener.bodies[1]["messages"]), 3)
-        self.assertIn("exactly these keys", opener.bodies[1]["messages"][-1]["content"])
+        self.assertIn("deterministic validation", opener.bodies[1]["messages"][-1]["content"])
+        response_format = opener.bodies[0]["response_format"]
+        self.assertEqual(response_format["type"], "json_schema")
+        self.assertTrue(response_format["json_schema"]["strict"])
+        schema = response_format["json_schema"]["schema"]
+        evidence_enum = schema["properties"]["evidence_ids"]["items"]["enum"]
+        self.assertIn("benchmark_reference", evidence_enum)
+        self.assertTrue(any(item.startswith("strategy_") for item in evidence_enum))
+        self.assertIn(
+            legal_changes()["candidate_id"],
+            schema["properties"]["candidate_id"]["enum"],
+        )
         first_user = json.loads(opener.bodies[0]["messages"][1]["content"])
         self.assertNotIn("sk-test-not-real", json.dumps(first_user))
         self.assertNotIn("test_GAUC", json.dumps(first_user))
 
-    def test_persistent_evidence_reaches_llm_prompt(self) -> None:
-        captured = {}
-
-        def capturing_urlopen(request, timeout=None):
-            captured.update(json.loads(request.data.decode()))
-            return FakeHTTPResponse(chat_payload(legal_changes()))
-
-        researcher = OpenAICompatibleResearcher(
-            "gpt-test",
-            api_key="sk-test-not-real",
-            urlopen=capturing_urlopen,
-            prior_evidence={
-                "rolling": "ensemble won 3/3 folds",
-                "dataset_facts": {"long_view_rate": 0.3366, "test_primary": 0.999},
-                "method_reference": {"bpr": {"use_when": "within-user ranking"}},
-                "final_test_metrics": {"primary": 0.999},
-            },
-        )
-        researcher.propose(load_config(), [])
-        prompt = json.loads(captured["messages"][1]["content"])
-        self.assertEqual(prompt["prior_evidence"]["rolling"], "ensemble won 3/3 folds")
-        self.assertEqual(prompt["dataset_facts"]["long_view_rate"], 0.3366)
-        self.assertNotIn("test_primary", prompt["dataset_facts"])
-        self.assertIn("bpr", prompt["method_reference"])
-        self.assertNotIn("final_test_metrics", prompt["prior_evidence"])
-        self.assertIn("multiple rolling folds", captured["messages"][0]["content"])
-
 
 class FallbackTests(unittest.TestCase):
+    def test_successful_llm_call_is_persisted_and_drives_iteration(self) -> None:
+        researcher, _ = LlmResearcherTests()._researcher([
+            chat_payload(
+                legal_changes(),
+                {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            )
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            controller = Controller(
+                FakeRunner(), researcher, load_config(), load_project(),
+                base / "logs", base / "artifacts", base / "submissions",
+            )
+            with patch("sys.stdout", new=io.StringIO()):
+                summary = controller.run(max_iterations=2)
+            iteration = json.loads(
+                (base / "logs" / "iteration_001.json").read_text(encoding="utf-8")
+            )
+            calls = [
+                json.loads(line) for line in
+                (base / "logs" / "llm_calls.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            trajectory = json.loads(
+                (base / "logs" / "research_trajectory.json").read_text(encoding="utf-8")
+            )
+        self.assertEqual(iteration["source"], "llm")
+        self.assertEqual(iteration["observation"], legal_changes()["observation"])
+        self.assertEqual(iteration["llm_call_ids"], [calls[0]["call_id"]])
+        self.assertEqual(calls[0]["result"], "success")
+        self.assertEqual(summary["llm_http_requests"], 1)
+        self.assertEqual(summary["llm_http_failures"], 0)
+        self.assertEqual(summary["llm_fallbacks"], 0)
+        self.assertEqual(trajectory[1]["source"], "llm")
+        self.assertEqual(trajectory[1]["evidence_ids"], ["benchmark_reference"])
+
     def test_controller_reports_llm_budget_and_token_accounting(self) -> None:
         class AccountedLlm:
             def __init__(self):
@@ -442,7 +599,7 @@ class FallbackTests(unittest.TestCase):
             def propose(self, best, history):
                 return Proposal(
                     legal_changes()["hypothesis"], legal_changes()["reason"],
-                    legal_changes()["changes"], "llm", self.last_token_usage, 2,
+                    {"training_objective": "bpr"}, "llm", self.last_token_usage, 2,
                 )
 
         researcher = AccountedLlm()
@@ -455,20 +612,16 @@ class FallbackTests(unittest.TestCase):
             with patch("sys.stdout", new=io.StringIO()):
                 summary = controller.run(max_iterations=2)
         self.assertEqual(summary["llm_requests"], 2)
+        self.assertEqual(summary["llm_http_requests"], 2)
         self.assertEqual(summary["llm_tokens"]["total_tokens"], 15)
         self.assertEqual(summary["llm_failures"], 0)
+        self.assertEqual(summary["llm_proposal_failures"], 0)
         self.assertEqual(researcher.context["remaining_iterations"], 1)
         self.assertGreater(researcher.context["remaining_seconds"], 0)
         self.assertEqual(researcher.context["estimated_next_experiment_seconds"], 900.0)
 
     def test_controller_falls_back_to_deterministic_after_llm_error(self) -> None:
         class FailingLlm:
-            last_attempts = 3
-            last_token_usage = {
-                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-            }
-            last_error = "HTTP 503"
-
             def propose(self, best, history):
                 raise RuntimeError("LLM proposal failed after 3 attempts: JSONDecodeError")
 
@@ -479,79 +632,63 @@ class FallbackTests(unittest.TestCase):
                 base / "logs", base / "artifacts", base / "submissions",
             )
             with patch("sys.stdout", new=io.StringIO()):
-                summary = controller.run(max_iterations=2)
+                controller.run(max_iterations=2)
             records = sorted((base / "logs").glob("iteration_*.json"))
             self.assertEqual(len(records), 2)
             second = json.loads(records[1].read_text(encoding="utf-8"))
-            self.assertEqual(second["source"], "deterministic")
-            self.assertEqual(
-                second["changes"],
-                {"training_objective": "bpr", "learning_rate": 0.0003},
-            )
+            self.assertEqual(second["source"], "deterministic_fallback")
+            self.assertEqual(second["changes"], {"training_objective": "bpr"})
             self.assertEqual(second["token_usage"]["total_tokens"], 0)
-            self.assertEqual(summary["llm_requests"], 3)
-            self.assertEqual(summary["llm_failures"], 1)
-            self.assertEqual(summary["llm_fallbacks"][0]["iteration"], 1)
-            self.assertEqual(summary["llm_fallbacks"][0]["provider_error"], "HTTP 503")
+            self.assertTrue(second["fallback"]["used"])
+            self.assertEqual(second["fallback"]["reason_code"], "search_exhausted")
 
-    def test_llm_fallback_preserves_prior_evidence_stop_direction(self) -> None:
-        evidence = {
-            "family_policies": [{
-                "family": "ranking_objective",
-                "policy": "stop_direction",
-                "scientific_verdict": "REJECTED",
-                "confidence": 0.9,
-                "applies_to": {
-                    "task": "long_view",
-                    "feature_schema": FEATURE_SCHEMA_VERSION,
-                    "models": ["fm"],
-                    "training_objectives": ["bpr"],
-                },
-                "created_from": [{
-                    "source_id": "bpr_rolling_v1",
-                    "kind": "rolling_aggregate",
-                    "result": {
-                        "signal": "negative",
-                        "mean_delta": -0.0003,
-                        "wins": 1,
-                        "folds": 3,
-                        "robust": True,
-                    },
-                }],
-            }]
-        }
-
-        class FailingLlm:
-            last_attempts = 1
-            last_token_usage = {
-                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-            }
-            last_error = "HTTP 503"
-
-            def __init__(self, prior_evidence):
-                self.prior_evidence = prior_evidence
-
-            def propose(self, best, history):
-                raise RuntimeError("LLM proposal failed after 1 attempts: JSONDecodeError")
-
+    def test_controller_persists_each_failed_call_and_links_fallback(self) -> None:
+        researcher, _ = LlmResearcherTests()._researcher([
+            urllib.error.URLError("offline") for _ in range(MAX_LLM_ATTEMPTS)
+        ])
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             controller = Controller(
-                FakeRunner(), FailingLlm(evidence), load_config(), load_project(),
+                FakeRunner(), researcher, load_config(), load_project(),
                 base / "logs", base / "artifacts", base / "submissions",
             )
             with patch("sys.stdout", new=io.StringIO()):
                 summary = controller.run(max_iterations=2)
-            records = sorted((base / "logs").glob("iteration_*.json"))
-            self.assertEqual(len(records), 2)
-            second = json.loads(records[1].read_text(encoding="utf-8"))
-            self.assertEqual(second["source"], "deterministic")
-            self.assertNotEqual(
-                second["changes"],
-                {"training_objective": "bpr", "learning_rate": 0.0003},
+            calls = [
+                json.loads(line) for line in
+                (base / "logs" / "llm_calls.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            iteration = json.loads(
+                (base / "logs" / "iteration_001.json").read_text(encoding="utf-8")
             )
-            self.assertNotEqual(second["changes"].get("training_objective"), "bpr")
-            self.assertEqual(summary["llm_fallbacks"][0]["iteration"], 1)
+        self.assertEqual(len(calls), MAX_LLM_ATTEMPTS)
+        self.assertEqual(summary["llm_http_requests"], MAX_LLM_ATTEMPTS)
+        self.assertEqual(summary["llm_http_failures"], MAX_LLM_ATTEMPTS)
+        self.assertEqual(summary["llm_proposal_failures"], 1)
+        self.assertEqual(summary["llm_fallbacks"], 1)
+        self.assertEqual(summary["llm_error_categories"], {"network": MAX_LLM_ATTEMPTS})
+        self.assertEqual(iteration["source"], "deterministic_fallback")
+        self.assertEqual(iteration["llm_call_ids"], [row["call_id"] for row in calls])
+        self.assertTrue(all(row["error"]["category"] == "network" for row in calls))
+
+    def test_semantic_rejections_are_not_reported_as_http_failures(self) -> None:
+        wrong = legal_changes()
+        wrong["changes"] = [{"field": "learning_rate", "value": 0.002}]
+        researcher, _ = LlmResearcherTests()._researcher([
+            chat_payload(wrong) for _ in range(MAX_LLM_ATTEMPTS)
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            controller = Controller(
+                FakeRunner(), researcher, load_config(), load_project(),
+                base / "logs", base / "artifacts", base / "submissions",
+            )
+            with patch("sys.stdout", new=io.StringIO()):
+                summary = controller.run(max_iterations=2)
+        self.assertEqual(summary["llm_http_requests"], MAX_LLM_ATTEMPTS)
+        self.assertEqual(summary["llm_http_failures"], 0)
+        self.assertEqual(summary["llm_proposal_failures"], 1)
+        self.assertEqual(summary["llm_fallbacks"], 1)
 
 
 if __name__ == "__main__":

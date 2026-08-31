@@ -2,16 +2,11 @@
 
 Preparation workspace for TikTok TechJam Task 2 using the organizer-provided
 KuaiRand-Pure starter kit. This repository currently contains environment and
-benchmark configuration and a safe autonomous FM research MVP.
-
-Research logs are separated by purpose:
-
-- [`TRY.md`](TRY.md): model, loss, feature engineering, rolling validation and ensemble experiments.
-- [`AGENT-TRY.md`](AGENT-TRY.md): Agent trajectories, runtime, memory ablations, stopping and intervention audits.
+benchmark configuration and a safe autonomous recommender research system.
 
 ## Prerequisites
 
-- Windows PowerShell, or macOS/Linux
+- Windows PowerShell
 - Python 3.11 (the starter kit supports Python 3.9+)
 - KuaiRand-Pure downloaded from the [official Zenodo record](https://zenodo.org/records/10439422)
 
@@ -29,8 +24,7 @@ $env:PYTHONUTF8 = "1"
 `setup.cmd` is the recommended entry point on Windows because it works even when
 the local PowerShell execution policy blocks `.ps1` scripts.
 
-The official baseline currently needs only NumPy. `requirements.txt` already pins
-LightGBM for the first model extension. PyTorch is not a current dependency.
+The environment pins the dependencies used by the active FM and LightGBM branches.
 
 ## Dataset layout
 
@@ -41,15 +35,15 @@ data/
   KuaiRand-Pure/
     data/
       video_features_basic_pure.csv
+      user_features_pure.csv
       log_standard_4_08_to_4_21_pure.csv
       log_standard_4_22_to_5_08_pure.csv
 ```
 
 The data directory is ignored by Git. If you store it elsewhere, set
 `TECHJAM_DATA_DIR` in `.env` and pass the same path to starter-kit commands.
-The Zenodo archive checksum recorded in `configs/project.json` is MD5
-`0820331067a3784d9691136f772b35a7`. `scripts/verify_setup.py` checks extracted
-file presence and the evaluator SHA-256; it does not hash the downloaded archive.
+The downloaded archive is verified against MD5
+`0820331067a3784d9691136f772b35a7` before use.
 
 ## Preparation checks
 
@@ -67,8 +61,13 @@ Set-Location .\kuairand-starter-kit
 
 Expected validation scores are approximately GAUC `0.6674`, nDCG@5 `0.5357`,
 and primary `0.6016`. Do not start agent/model development until these reproduce.
-`baseline.py` reports validation metrics; do not pass a test split here.
-Do not run `submit.py --split test` during setup or smoke checks.
+
+Then generate and validate a sample submission:
+
+```powershell
+..\.venv\Scripts\python.exe -X utf8 submit.py --make --split test --data_dir ..\data\KuaiRand-Pure\data ..\submissions\baseline.csv
+..\.venv\Scripts\python.exe -X utf8 submit.py --check --split test --data_dir ..\data\KuaiRand-Pure\data ..\submissions\baseline.csv
+```
 
 ## Protected organizer files
 
@@ -78,55 +77,30 @@ and the virtual environment out of version control.
 
 ## Autonomous research MVP
 
-The active system is a constrained autonomous research loop. It generates legal
-candidate experiments, scores them by expected gain, evidence strength, novelty,
-compute cost, and redundancy, selects one, trains it, evaluates validation ranking,
-reflects on the result, updates structured memory, and repeats. Ranking uses typed
-actions plus hard/soft evidence and feasibility filtering. It never gives an LLM
-permission to edit the repository.
+Before model search, build the validation-safe EDA/data profile:
 
-The architecture separates three responsibilities:
+```powershell
+.\.venv\Scripts\python.exe -X utf8 .\scripts\profile_dataset.py
+```
 
-- `research_prompt.py` defines the scientist mindset: validation-only reasoning,
-  novelty, falsification, confirmation, attribution, and uncertainty.
-- `skills.py` is the executable lab-instrument registry. Every candidate is bound to
-  one available primary skill plus explicit evidence skills.
-- `controller.py` owns hard safety rules such as budgets, isolated timeouts, the pinned
-  evaluator, test-label exclusion, and rejection of unregistered skill bindings.
+This produces a readable report plus structured Planner evidence under
+`artifacts/data-profile/`. LLM research runs automatically load the generated
+profile, while test-period labels remain unread. See
+[the data-profiling guide](docs/data-profiling.md).
 
-The initial registry intentionally contains ten reusable capabilities: memory read/write,
-candidate profiling, ordinary and auxiliary training, feature construction, placebo,
-rolling, paired seeds, and prediction-diversity analysis. Skills describe capabilities,
-not answers such as “BPR is best.” The LLM still returns a compact hypothesis/reason plus
-one exact ranked config; expected gain, family, skill, risk, and required confirmation are
-copied from trusted planner/registry data into an audited `decision_record`. This avoids
-asking the LLM to self-report values the Controller can derive deterministically.
-
-Unregistered capabilities are reported as gaps and cannot execute. Automatic code/model
-generation is deliberately disabled; current declared gaps include a graph trainer and a
-safe new-model-family builder.
-
-The memory has two levels: per-experiment hypotheses and family-level distilled
-research patterns. Patterns can request confirmation, ensemble-only evaluation,
-matched controls, one cheap evidence-gathering run, or stopping a repeatedly weak
-direction. This updates the planning policy from experiment history; it is not RL or
-parameter-level self-learning.
-
-With `--auto-confirm`, a positive discovery is no longer merely tagged for later
-human review. A deterministic evidence escalator can schedule expanding-window rolling
-validation and, only after rolling passes, paired-seed confirmation. These are separate
-confirmation actions: they cannot replace the champion, do not update the official
-convergence streak, never read test labels, and consume both the action and wall-clock
-budgets. Small redundant gains below `0.0002` stop before this expensive stage unless
-the candidate has high novelty or a measured diversity advantage. Use
-`--research-after-convergence` as well when the predeclared research run should finish
-queued confirmation after the official convergence point has been recorded.
-
-For categorical history features, a small apparent gain automatically schedules
-constant, shuffled, and same-cardinality random controls. Control runs cannot become
-the champion. Each model also writes validation-only prediction artifacts used for
-fixed cold/warm, history, popularity, duration, and time slices plus conditional error
-complementarity against the current champion.
+The built-in experiment space now includes linear, FM, field-aware FM (FFM),
+FM-ensemble, LightGBM/LambdaRank, DeepFM, categorical and dense DCNv2, a two-tower
+candidate model, sequential FM, FPMC, SASRec, multitask learning, and a heterogeneous
+DCNv2/FM/tree blend. In addition, the LLM researcher has an open-ended generated-code
+branch for new architectures and feature transforms. The researcher proposes a validated experiment as JSON, while deterministic code
+trains, evaluates, keeps or rejects, logs, and checks convergence. In autonomous mode,
+the Controller also generates bounded, compatible feature/optimizer bundles that were not
+hand-written as recipes, so the Planner can discover useful interactions without a human
+selecting the next experiment. The registered model and setup path remains the execution
+fallback and safety boundary. In open-ended mode,
+the LLM can also propose a compact model/feature module implementing the validated
+``fit_validate``/``finalize`` contract. The Controller hashes, statically checks, and
+isolates that module before execution; it never receives test labels or promotion authority.
 
 The LightGBM branch first tests the original five categorical fields, then adds
 continuous train-only user/item long-view rates and log interaction counts. Training
@@ -135,48 +109,95 @@ rows use leave-one-out target statistics; validation and test use train statisti
 The FM branch also supports `training_objective: "bpr"`. BPR samples positive/negative
 pairs within the same user and optimizes the positive item to rank above the negative
 item, while leaving the model structure, features, split, and official evaluator
-unchanged. The selected seed-0 configuration (`lr=0.0003`) improved validation Primary
-from `0.601470` to `0.603963`; paired seeds 0–3 improved by `+0.002344` on average.
+unchanged. With learning rate `0.0005`, it improved all five paired seeds: mean
+validation Primary rose from `0.601572` (BCE) to `0.603521` (BPR). This is a historical
+replication result; the current durable winner is the hybrid-blend configuration
+reported below.
 
-The NumPy model suite also includes DeepFM, `multitask_deepfm`, and low-rank DCNv2.
-The multi-task model can isolate click, like, censored completion, capped log-watch,
-and one-sided censored-watch targets; the current evidence-backed default is like-only.
-The one-sided objective treats incomplete watch time as exact and a completed play as
-a duration lower bound, so it is not capped MSE. Auxiliary
-outcomes are training-only targets and are never passed as prediction-time features.
-Multi-task DeepFM can also combine a within-user BPR long-view objective with the
-pointwise auxiliary head. In the Person 1 controlled like-only experiment this scored
-`0.603322` versus `0.604400` for BCE; the externally reported `k=32, aux=0.3`
-configuration scored `0.603610`. Both exact configurations remain reproducible but
-are rejected by scoped evidence rather than advertised as improvements.
-The FM branch also supports a learned constant `global_context` field; it improved
-all three rolling folds, but won only 3/4 paired seeds and is therefore still a
-candidate. Candidate-history fields failed their matched placebo check. Run the
-Person 1 offline (non-agent) reproducible checks with:
+The operator registry also exposes request hour/weekday, upload age/freshness, user
+activity, video type, time-decayed item/author/tag popularity, recent-history candidate
+similarity, a train-vocabulary raw tag field, strictly-past
+user-tag impression/rate features with tag/global backoff, leakage-safe
+author/user-author history features, a train-fitted 50-bin duration feature,
+controlled 1/2/4 BPR negatives, context-matched negative sampling, sampled group-softmax,
+and grouped LightGBM LambdaRank. Encoded data, feature columns, and sequential
+representations are fingerprinted and cached under `artifacts/cache/`. Negative results
+remain logged.
+See [the performance research log](docs/performance-research.md).
 
-```bash
-python scripts/run_rolling_validation.py
-python scripts/run_multitask_rolling.py
-python scripts/run_sequence_rolling.py
-python scripts/run_dcnv2_rolling.py
-python scripts/run_global_context_ablation.py
-python scripts/run_constant_context_rolling.py
-python scripts/run_global_context_multiseed.py
-python scripts/analyze_conditional_complementarity.py
-python scripts/evaluate_history_gated_ensemble.py
-python scripts/run_lightweight_sequence_ablation.py
-python scripts/evaluate_random_exposure_robustness.py
-python scripts/run_pairwise_multitask_ablation.py
-python scripts/run_censored_watchtime_ablation.py
+Research runs start from the durable validation incumbent and load
+validation-only evidence from earlier `logs/run_*` records and archived validation
+candidates. This prevents the LLM from paying to rediscover known configurations.
+The linear+BPR control (`0.602078`) and FFM+BPR (`0.602902`, k=8) are fully executable
+but currently trail the FM+BPR ensemble.
+
+The first sequence screen is also complete. A strict past-only FPMC control scored
+`0.584411`; the stronger FM plus recent-positive transition hybrid scored `0.602148`.
+Both remain executable negative controls. Their results do not justify adding a large
+Transformer blindly; a future SASRec candidate must introduce richer sequence evidence
+while preserving candidate metadata/context.
+
+The current durable validation winner is a `hybrid_blend` with BPR, two sampled
+negatives, same-author negative sampling, train-fitted duration buckets, and raw tags.
+It scored GAUC `0.6732213`, nDCG@5 `0.5385662`, and Primary `0.6058938` on the
+validation split. Relative to the official baseline Primary `0.6016`, this is an
+absolute improvement of approximately `+0.0043`.
+
+After the validation winner was frozen, the explicit final-evaluation command produced
+the following local test-split result:
+
+| Split/result | GAUC | nDCG@5 | Primary |
+| --- | ---: | ---: | ---: |
+| Official baseline (validation) | 0.6674 | 0.5357 | 0.6016 |
+| Validation-best hybrid blend | 0.6732213 | 0.5385662 | 0.6058938 |
+| Final local test evaluation | 0.6665823 | 0.5314327 | 0.5990075 |
+| Validation delta over official baseline | +0.0058213 | +0.0028662 | +0.0042938 |
+
+The final local test metrics are:
+
+```text
+GAUC:    0.6665823
+nDCG@5:  0.5314327
+Primary: 0.5990075
+Users:   23,875
+Rows:    170,588
 ```
 
-Run a full-cap validation-only development loop first. Omitting `--max-iterations`
-uses the `configs/project.json` caps (50 experiments and 6 hours). This is not a
-short smoke test and does not evaluate the test split:
+These are local test metrics only. They were not supplied to the Planner and are not a
+hidden-test result; the competition organizers evaluate the submitted `final.csv` on
+the hidden test set.
+
+### Reproducible run evidence
+
+The two representative runs used for the submission record are:
+
+| Run | Researcher | Iterations | Candidate experiments | Manual interventions | LLM requests/failures | Best validation Primary |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `run_20260831T171347Z` | Deterministic, autonomous | 4 | 3 | 0 | 0 / 0 | 0.6058938 |
+| `run_20260831T131357Z` | OpenAI-compatible LLM with fallback | 6 | 5 | 0 | 5 / 5 authentication failures; deterministic fallback | 0.6053735 |
+
+Each run directory contains `run_meta.json`, `iteration_*.json`, `summary.json`,
+`research_trajectory.json`, `tree_snapshot.json`, and `experiment_history.jsonl`.
+The LLM run also contains the sanitized/redacted `llm_calls.jsonl` audit. Review it
+before upload and remove any provider-specific or secret-bearing fields. The per-iteration
+records include the hypothesis, candidate/configuration diff, validation metrics,
+errors or recovery actions, and promotion decision required by the Starter Kit.
+
+For top-five experiments, set the legal `validation_metric` hyperparameter to
+`"nDCG@5"`. This changes only epoch stopping and blend-weight selection; the
+Controller still promotes the official Primary score, and the untouched evaluator
+still reports both GAUC and nDCG@5. The run summary also records the best nDCG
+checkpoint even when its Primary score is not the incumbent.
+
+Run the autonomous researcher (it uses the LLM when `OPENAI_API_KEY` is set, otherwise the
+offline researcher automatically):
 
 ```powershell
-.\.venv\Scripts\python.exe -X utf8 .\scripts\run_agent.py --researcher deterministic
+.\.venv\Scripts\python.exe -X utf8 .\scripts\run_agent.py --researcher auto --autonomous --max-iterations 10
 ```
+
+To make the autonomous search explicitly investigate top-five quality while
+preserving the official Primary promotion rule, add `--focus-metric "nDCG@5"`.
 
 On macOS or Linux, use:
 
@@ -184,239 +205,125 @@ On macOS or Linux, use:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python3 scripts/verify_setup.py
-python3 scripts/run_agent.py --researcher deterministic
+python3 scripts/run_agent.py --researcher auto --autonomous
 ```
 
-Run the deterministic planner memory ablation with the same experiment budget:
+To let an OpenAI-compatible model choose experiments, set `OPENAI_API_KEY` and run:
 
 ```bash
-python3 scripts/run_agent.py --researcher deterministic --memory-mode no_memory
-python3 scripts/run_agent.py --researcher deterministic --memory-mode raw_history
-python3 scripts/run_agent.py --researcher deterministic --memory-mode distilled_patterns
+python3 scripts/run_agent.py --researcher llm --open-ended --autonomous --model gpt-4.1 --max-iterations 10
 ```
 
-Each run records `planner_memory_mode` in `run_meta.json` and `summary.json`.
-For a controlled comparison, `no_memory` disables dynamic outcome feedback but
-keeps the same legal candidate catalog, static priors, and duplicate protection.
-Each real selection also records counterfactual top choices for all three modes;
-`memory_influenced_selections` counts how often memory actually changed the action
-without launching extra training runs.
-Run all three modes with one command and a shared experiment cap:
+For OpenRouter on Windows PowerShell, the client still uses the OpenAI-compatible
+environment-variable names:
 
-```bash
-python3 scripts/run_memory_ablation.py --max-iterations 5
+```powershell
+$env:OPENAI_API_KEY = "your-openrouter-key"
+$env:OPENAI_BASE_URL = "https://openrouter.ai/api/v1"
+$env:OPENAI_MODEL = "openai/gpt-4.1-mini"
+.\.venv\Scripts\python.exe -X utf8 .\scripts\run_agent.py --researcher llm --open-ended --autonomous --max-iterations 10
 ```
 
-The validation-only comparison is written to `artifacts/memory_ablation.json`.
+Never put the real key in `.env.example`, source files, logs, or the Git history.
 
-Stress-test cross-run planning against previously logged validation outcomes:
+To run a validation-only top-five trial directly:
 
-```bash
-python3 scripts/replay_planner_memory.py --max-steps 12
+```powershell
+.\.venv\Scripts\python.exe -X utf8 .\scripts\run_validation.py `
+  --model hybrid_blend --objective bpr --validation-metric "nDCG@5" `
+  --blend-mode zscore --negatives-per-positive 2
 ```
 
-This offline replay does not retrain models or load test metrics. It requires an
-untracked local `logs/` tree (`logs/*` is gitignored); a fresh clone has no archive.
-When that local archive is present, `no_memory` and `raw_history` both formed the
-two-feature temporal combination already rejected by rolling validation. The scoped
-`distilled_patterns` policy allows the not-yet-rolled single feature but blocks the
-second action that would recreate the rejected combination, saving one logged
-experiment. This demonstrates a changed planning trajectory and deliberately does
-not generalize combination evidence to every individual feature; it is not a new
-independent model-score result.
+Open-ended code-branch proposals are enabled by default for the LLM researcher;
+pass `--no-open-ended` to run only the registered configuration catalog.
 
-`--researcher llm` is an optional exploratory mode that requires API credentials.
-It is not the documented official run. Do not add `--finalize-test` to casual LLM
-experiments. Copy `.env.example` to the git-ignored `.env`, set the key locally,
-and run:
+Use `--start-from baseline` only when deliberately reproducing the original FM
+baseline. Use `--fresh-memory` only for a controlled ablation of persistent memory.
+At least five candidate experiments are attempted before convergence can stop a run.
 
-```bash
-python3 scripts/check_llm_connection.py
-python3 scripts/run_agent.py --researcher llm
+The LLM path records an explicit `deterministic_fallback` if a proposal is invalid,
+duplicated, or unavailable. Sanitized per-attempt evidence is written to
+`logs/run_*/llm_calls.jsonl` and `logs/run_*/llm_calls/`; the proposal/metric timeline is
+written to `research_trajectory.json`. Every run keeps its own winner under
+`logs/run_*/best/`. Shared `artifacts/best_config.json` and `best_model.npz` are updated
+only when a run meets or beats the durable incumbent, so a weaker fresh run cannot
+erase the project best. All ranking metrics still come from the untouched organizer
+`kuairand-starter-kit/evaluate.py`. Use `--final-eval` only after selecting the final
+validation winner, or run `scripts/final_evaluate.py` explicitly.
+
+To evaluate the already-selected validation winner and create the submission file:
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 .\scripts\final_evaluate.py `
+  --data-dir .\data\KuaiRand-Pure\data `
+  --output .\submissions\final.csv
 ```
 
-`scripts/run_agent.py` loads `.env` automatically while preserving values already
-exported by the shell. Without `.env`, the CLI defaults `--base-url` to
-`https://api.openai.com/v1` and `--model` to `gpt-4.1-mini`. `.env.example` points
-at OpenRouter's OpenAI-compatible endpoint and `openai/gpt-4.1-mini`; set
-`OPENAI_BASE_URL` and `OPENAI_MODEL` to select another compatible provider or model.
-The connection checker reports only status, provider, model, and token usage—it
-never prints the key.
+The command reads `artifacts/best_config.json` and `artifacts/best_model.npz`, then
+writes `artifacts/final_test_metrics.json` and `submissions/final.csv`.
 
-The LLM is a constrained selector, not a code editor: it must return one complete
-`changes` object exactly as listed in the deterministic top-five candidate ranking.
-Invalid, incomplete, modified, or duplicate choices are retried and then audited before
-deterministic fallback. `configs/research_context.json` supplies training-only dataset
-facts and conditional method guidance; it contains no validation/test answer sheet.
+### GitHub/submission package
 
-Both the deterministic planner and the LLM receive validation-only persistent evidence from
-`configs/research_evidence.json`. Before every run, `configs/evidence_manifest.json`
-routes selected rolling, placebo, and paired-seed artifacts through the deterministic
-policy builder. Generated policies carry artifact hashes, task/model/schema scope,
-scientific verdicts, and competition status; they override old manual policies only for
-the same family and matching scope. Override the files with `--evidence-file PATH` and
-`--evidence-manifest PATH`. Test-split metric fields are not part of planning evidence
-and are removed before an LLM prompt is sent.
+Commit the reproducible implementation and a small, curated evidence set:
 
-Official convergence and optional research exploration are recorded separately. The
-default command still stops after the organizer rule (`epsilon=0.002` for three rounds).
-For a predeclared research run that records that point but continues within the same
-iteration/time limits, use:
+- `README.md`, `docs/`, `requirements.txt`, and `.env.example`
+- `src/techjam_agent/` (controller, planner/researcher, memory, models, features, and evaluator glue)
+- `scripts/` (setup, profiling, validation, agent execution, and final evaluation)
+- `configs/` (project, experiment, feature-leakage, evidence, and research settings)
+- `tests/`
+- `kuairand-starter-kit/` including the organizer evaluator and reference baseline
+- The selected run-log directories listed above, or an equivalent sanitized archive
+- `submissions/final.csv`, `artifacts/best_config.json`, `artifacts/best_manifest.json`,
+  `artifacts/best_metrics.json`, `artifacts/best_model.npz`, and
+  `artifacts/final_test_metrics.json`
 
-```bash
-python3 scripts/run_agent.py --researcher llm --research-after-convergence
-```
-
-To enable the automatic evidence ladder for promising discoveries, run:
-
-```bash
-python3 scripts/run_agent.py \
-  --researcher llm \
-  --research-after-convergence \
-  --auto-confirm
-```
-
-The ladder is `single validation discovery → 3-fold rolling → paired seeds 0–3`.
-`summary.json` separates discovery, placebo-control, and confirmation actions and also
-reports the underlying confirmation training-run count. Detailed records are stored in
-`confirmation_history.jsonl` and `confirmations/`. A real executor smoke check reproduced
-the existing `global_context` rolling result (3/3 wins, mean delta `+0.000810`, six
-training runs); this validates orchestration and is not a new model-score claim.
-
-Every run writes `submission_candidates.json`. A configuration's scientific verdict
-(`VALIDATED`, `UNCERTAIN`, `REJECTED`, and so on) remains distinct from its competition
-status (`ELIGIBLE`, `RESEARCH_ONLY`, or `NOT_ELIGIBLE`). This allows a promising but
-not statistically confirmed candidate to remain comparable without presenting it as
-a confirmed research result.
-
-Audit whether the committed policy snapshot still matches the current artifacts:
-
-```bash
-python3 scripts/build_family_policies.py \
-  --check-against configs/generated_family_policies.json
-```
-
-The LLM path automatically falls back to the deterministic policy if a proposal is
-invalid, duplicated, or temporarily unavailable. `summary.json` records each fallback
-and a sanitized provider error such as `HTTP 401`, so a deterministic proposal cannot
-be mistaken for an LLM decision. Development runs write a timestamped `logs/run_*`
-directory, `artifacts/best_config.json`, and `artifacts/best_model.npz`. They do not
-write `submissions/final.csv`. All ranking metrics still come from the untouched
-organizer `kuairand-starter-kit/evaluate.py`.
-
-The current CLI cannot finalize an existing `logs/run_*` directory or checkpoint
-without rerunning search. Do not use a later `--researcher llm --finalize-test`
-command to score a previous run. The documented reproducible official command
-currently uses deterministic mode: validation search and the one test evaluation
-are the same process.
-
-```bash
-python3 scripts/run_agent.py --researcher deterministic \
-  --max-iterations 50 --finalize-test
-```
-
-That command trains on the validation loop, then evaluates test once at the end
-and writes `submissions/final.csv`. Omit `--finalize-test` for development and
-smoke runs.
-
-### Official run status
-
-The finalized official run (`--researcher deterministic --max-iterations 50
---finalize-test`) has not yet been executed as of this commit. After it completes,
-update this section with the run `summary.json` path, `logs/run_*` directory, and
-`submissions/final.csv` location. Do not invent results.
-
-After `submissions/final.csv` exists from that official run, you may format-check
-it from the starter directory (this reads the test split for row alignment only):
-
-```bash
-cd kuairand-starter-kit
-python3 submit.py --check --split test --data_dir ../data/KuaiRand-Pure/data \
-  ../submissions/final.csv
-```
-
-A validation-only autonomous smoke trajectory (not the official finalized run)
-completed five experiments, found the `0.604713` ensemble at iteration 2, reported
-zero interventions, and stopped itself with `stop_reason=converged`. Its
-`memory_influenced_selections` was zero, so that short trajectory demonstrates
-end-to-end autonomy but not a memory benefit. A longer logged-validation replay
-subsequently showed that distilled cross-run policies skipped two rolling-rejected
-temporal trials. A fresh five-experiment integration run then reproduced every
-validation score, kept test metrics null, and reported zero manual interventions;
-its short trajectory still had no memory-driven choice divergence.
+Do not commit `.env` or any API key, `.venv/`, the KuaiRand data/archive, feature/data
+caches, Python bytecode, or every exploratory artifact from `artifacts/`, `logs/`, and
+`submissions/`. If logs or final artifacts are kept under the repository's ignored
+paths, add only the selected files explicitly (for example with `git add -f`).
 
 ### Research safety and evidence
 
-- Every training experiment runs in an isolated child process with a 15-minute timeout.
+- Every training experiment runs in an isolated child process with a 15-minute default
+  timeout; the three-component blend has a 20-minute model-specific limit.
 - The official evaluator is checked against a pinned SHA-256 digest before data loading.
-- Iterations expose validation metrics only. Test metrics are computed only when
-  `--finalize-test` is passed on that same process, once, after research, for the
-  validation-best checkpoint. They are never sent back to the researcher.
+- Iterations expose validation metrics only. Test metrics are never sent back to the
+  researcher and are computed only through the explicit final-evaluation path.
 - Each iteration includes a grounded critique (observation, interpretation, confidence,
-  and next test) and is appended to `experiment_history.jsonl`.
+  next test, and selective structured reflection) and is appended to
+  `experiment_history.jsonl`.
 - The manager keeps up to three active branch families. Parent selection combines validation
   Primary, exploration, novelty, runtime, repetition, and failed/rejected-branch penalties.
+- Only strict global validation winners (plus the baseline root) can be expansion parents.
+  Every weaker branch remains zero-reward scientific evidence and is never retrieved as a
+  success.
 - Every candidate log records the parent-selection score breakdown; `tree_snapshot.json`
   preserves parent/child lineage and rejected branches as evidence.
-- `research_memory.json` records validation-only hypothesis evidence and distilled
-  research patterns; the planner does not parse `TRY.md` to decide the next experiment.
-- Generated cross-run policies are applicable only when task, model, and feature-schema
-  scope match. Changed artifact hashes regenerate policy identities on the next run.
-- `manual_interventions.jsonl` records intervention id, reason, action, and whether the
-  intervention was avoidable. A normal uninterrupted run reports zero interventions.
-- `candidate_selection` records the top five considered actions and all score components,
-  making each autonomous choice auditable.
 - `summary.json` records LLM request, failure, and token totals, including failed attempts
-  that fell back to the deterministic researcher.
+that fell back to the deterministic researcher.
+
+For ordinary configuration proposals, the Controller supplies an exact catalog of
+compatible, non-duplicate `candidate_id` values and an explicit catalog of valid
+evidence IDs; local validation requires the returned changes to match the selected
+candidate. Open-ended proposals still select the Controller-issued `code_branch`
+candidate and must pass the source contract and static gate. Deterministic, fallback,
+and LLM researchers are normalized through this same contract.
 
 Quick checks that do not require the dataset:
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v
 python3 -m compileall -q src scripts tests
 ```
 
-The authoritative runnable agent is `src/techjam_agent/` through
-`python3 scripts/run_agent.py`. Root `python run_agent.py` with no flags delegates
-to that script. The legacy `agent/` prototype is available only through explicit
-`--dry-run` or `--real-run` on the root command; those flags are not part of
-`scripts/run_agent.py`.
-
-## Research-agent architecture
-
-The active `src/techjam_agent` Planner/Critic loop and lightweight experiment-tree
-manager include safety checks, persistent evidence memory, budget logic, evidence
-logging, and allow-listed LLM proposals. The earlier root-level implementation remains
-available for architecture smoke tests (`run_agent.py --dry-run` / `--real-run`).
-It is not the official competition loop.
-See [the architecture document](docs/architecture.md).
-
-The published work that informed this design, the paper-to-component mapping, and the
-mechanisms we deliberately did not implement are recorded in
-[the research foundations document](docs/research_foundations.md).
-
-Run the legacy architecture smoke test without training a model:
-
-```powershell
-.\.venv\Scripts\python.exe -X utf8 run_agent.py --dry-run
-```
-
-Run the legacy real validation benchmark with the deterministic Planner and isolated
-FM backend (baseline plus up to three experiments):
-
-```powershell
-.\.venv\Scripts\python.exe -X utf8 run_agent.py --real-run --iterations 3
-```
-
-Real runs use only the KuaiRand-Pure train/validation periods. Post-validation
-rows are discarded before their relevance label is read. Evidence is stored in
-`artifacts/real-runs/`, including checkpoints, validation predictions, stdout,
-metrics, experiment lineage, and the final resource summary.
+The one authoritative implementation is `scripts/run_agent.py` backed by
+`src/techjam_agent/`. The earlier root-level prototype has been removed so planner,
+runner, critic, memory, and tests cannot silently diverge between two systems.
+See [the architecture document](docs/architecture.md) for the progressive research
+loop and its evidence contract.
 
 Run the unit tests:
 
 ```powershell
-$env:PYTHONPATH = "src"
 .\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -v
 ```

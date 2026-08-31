@@ -1,0 +1,20 @@
+{
+  "started_at": "2026-08-31T17:13:47.198225+00:00",
+  "benchmark": "KuaiRand-Pure",
+  "limits": {
+    "max_iterations": 50,
+    "max_wall_clock_hours": 6,
+    "convergence_epsilon": 0.002,
+    "convergence_rounds": 3,
+    "min_candidate_experiments": 5
+  },
+  "max_total_experiments": 4,
+  "prior_experiments_loaded": 100,
+  "researcher": {
+    "type": "DeterministicResearcher",
+    "model": null,
+    "base_url": null,
+    "allow_code_branches": false,
+    "autonomous_mode": true
+  }
+}

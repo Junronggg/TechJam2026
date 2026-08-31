@@ -1,0 +1,265 @@
+{
+  "iteration": 1,
+  "timestamp": "2026-08-31T17:13:47.416616+00:00",
+  "proposal_type": "config",
+  "candidate_id": "candidate_22f40c4efa75",
+  "observation": "This candidate is available in the Controller-generated legal experiment catalog.",
+  "diagnosis": "The newest validation winner is smaller than epsilon and needs matched replication.",
+  "hypothesis": "Refine a promising executable branch: test whether {'dropout': 0.0} improves validation ranking.",
+  "evidence_ids": [
+    "prior_run_20260831T160000Z_5",
+    "strategy_optimization_stability"
+  ],
+  "reason": "Tune capacity, regularization, learning rate, batch size, or early stopping after a branch shows signal.",
+  "changes": {
+    "dropout": 0.0
+  },
+  "expected_effect": {
+    "GAUC": "uncertain",
+    "nDCG@5": "uncertain",
+    "primary": "increase"
+  },
+  "risk": "The mechanism may be redundant or add cost without incremental ranking signal.",
+  "estimated_cost": "low",
+  "success_condition": "Validation Primary exceeds the current global incumbent by more than epsilon; smaller gains remain non-improving evidence.",
+  "source": "deterministic",
+  "llm_call_ids": [],
+  "fallback": null,
+  "token_usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "llm_attempts": 0,
+  "autonomous_mode": true,
+  "parent_id": "baseline",
+  "parent_primary": 0.6054142399875351,
+  "parent_metrics": {
+    "GAUC": 0.6723524893988969,
+    "nDCG@5": 0.5384759905761732,
+    "primary": 0.6054142399875351
+  },
+  "parent_score": 0.6054142399875351,
+  "global_best_primary_before": 0.6054142399875351,
+  "config": {
+    "model": "hybrid_blend",
+    "training_objective": "bpr",
+    "hyperparameters": {
+      "embedding_dim": 16,
+      "learning_rate": 0.0005,
+      "epochs": 40,
+      "l2": 1e-06,
+      "batch_size": 8192,
+      "patience": 4,
+      "seed": 1,
+      "ensemble_size": 1,
+      "ensemble_seed_set": "sequential",
+      "negatives_per_positive": 2,
+      "negative_sampling_strategy": "same_author",
+      "hard_negative_pool_size": 0,
+      "dropout": 0.0,
+      "sequence_length": 20,
+      "auxiliary_weight": 0.2,
+      "graph_layers": 2,
+      "validation_metric": "nDCG@5",
+      "blend_mode": "rank"
+    },
+    "features": {
+      "user_long_view_rate": false,
+      "item_long_view_rate": false,
+      "continuous_history_stats": false,
+      "user_tab_long_view_rate": false,
+      "duration_fine_bucket": true,
+      "tag": true,
+      "user_tag_impression_count": false,
+      "user_tag_long_view_rate": false,
+      "author_impression_count": false,
+      "author_long_view_count": false,
+      "author_long_view_rate": false,
+      "user_author_impression_count": false,
+      "user_author_long_view_count": false,
+      "user_author_long_view_rate": false,
+      "hour": false,
+      "weekday": false,
+      "upload_age_bucket": false,
+      "freshness_decay": false,
+      "user_activity": false,
+      "video_type": false,
+      "time_decay_item_popularity": false,
+      "time_decay_author_popularity": false,
+      "time_decay_tag_popularity": false,
+      "recent_history_similarity": false
+    },
+    "lightgbm_hyperparameters": {
+      "learning_rate": 0.05,
+      "num_leaves": 31,
+      "n_estimators": 500,
+      "min_child_samples": 100,
+      "subsample": 0.9,
+      "colsample_bytree": 0.9,
+      "reg_lambda": 0.0001,
+      "early_stopping_rounds": 30
+    }
+  },
+  "manual_intervention": false,
+  "research_phase": "explore",
+  "expansion_mode": "primary",
+  "reference_ids": [
+    "prior_run_20260831T151900Z_5",
+    "prior_run_20260831T155936Z_5",
+    "prior_run_20260831T155936Z_4",
+    "prior_run_20260831T155936Z_3"
+  ],
+  "strategy_id": "strategy_optimization_stability",
+  "evolution_recipe": null,
+  "candidate_rank": 1,
+  "predicted_utility": 0.503915,
+  "estimated_runtime_seconds": 138.61,
+  "diagnosis_codes": [
+    "runtime_bottleneck",
+    "metric_tradeoff",
+    "capacity_saturation",
+    "provisional_gain"
+  ],
+  "parent_selection": {
+    "parent_id": "baseline",
+    "parent_branch": "baseline",
+    "priority": 0.6078128382876189,
+    "exploitation": 0.6054142399875351,
+    "exploration_bonus": 0.001498598300083856,
+    "novelty_bonus": 0.0009000000000000001,
+    "runtime_penalty": 0.0,
+    "repetition_penalty": 0.0,
+    "failed_child_penalty": 0.0,
+    "rejected_node_penalty": 0.0,
+    "visits": 0,
+    "search_phase": "explore",
+    "selection_mode": "uct",
+    "exploration_probability": 0.9,
+    "research_phase": "explore",
+    "expansion_mode": "primary"
+  },
+  "cache_hit": false,
+  "execution_seconds": 176.73399999999674,
+  "error_slices": {
+    "structural": {
+      "validation_users": 22377,
+      "zero_positive_users": 6785,
+      "zero_positive_user_rate": 0.3032131206149171,
+      "maximum_dataset_ndcg": 0.6967868793850829
+    },
+    "worst_slices": [
+      {
+        "dimension": "tab",
+        "value": "8",
+        "rows": 547,
+        "users": 340,
+        "positive_rate": 0.021937843412160873,
+        "GAUC": 0.35185185185185186,
+        "nDCG@5": 0.02654035004201715,
+        "primary": 0.1891961009469345
+      },
+      {
+        "dimension": "tab",
+        "value": "5",
+        "rows": 291,
+        "users": 129,
+        "positive_rate": 0.10309278219938278,
+        "GAUC": 0.5,
+        "nDCG@5": 0.10962235223186544,
+        "primary": 0.3048111761159327
+      },
+      {
+        "dimension": "tab",
+        "value": "0",
+        "rows": 13726,
+        "users": 5579,
+        "positive_rate": 0.034824419766664505,
+        "GAUC": 0.5946268534953547,
+        "nDCG@5": 0.06328253151742541,
+        "primary": 0.3289546925063901
+      },
+      {
+        "dimension": "tab",
+        "value": "6",
+        "rows": 5170,
+        "users": 2212,
+        "positive_rate": 0.09613152593374252,
+        "GAUC": 0.6488095238095237,
+        "nDCG@5": 0.10621775788581271,
+        "primary": 0.3775136408476682
+      },
+      {
+        "dimension": "tab",
+        "value": "12",
+        "rows": 226,
+        "users": 112,
+        "positive_rate": 0.13274335861206055,
+        "GAUC": 0.6894736842105263,
+        "nDCG@5": 0.17804440241631073,
+        "primary": 0.4337590433134185
+      }
+    ]
+  },
+  "status": "success",
+  "metrics": {
+    "GAUC": 0.6732212670280813,
+    "nDCG@5": 0.5385662343545605,
+    "primary": 0.6058937506913209,
+    "users": 22377,
+    "rows": 124909,
+    "blend_weights": [
+      0.5,
+      0.30000000000000004,
+      0.19999999999999996
+    ],
+    "best_epoch": 7,
+    "runtime_seconds": 173.42199999999139
+  },
+  "delta_from_parent": 0.0004795107037858237,
+  "delta_from_best": 0.0004795107037858237,
+  "delta_from_incumbent": 0.0004795107037858237,
+  "delta_from_official_baseline": 0.0042937506913208745,
+  "decision": "KEEP",
+  "error": null,
+  "search_outcome": "valid_nonimproving",
+  "search_reward": 0,
+  "critique": {
+    "observation": "Validation Primary=0.605894, GAUC=0.673221, nDCG@5=0.538566 versus selected parent 0.605414 (delta=+0.000480). Component changes: delta_GAUC=+0.000869, delta_nDCG@5=+0.000090. Recent validation evidence: iteration 0 validation Primary=0.605414.",
+    "interpretation": "Validation Primary changed by +0.000480, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression.",
+    "confidence": "low",
+    "verdict": "noise",
+    "delta": 0.0004795107037858237,
+    "meaningful_improvement": false,
+    "next_test": "The change in dropout=0.0 is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+    "reasons": [
+      "validation_primary_only",
+      "delta_within_epsilon",
+      "tiny_positive_not_meaningful",
+      "used_recent_validation_history"
+    ],
+    "metric_deltas": {
+      "GAUC": 0.0008687776291843585,
+      "nDCG@5": 9.024377838728892e-05,
+      "primary": 0.0004795107037858237
+    },
+    "hypothesis_status": "inconclusive",
+    "evidence_strength": "single_seed",
+    "seed_count": 1,
+    "reflection_triggered": false,
+    "reflection_reasons": [],
+    "general_lesson": null,
+    "next_questions": [],
+    "bottleneck": "provisional_gain",
+    "recommended_strategy_ids": [
+      "strategy_replication"
+    ],
+    "failure_category": null
+  },
+  "metric_deltas": {
+    "GAUC": 0.0008687776291843585,
+    "nDCG@5": 9.024377838728892e-05,
+    "primary": 0.0004795107037858237
+  },
+  "shared_best_promoted": true
+}

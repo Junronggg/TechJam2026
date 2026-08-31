@@ -3,6 +3,7 @@
   "benchmark": "KuaiRand-Pure",
   "starter_dir": "kuairand-starter-kit",
   "data_dir": "data/KuaiRand-Pure/data",
+  "data_profile_path": "artifacts/data-profile/planner_context.json",
   "dataset_archive": {
     "url": "https://zenodo.org/records/10439422/files/KuaiRand-Pure.tar.gz",
     "md5": "0820331067a3784d9691136f772b35a7"
@@ -15,6 +16,16 @@
   },
   "official_evaluator_sha256": "ecfde28392eb14fec4f488083251df50624e1af2b86278b962daecfb42d195de",
   "experiment_timeout_seconds": 900,
+  "model_timeout_seconds": {
+    "sasrec": 300,
+    "din": 1200,
+    "sasrec_meta": 1800,
+    "lightgcn": 900,
+    "lightgcn_hybrid": 1500,
+    "multitask": 600,
+    "hybrid_blend": 1200,
+    "custom": 1200
+  },
   "baseline": {
     "model": "fm",
     "seed": 0,
@@ -31,7 +42,8 @@
     "max_iterations": 50,
     "max_wall_clock_hours": 6,
     "convergence_epsilon": 0.002,
-    "convergence_rounds": 3
+    "convergence_rounds": 3,
+    "min_candidate_experiments": 5
   },
   "tree_search": {
     "max_active_branches": 3,
@@ -40,26 +52,14 @@
     "runtime_penalty_weight": 0.001,
     "repetition_penalty_weight": 0.001,
     "failed_child_penalty_weight": 0.002,
-    "rejected_node_penalty_weight": 0.002
+    "rejected_node_penalty_weight": 0.002,
+    "exploration_start": 0.9,
+    "exploration_end": 0.2,
+    "elite_top_k": 3
   },
-  "autonomy": {
-    "noise_threshold": 0.0002,
-    "strong_slice_gain": 0.002,
-    "automatic_placebo": true,
-    "placebo_trigger_delta": 0.002,
-    "evidence_escalation": {
-      "minimum_delta": 0.0002,
-      "high_novelty": 0.8,
-      "rolling_wins_required": 2,
-      "paired_seeds": [0, 1, 2, 3]
-    },
-    "candidate_scoring": {
-      "expected_gain": 0.35,
-      "evidence_strength": 0.25,
-      "novelty": 0.2,
-      "compute_cost": 0.1,
-      "redundancy": 0.1,
-      "observed_gain": 80.0
-    }
+  "research_search": {
+    "shortlist_size": 5,
+    "minimum_reserve_seconds": 60,
+    "runtime_safety_factor": 1.25
   }
 }

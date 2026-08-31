@@ -1,0 +1,552 @@
+[
+  {
+    "iteration": 0,
+    "parent_id": null,
+    "source": "system",
+    "llm_call_ids": [],
+    "observation": null,
+    "diagnosis": null,
+    "hypothesis": "Reproduce the selected starting configuration.",
+    "evidence_ids": [],
+    "changes": {},
+    "expected_effect": null,
+    "estimated_cost": null,
+    "research_phase": null,
+    "expansion_mode": null,
+    "reference_ids": [],
+    "strategy_id": null,
+    "evolution_recipe": null,
+    "predicted_utility": null,
+    "search_outcome": "valid_nonimproving",
+    "search_reward": 0,
+    "validation_metrics": {
+      "GAUC": 0.6716787671256087,
+      "nDCG@5": 0.538194626321535,
+      "primary": 0.6049366967235719
+    },
+    "metric_deltas": {
+      "GAUC": null,
+      "nDCG@5": null,
+      "primary": null
+    },
+    "decision": "KEEP",
+    "critic": {
+      "observation": "Validation Primary=0.604937, GAUC=0.671679, nDCG@5=0.538195.",
+      "interpretation": "This run establishes a validation reference. It is not an improvement over a previous best.",
+      "confidence": "high",
+      "verdict": "noise",
+      "delta": null,
+      "meaningful_improvement": false,
+      "next_test": "The change in this configuration is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+      "reasons": [
+        "validation_primary_only",
+        "no_parent_to_compare"
+      ],
+      "metric_deltas": {
+        "GAUC": null,
+        "nDCG@5": null,
+        "primary": null
+      },
+      "hypothesis_status": "inconclusive",
+      "evidence_strength": "baseline_reference",
+      "seed_count": 1,
+      "reflection_triggered": false,
+      "reflection_reasons": [],
+      "general_lesson": null,
+      "next_questions": [],
+      "bottleneck": "uncertain",
+      "recommended_strategy_ids": [
+        "strategy_optimization_stability"
+      ],
+      "failure_category": null
+    },
+    "fallback": null,
+    "token_usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    }
+  },
+  {
+    "iteration": 1,
+    "parent_id": "baseline",
+    "source": "deterministic_fallback",
+    "llm_call_ids": [
+      "llm_68c5f81ae9d549439b55714460773ec2"
+    ],
+    "observation": "This candidate is available in the Controller-generated legal experiment catalog.",
+    "diagnosis": "The newest validation winner is smaller than epsilon and needs matched replication.",
+    "hypothesis": "Refine a promising executable branch: test whether {'embedding_dim': 64} improves validation ranking.",
+    "evidence_ids": [
+      "prior_run_20260831T115939Z_2",
+      "strategy_optimization_stability"
+    ],
+    "changes": {
+      "embedding_dim": 64
+    },
+    "expected_effect": {
+      "GAUC": "uncertain",
+      "nDCG@5": "uncertain",
+      "primary": "increase"
+    },
+    "estimated_cost": "medium",
+    "research_phase": "explore",
+    "expansion_mode": "primary",
+    "reference_ids": [
+      "prior_run_20260830T103426Z_1",
+      "prior_run_20260831T110752Z_2",
+      "prior_run_20260831T114206Z_2"
+    ],
+    "strategy_id": "strategy_optimization_stability",
+    "evolution_recipe": null,
+    "predicted_utility": 0.677911,
+    "search_outcome": "valid_nonimproving",
+    "search_reward": 0,
+    "validation_metrics": {
+      "GAUC": 0.6714748342038891,
+      "nDCG@5": 0.5384075441417484,
+      "primary": 0.6049411891728187
+    },
+    "metric_deltas": {
+      "GAUC": -0.0002039329217196073,
+      "nDCG@5": 0.00021291782021337635,
+      "primary": 4.492449246829011e-06
+    },
+    "decision": "KEEP",
+    "critic": {
+      "observation": "Validation Primary=0.604941, GAUC=0.671475, nDCG@5=0.538408 versus selected parent 0.604937 (delta=+0.000004). Component changes: delta_GAUC=-0.000204, delta_nDCG@5=+0.000213. Recent validation evidence: iteration 0 validation Primary=0.604937.",
+      "interpretation": "Validation Primary changed by +0.000004, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression. GAUC and nDCG@5 moved in opposite directions, so the aggregate hides a metric trade-off.",
+      "confidence": "low",
+      "verdict": "noise",
+      "delta": 4.492449246829011e-06,
+      "meaningful_improvement": false,
+      "next_test": "The change in embedding_dim=64 is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+      "reasons": [
+        "validation_primary_only",
+        "delta_within_epsilon",
+        "tiny_positive_not_meaningful",
+        "component_metric_tradeoff",
+        "used_recent_validation_history"
+      ],
+      "metric_deltas": {
+        "GAUC": -0.0002039329217196073,
+        "nDCG@5": 0.00021291782021337635,
+        "primary": 4.492449246829011e-06
+      },
+      "hypothesis_status": "inconclusive",
+      "evidence_strength": "single_seed",
+      "seed_count": 1,
+      "reflection_triggered": true,
+      "reflection_reasons": [
+        "component_metric_tradeoff"
+      ],
+      "general_lesson": "embedding_dim=64 produced an informative but unconfirmed result.",
+      "next_questions": [
+        "Which user or item slices caused GAUC and nDCG@5 to diverge?"
+      ],
+      "bottleneck": "global_discrimination",
+      "recommended_strategy_ids": [
+        "strategy_personalization_signal",
+        "strategy_interaction_capacity"
+      ],
+      "failure_category": null
+    },
+    "fallback": {
+      "used": true,
+      "reason_code": "authentication",
+      "reason": "LLMProposalFailure: LLM proposal failed after 1 attempts: authentication",
+      "proposal_episode_id": "proposal_3c4be7557cb143cba542caaabbbda91e",
+      "llm_call_ids": [
+        "llm_68c5f81ae9d549439b55714460773ec2"
+      ]
+    },
+    "token_usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    }
+  },
+  {
+    "iteration": 2,
+    "parent_id": "baseline",
+    "source": "deterministic_fallback",
+    "llm_call_ids": [
+      "llm_7cb458a4442f426dab5af8c57088d849"
+    ],
+    "observation": "This candidate is available in the Controller-generated legal experiment catalog.",
+    "diagnosis": "Worst measured validation slice is tab=8 with Primary=0.17038309243503647.",
+    "hypothesis": "Align training with within-user ranking: test whether {'negatives_per_positive': 8} improves validation ranking.",
+    "evidence_ids": [
+      "iteration_001",
+      "prior_run_20260831T115939Z_5",
+      "validation_archive_lightgcn_hybrid_smoke",
+      "strategy_ranking_alignment"
+    ],
+    "changes": {
+      "negatives_per_positive": 8
+    },
+    "expected_effect": {
+      "GAUC": "uncertain",
+      "nDCG@5": "uncertain",
+      "primary": "increase"
+    },
+    "estimated_cost": "medium",
+    "research_phase": "explore",
+    "expansion_mode": "primary",
+    "reference_ids": [
+      "prior_run_20260830T103426Z_1",
+      "prior_run_20260831T110752Z_2",
+      "prior_run_20260831T114206Z_4"
+    ],
+    "strategy_id": "strategy_ranking_alignment",
+    "evolution_recipe": null,
+    "predicted_utility": 0.597054,
+    "search_outcome": "valid_nonimproving",
+    "search_reward": 0,
+    "validation_metrics": {
+      "GAUC": 0.671828871211094,
+      "nDCG@5": 0.5384435275263664,
+      "primary": 0.6051361993687302
+    },
+    "metric_deltas": {
+      "GAUC": 0.00015010408548532528,
+      "nDCG@5": 0.00024890120483134215,
+      "primary": 0.0001995026451583337
+    },
+    "decision": "KEEP",
+    "critic": {
+      "observation": "Validation Primary=0.605136, GAUC=0.671829, nDCG@5=0.538444 versus selected parent 0.604937 (delta=+0.000200). Component changes: delta_GAUC=+0.000150, delta_nDCG@5=+0.000249. Recent validation evidence: iteration 0 validation Primary=0.604937; iteration 1 validation Primary=0.604941.",
+      "interpretation": "Validation Primary changed by +0.000200, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression.",
+      "confidence": "low",
+      "verdict": "noise",
+      "delta": 0.0001995026451583337,
+      "meaningful_improvement": false,
+      "next_test": "The change in negatives_per_positive=8 is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+      "reasons": [
+        "validation_primary_only",
+        "delta_within_epsilon",
+        "tiny_positive_not_meaningful",
+        "used_recent_validation_history"
+      ],
+      "metric_deltas": {
+        "GAUC": 0.00015010408548532528,
+        "nDCG@5": 0.00024890120483134215,
+        "primary": 0.0001995026451583337
+      },
+      "hypothesis_status": "inconclusive",
+      "evidence_strength": "single_seed",
+      "seed_count": 1,
+      "reflection_triggered": false,
+      "reflection_reasons": [],
+      "general_lesson": null,
+      "next_questions": [],
+      "bottleneck": "provisional_gain",
+      "recommended_strategy_ids": [
+        "strategy_replication"
+      ],
+      "failure_category": null
+    },
+    "fallback": {
+      "used": true,
+      "reason_code": "authentication",
+      "reason": "LLMProposalFailure: LLM proposal failed after 1 attempts: authentication",
+      "proposal_episode_id": "proposal_fc2b64375c504c2a941a6ec5c1c0e7ce",
+      "llm_call_ids": [
+        "llm_7cb458a4442f426dab5af8c57088d849"
+      ]
+    },
+    "token_usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    }
+  },
+  {
+    "iteration": 3,
+    "parent_id": "baseline",
+    "source": "deterministic_fallback",
+    "llm_call_ids": [
+      "llm_a3af8826196444c98a68e7ce09fae224"
+    ],
+    "observation": "This candidate is available in the Controller-generated legal experiment catalog.",
+    "diagnosis": "Worst measured validation slice is tab=8 with Primary=0.18008315581856327.",
+    "hypothesis": "Add leakage-safe personalization signal: test whether {'tag': True, 'duration_fine_bucket': True} improves validation ranking.",
+    "evidence_ids": [
+      "iteration_002",
+      "prior_run_20260831T115939Z_5",
+      "iteration_001",
+      "strategy_personalization_signal"
+    ],
+    "changes": {
+      "tag": true,
+      "duration_fine_bucket": true
+    },
+    "expected_effect": {
+      "GAUC": "uncertain",
+      "nDCG@5": "uncertain",
+      "primary": "increase"
+    },
+    "estimated_cost": "low",
+    "research_phase": "explore",
+    "expansion_mode": "primary",
+    "reference_ids": [
+      "prior_run_20260830T103426Z_1",
+      "prior_run_20260831T110752Z_2",
+      "prior_run_20260831T114206Z_4"
+    ],
+    "strategy_id": "strategy_personalization_signal",
+    "evolution_recipe": null,
+    "predicted_utility": 0.557396,
+    "search_outcome": "valid_nonimproving",
+    "search_reward": 0,
+    "validation_metrics": {
+      "GAUC": 0.6722293429895262,
+      "nDCG@5": 0.5385177122891033,
+      "primary": 0.6053735276393147
+    },
+    "metric_deltas": {
+      "GAUC": 0.0005505758639174907,
+      "nDCG@5": 0.0003230859675682485,
+      "primary": 0.0004368309157428696
+    },
+    "decision": "KEEP",
+    "critic": {
+      "observation": "Validation Primary=0.605374, GAUC=0.672229, nDCG@5=0.538518 versus selected parent 0.604937 (delta=+0.000437). Component changes: delta_GAUC=+0.000551, delta_nDCG@5=+0.000323. Recent validation evidence: iteration 0 validation Primary=0.604937; iteration 1 validation Primary=0.604941; iteration 2 validation Primary=0.605136.",
+      "interpretation": "Validation Primary changed by +0.000437, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression.",
+      "confidence": "low",
+      "verdict": "noise",
+      "delta": 0.0004368309157428696,
+      "meaningful_improvement": false,
+      "next_test": "The change in tag=True, duration_fine_bucket=True is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+      "reasons": [
+        "validation_primary_only",
+        "delta_within_epsilon",
+        "tiny_positive_not_meaningful",
+        "used_recent_validation_history"
+      ],
+      "metric_deltas": {
+        "GAUC": 0.0005505758639174907,
+        "nDCG@5": 0.0003230859675682485,
+        "primary": 0.0004368309157428696
+      },
+      "hypothesis_status": "inconclusive",
+      "evidence_strength": "single_seed",
+      "seed_count": 1,
+      "reflection_triggered": false,
+      "reflection_reasons": [],
+      "general_lesson": null,
+      "next_questions": [],
+      "bottleneck": "weak_or_redundant_feature",
+      "recommended_strategy_ids": [
+        "strategy_interaction_capacity",
+        "strategy_ranking_alignment"
+      ],
+      "failure_category": null
+    },
+    "fallback": {
+      "used": true,
+      "reason_code": "authentication",
+      "reason": "LLMProposalFailure: LLM proposal failed after 1 attempts: authentication",
+      "proposal_episode_id": "proposal_cca3bfaf160b4bd08e48134ebcaf44ed",
+      "llm_call_ids": [
+        "llm_a3af8826196444c98a68e7ce09fae224"
+      ]
+    },
+    "token_usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    }
+  },
+  {
+    "iteration": 4,
+    "parent_id": "baseline",
+    "source": "deterministic_fallback",
+    "llm_call_ids": [
+      "llm_efd1db638776485283047d48b4fc0974"
+    ],
+    "observation": "This candidate is available in the Controller-generated legal experiment catalog.",
+    "diagnosis": "Worst measured validation slice is tab=8 with Primary=0.20771461946545303.",
+    "hypothesis": "Align training with within-user ranking: test whether {'negative_sampling_strategy': 'same_tab'} improves validation ranking.",
+    "evidence_ids": [
+      "iteration_003",
+      "prior_run_20260831T115939Z_5",
+      "iteration_001",
+      "strategy_ranking_alignment"
+    ],
+    "changes": {
+      "negative_sampling_strategy": "same_tab"
+    },
+    "expected_effect": {
+      "GAUC": "uncertain",
+      "nDCG@5": "uncertain",
+      "primary": "increase"
+    },
+    "estimated_cost": "medium",
+    "research_phase": "explore",
+    "expansion_mode": "primary",
+    "reference_ids": [
+      "prior_run_20260830T103426Z_1",
+      "prior_run_20260831T110752Z_2",
+      "prior_run_20260831T114206Z_4"
+    ],
+    "strategy_id": "strategy_ranking_alignment",
+    "evolution_recipe": null,
+    "predicted_utility": 0.547915,
+    "search_outcome": "valid_nonimproving",
+    "search_reward": 0,
+    "validation_metrics": {
+      "GAUC": 0.671692136615727,
+      "nDCG@5": 0.5383093401817459,
+      "primary": 0.6050007383987365
+    },
+    "metric_deltas": {
+      "GAUC": 1.3369490118320115e-05,
+      "nDCG@5": 0.00011471386021089103,
+      "primary": 6.404167516460557e-05
+    },
+    "decision": "REJECT",
+    "critic": {
+      "observation": "Validation Primary=0.605001, GAUC=0.671692, nDCG@5=0.538309 versus selected parent 0.604937 (delta=+0.000064). Component changes: delta_GAUC=+0.000013, delta_nDCG@5=+0.000115. Recent validation evidence: iteration 1 validation Primary=0.604941; iteration 2 validation Primary=0.605136; iteration 3 validation Primary=0.605374.",
+      "interpretation": "Validation Primary changed by +0.000064, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression.",
+      "confidence": "low",
+      "verdict": "noise",
+      "delta": 6.404167516460557e-05,
+      "meaningful_improvement": false,
+      "next_test": "The change in negative_sampling_strategy=same_tab is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+      "reasons": [
+        "validation_primary_only",
+        "delta_within_epsilon",
+        "tiny_positive_not_meaningful",
+        "used_recent_validation_history"
+      ],
+      "metric_deltas": {
+        "GAUC": 1.3369490118320115e-05,
+        "nDCG@5": 0.00011471386021089103,
+        "primary": 6.404167516460557e-05
+      },
+      "hypothesis_status": "inconclusive",
+      "evidence_strength": "single_seed",
+      "seed_count": 1,
+      "reflection_triggered": false,
+      "reflection_reasons": [],
+      "general_lesson": null,
+      "next_questions": [],
+      "bottleneck": "provisional_gain",
+      "recommended_strategy_ids": [
+        "strategy_replication"
+      ],
+      "failure_category": null
+    },
+    "fallback": {
+      "used": true,
+      "reason_code": "authentication",
+      "reason": "LLMProposalFailure: LLM proposal failed after 1 attempts: authentication",
+      "proposal_episode_id": "proposal_d9ef9ddbce2f4d6caea8e1834fca6a61",
+      "llm_call_ids": [
+        "llm_efd1db638776485283047d48b4fc0974"
+      ]
+    },
+    "token_usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    }
+  },
+  {
+    "iteration": 5,
+    "parent_id": "baseline",
+    "source": "deterministic_fallback",
+    "llm_call_ids": [
+      "llm_d20b4c97c04f42f9a6f0d968a46f7a5d"
+    ],
+    "observation": "This candidate is available in the Controller-generated legal experiment catalog.",
+    "diagnosis": "Worst measured validation slice is tab=8 with Primary=0.21706447624183706.",
+    "hypothesis": "Add leakage-safe personalization signal: test whether {'user_tag_impression_count': True, 'user_tag_long_view_rate': True} improves validation ranking.",
+    "evidence_ids": [
+      "iteration_004",
+      "prior_run_20260831T115939Z_5",
+      "iteration_001",
+      "strategy_personalization_signal"
+    ],
+    "changes": {
+      "user_tag_impression_count": true,
+      "user_tag_long_view_rate": true
+    },
+    "expected_effect": {
+      "GAUC": "uncertain",
+      "nDCG@5": "uncertain",
+      "primary": "increase"
+    },
+    "estimated_cost": "medium",
+    "research_phase": "focus",
+    "expansion_mode": "primary",
+    "reference_ids": [
+      "prior_run_20260830T103426Z_1",
+      "prior_run_20260831T110752Z_2",
+      "prior_run_20260831T114206Z_4"
+    ],
+    "strategy_id": "strategy_personalization_signal",
+    "evolution_recipe": null,
+    "predicted_utility": 0.393025,
+    "search_outcome": "valid_nonimproving",
+    "search_reward": 0,
+    "validation_metrics": {
+      "GAUC": 0.6715879293817401,
+      "nDCG@5": 0.5381156390317711,
+      "primary": 0.6048517842067556
+    },
+    "metric_deltas": {
+      "GAUC": -9.083774386864363e-05,
+      "nDCG@5": -7.898728976396541e-05,
+      "primary": -8.491251681630452e-05
+    },
+    "decision": "REJECT",
+    "critic": {
+      "observation": "Validation Primary=0.604852, GAUC=0.671588, nDCG@5=0.538116 versus selected parent 0.604937 (delta=-0.000085). Component changes: delta_GAUC=-0.000091, delta_nDCG@5=-0.000079. Recent validation evidence: iteration 2 validation Primary=0.605136; iteration 3 validation Primary=0.605374; iteration 4 validation Primary=0.605001.",
+      "interpretation": "Validation Primary changed by -0.000085, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression.",
+      "confidence": "low",
+      "verdict": "noise",
+      "delta": -8.491251681630452e-05,
+      "meaningful_improvement": false,
+      "next_test": "The change in user_tag_impression_count=True, user_tag_long_view_rate=True is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+      "reasons": [
+        "validation_primary_only",
+        "delta_within_epsilon",
+        "used_recent_validation_history"
+      ],
+      "metric_deltas": {
+        "GAUC": -9.083774386864363e-05,
+        "nDCG@5": -7.898728976396541e-05,
+        "primary": -8.491251681630452e-05
+      },
+      "hypothesis_status": "inconclusive",
+      "evidence_strength": "single_seed",
+      "seed_count": 1,
+      "reflection_triggered": false,
+      "reflection_reasons": [],
+      "general_lesson": null,
+      "next_questions": [],
+      "bottleneck": "weak_or_redundant_feature",
+      "recommended_strategy_ids": [
+        "strategy_interaction_capacity",
+        "strategy_ranking_alignment"
+      ],
+      "failure_category": null
+    },
+    "fallback": {
+      "used": true,
+      "reason_code": "authentication",
+      "reason": "LLMProposalFailure: LLM proposal failed after 1 attempts: authentication",
+      "proposal_episode_id": "proposal_cc5918cf8c194dd2af81bd88316ffdbf",
+      "llm_call_ids": [
+        "llm_d20b4c97c04f42f9a6f0d968a46f7a5d"
+      ]
+    },
+    "token_usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    }
+  }
+]

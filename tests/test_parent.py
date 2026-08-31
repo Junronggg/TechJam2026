@@ -226,16 +226,12 @@ class CriticAndKeepSeparationTests(unittest.TestCase):
         self.assertEqual(controller.best_iteration, 1)
 
     def test_convergence_compares_against_global_best_progress(self) -> None:
-        class GlobalBestParentController(Controller):
-            def _select_parent(self):
-                return select_parent(self.history)
-
         runner = SweepRunner([0.6015, 0.6016, 0.6016, 0.6016, 0.7000])
-        controller, summary, _ = run_controller(runner, SweepResearcher(), 10,
-                                                controller_cls=GlobalBestParentController)
+        controller, summary, _ = run_controller(runner, SweepResearcher(), 10)
         self.assertEqual(summary["stop_reason"], "converged")
         self.assertEqual(summary["convergence_streak"], 3)
-        self.assertEqual(runner.calls, 4)
+        self.assertEqual(runner.calls, 8)
+        self.assertEqual(summary["best_primary"], 0.7000)
 
 
 class WeakerParentTests(unittest.TestCase):

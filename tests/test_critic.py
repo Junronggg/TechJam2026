@@ -60,8 +60,24 @@ class VerdictTests(unittest.TestCase):
     def test_tiny_positive_is_noise(self) -> None:
         result = critique(0.6017, 0.6016)
         self.assertEqual(result["verdict"], "noise")
+        self.assertEqual(result["hypothesis_status"], "inconclusive")
         self.assertFalse(result["meaningful_improvement"])
         self.assertAlmostEqual(result["delta"], 0.0001, places=6)
+
+    def test_component_metric_deltas_and_tradeoff_are_explicit(self) -> None:
+        result = review(
+            {"GAUC": 0.6710, "nDCG@5": 0.5340, "primary": 0.6025},
+            0.6015,
+            0.002,
+            "success",
+            parent_metrics={"GAUC": 0.6670, "nDCG@5": 0.5360, "primary": 0.6015},
+            changes={"training_objective": "bpr"},
+        )
+        self.assertAlmostEqual(result["metric_deltas"]["GAUC"], 0.004)
+        self.assertAlmostEqual(result["metric_deltas"]["nDCG@5"], -0.002)
+        self.assertAlmostEqual(result["metric_deltas"]["primary"], 0.001)
+        self.assertIn("trade-off", result["interpretation"])
+        self.assertIn("component_metric_tradeoff", result["reasons"])
 
     def test_tiny_negative_is_noise(self) -> None:
         result = critique(0.6015, 0.6016)
@@ -192,7 +208,9 @@ class ControllerIntegrationTests(unittest.TestCase):
             record = json.loads((base / "logs" / "iteration_000.json").read_text(encoding="utf-8"))
             critique = record["critique"]
             for key in ("observation", "interpretation", "confidence", "verdict",
-                        "delta", "meaningful_improvement", "next_test", "reasons"):
+                        "delta", "meaningful_improvement", "next_test", "reasons",
+                        "metric_deltas", "hypothesis_status", "evidence_strength",
+                        "seed_count"):
                 self.assertIn(key, critique)
             self.assertEqual(critique["verdict"], "noise")
             self.assertFalse(critique["meaningful_improvement"])
