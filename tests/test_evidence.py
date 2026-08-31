@@ -5,7 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from techjam_agent.config import FEATURE_KEYS
 from techjam_agent.evidence import (
+    DEFAULT_FEASIBILITY_THRESHOLDS,
+    FEASIBILITY_KINDS,
+    FEASIBILITY_SCHEMA_VERSION,
+    POLICY_KINDS,
+    build_feasibility_evidence,
     build_generated_family_policies,
     collect_artifact_evidence,
     merge_generated_policies,
@@ -147,6 +153,155 @@ class GeneratedEvidenceTests(unittest.TestCase):
         self.assertTrue(all(
             row["policy"] == "stop_direction" for row in pairwise
         ))
+
+    def test_feasibility_sources_do_not_change_family_policy_snapshot(self) -> None:
+        manifest = json.loads(
+            (ROOT / "configs" / "evidence_manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(manifest["feasibility_schema_version"], FEASIBILITY_SCHEMA_VERSION)
+        self.assertEqual(
+            manifest["feasibility_thresholds"]["low_coverage"],
+            DEFAULT_FEASIBILITY_THRESHOLDS["low_coverage"],
+        )
+        expected = json.loads(
+            (ROOT / "configs" / "generated_family_policies.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        generated = build_generated_family_policies(ROOT, manifest)
+        self.assertEqual(generated, expected)
+        feasibility = build_feasibility_evidence(ROOT, manifest)
+        kinds = {record["kind"] for record in feasibility["records"]}
+        self.assertEqual(kinds, {"family_runtime", "leakage_status", "feature_coverage"})
+        self.assertTrue(all(len(record["sha256"]) == 64 for record in feasibility["records"]))
+        self.assertNotIn("prediction_correlation", kinds)
+        leakage = [
+            record for record in feasibility["records"]
+            if record["kind"] == "leakage_status"
+        ]
+        self.assertEqual(
+            {next(iter(record["applies_to"]["features"])) for record in leakage},
+            set(FEATURE_KEYS),
+        )
+        coverage = [
+            record for record in feasibility["records"]
+            if record["kind"] == "feature_coverage"
+        ]
+        self.assertTrue(coverage)
+        self.assertTrue(all(
+            record["applies_to"]["features"] and record["kind"] in FEASIBILITY_KINDS
+            for record in coverage
+        ))
+        policy_kinds = {
+            source["kind"]
+            for policy in generated["family_policies"]
+            for source in policy["created_from"]
+        }
+        self.assertTrue(policy_kinds)
+        self.assertTrue(policy_kinds <= POLICY_KINDS)
+        self.assertNotIn("feature_coverage", policy_kinds)
+        self.assertFalse(policy_kinds & FEASIBILITY_KINDS)
+
+    def test_markdown_source_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaisesRegex(ValueError, "markdown"):
+                collect_artifact_evidence(root, self._manifest([{
+                    "id": "from_try",
+                    "family": "candidate_history",
+                    "kind": "feature_coverage",
+                    "path": "TRY.md",
+                    "pointer": ["coverage"],
+                    "validation_only": True,
+                    "applies_to": {"features": {"prior_video_positive": True}},
+                }]))
+
+    def test_test_labelled_coverage_artifact_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "coverage.json").write_text(json.dumps({
+                "test_labels_used": True,
+                "coverage": 0.003,
+                "eligible_rows": 4,
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "used test labels"):
+                collect_artifact_evidence(root, self._manifest([{
+                    "id": "bad_coverage",
+                    "family": "candidate_history",
+                    "kind": "feature_coverage",
+                    "path": "coverage.json",
+                    "pointer": [],
+                    "validation_only": True,
+                    "applies_to": {"features": {"prior_video_positive": True}},
+                }]))
+
+    def test_test_split_correlation_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "corr.json").write_text(json.dumps({
+                "correlation": 0.995,
+                "models": ["fm", "deepfm"],
+                "split": "test",
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "validation predictions"):
+                collect_artifact_evidence(root, self._manifest([{
+                    "id": "bad_corr",
+                    "family": "heterogeneous_ensemble",
+                    "kind": "prediction_correlation",
+                    "path": "corr.json",
+                    "pointer": [],
+                    "validation_only": True,
+                }]))
+
+    def test_loader_reads_coverage_correlation_runtime_and_leakage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "coverage.json").write_text(json.dumps({
+                "test_labels_used": False,
+                "coverage": 0.003,
+                "eligible_rows": 4,
+                "total_rows": 124909,
+            }), encoding="utf-8")
+            (root / "corr.json").write_text(json.dumps({
+                "correlation": 0.995,
+                "models": ["fm", "deepfm"],
+                "split": "validation",
+            }), encoding="utf-8")
+            (root / "runtime.json").write_text(json.dumps({
+                "test_labels_used": False,
+                "folds": {
+                    "fold_1": {"seq": {"runtime_seconds": 800.0}},
+                    "fold_2": {"seq": {"runtime_seconds": 820.0}},
+                },
+            }), encoding="utf-8")
+            (root / "leakage.json").write_text(json.dumps({
+                "status": "unsafe",
+                "leakage_safe": False,
+                "strict_past": False,
+            }), encoding="utf-8")
+            common = {"validation_only": True}
+            feasibility = build_feasibility_evidence(root, self._manifest([
+                {**common, "id": "cov", "family": "candidate_history",
+                 "kind": "feature_coverage", "path": "coverage.json",
+                 "pointer": [], "applies_to": {"features": {"prior_video_positive": True}}},
+                {**common, "id": "corr", "family": "heterogeneous_ensemble",
+                 "kind": "prediction_correlation", "path": "corr.json", "pointer": []},
+                {**common, "id": "rt", "family": "sequence_model",
+                 "kind": "family_runtime", "path": "runtime.json", "pointer": ["folds"],
+                 "runtime_model": "seq", "applies_to": {"models": ["sequence_deepfm"]}},
+                {**common, "id": "leak", "family": "explicit_crosses",
+                 "kind": "leakage_status", "path": "leakage.json", "pointer": [],
+                 "applies_to": {"features": {"user_tab_cross": True}}},
+            ]))
+        by_kind = {row["kind"]: row for row in feasibility["records"]}
+        self.assertEqual(by_kind["feature_coverage"]["result"]["coverage"], 0.003)
+        self.assertEqual(by_kind["feature_coverage"]["result"]["eligible_rows"], 4)
+        self.assertEqual(by_kind["prediction_correlation"]["result"]["models"],
+                         ["deepfm", "fm"])
+        self.assertEqual(by_kind["family_runtime"]["result"]["median_runtime_seconds"], 810.0)
+        self.assertEqual(by_kind["leakage_status"]["result"]["status"], "unsafe")
+        self.assertEqual(feasibility["version"], FEASIBILITY_SCHEMA_VERSION)
+        self.assertFalse(feasibility["test_metrics_included"])
 
 
 if __name__ == "__main__":

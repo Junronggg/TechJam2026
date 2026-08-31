@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import asdict, dataclass
+from enum import StrEnum
 from typing import Any
 
 from .config import (
@@ -11,8 +13,35 @@ from .config import (
     apply_changes,
     experiment_key,
 )
-from .memory import collect_tried_keys, distill_research_patterns
 from .skills import default_skill_registry
+from .evidence import feasibility_from_prior
+from .memory import collect_tried_keys, distill_research_patterns, evidence_directions
+
+
+class ActionType(StrEnum):
+    """Closed single-training verbs. Multi-training jobs are not in this milestone."""
+
+    TRY_MODEL = "TRY_MODEL"
+    TRY_FEATURE = "TRY_FEATURE"
+    TRY_ENSEMBLE = "TRY_ENSEMBLE"
+    TRY_SEQUENCE = "TRY_SEQUENCE"
+    TUNE = "TUNE"
+
+
+ACTION_TYPES = frozenset(ActionType)
+ROBUST_FOLD_MINIMUM = 3
+ROBUST_SEED_MINIMUM = 4
+MODEL_FAMILY_ACTIONS = {
+    "ranking_objective": ActionType.TRY_MODEL,
+    "heterogeneous_ensemble": ActionType.TRY_ENSEMBLE,
+    "multitask": ActionType.TRY_MODEL,
+    "pairwise_multitask": ActionType.TRY_MODEL,
+    "censored_watchtime": ActionType.TRY_MODEL,
+    "pairwise_censored_watchtime": ActionType.TRY_MODEL,
+    "cross_network": ActionType.TRY_MODEL,
+    "sequence_model": ActionType.TRY_SEQUENCE,
+    "tree_model": ActionType.TRY_MODEL,
+}
 
 
 FEATURE_FAMILIES = {
@@ -68,6 +97,9 @@ FAMILY_PRIORS = {
     "optimization": (0.25, 0.35, 0.20, 0.20, 0.90),
 }
 MEMORY_MODES = ("no_memory", "raw_history", "distilled_patterns")
+ENSEMBLE_MEMBER_PAIRS = {
+    "heterogeneous_ensemble": frozenset({"fm", "deepfm"}),
+}
 PRIOR_POLICIES = {
     "exploit_with_confirmation",
     "ensemble_only",
@@ -84,6 +116,7 @@ class CandidateExperiment:
     reason: str
     changes: dict[str, Any]
     family: str
+    action_type: ActionType
     expected_gain: float
     evidence_strength: float
     novelty: float
@@ -100,17 +133,27 @@ class RankedCandidate:
     score: float
     observed_mean_delta: float | None
     family_trials: int
-    direction_stopped: bool
+    hard_blocked: bool
+    soft_stopped: bool
+    evidence_reasons: tuple[str, ...] = ()
     retrieved_pattern: dict[str, Any] | None = None
 
+    @property
+    def direction_stopped(self) -> bool:
+        """True when either evidence state applies. Kept for existing readers."""
+        return self.hard_blocked or self.soft_stopped
     def as_dict(self) -> dict[str, Any]:
         result = asdict(self.candidate)
+        result["action_type"] = str(self.candidate.action_type)
         result.update({
             "score": float(self.score),
             "observed_mean_delta": self.observed_mean_delta,
             "family_trials": self.family_trials,
+            "hard_blocked": self.hard_blocked,
+            "soft_stopped": self.soft_stopped,
             "direction_stopped": self.direction_stopped,
             "retrieved_pattern": self.retrieved_pattern,
+            "evidence_reasons": list(self.evidence_reasons),
         })
         return result
 
@@ -120,9 +163,12 @@ def _candidate(
     reason: str,
     changes: dict[str, Any],
     family: str,
+    action_type: ActionType,
     *,
     prior: tuple[float, float, float, float, float] | None = None,
 ) -> CandidateExperiment:
+    if action_type not in ACTION_TYPES:
+        raise ValueError(f"action_type must be one of {sorted(t.value for t in ActionType)}")
     expected, evidence, novelty, cost, redundancy = prior or FAMILY_PRIORS[family]
     skill_id = SKILL_REGISTRY.primary_for_candidate(family, changes)
     SKILL_REGISTRY.require(skill_id)
@@ -136,7 +182,7 @@ def _candidate(
     else:
         risk = "moderate"
     return CandidateExperiment(
-        hypothesis, reason, changes, family,
+        hypothesis, reason, changes, family, action_type,
         expected, evidence, novelty, cost, redundancy,
         skill_id, confirmations, risk,
     )
@@ -150,14 +196,14 @@ def _model_candidates(config: dict[str, Any]) -> list[CandidateExperiment]:
             "Align FM training with within-user ranking using BPR.",
             "The benchmark evaluates GAUC and nDCG within users, so pairwise supervision has strong prior evidence.",
             {"training_objective": "bpr", "learning_rate": 0.0003},
-            "ranking_objective",
+            "ranking_objective", MODEL_FAMILY_ACTIONS["ranking_objective"],
         ))
     if model == "fm" and config["training_objective"] == "bpr":
         rows.append(_candidate(
             "Blend FM+BPR with DeepFM+BCE.",
             "The two objectives learn complementary ranking errors and the blend improved all rolling folds.",
             {"model": "ensemble", "training_objective": "hybrid", "ensemble_deepfm_weight": 0.4},
-            "heterogeneous_ensemble",
+            "heterogeneous_ensemble", MODEL_FAMILY_ACTIONS["heterogeneous_ensemble"],
         ))
     if model == "ensemble":
         # The first calibration candidate is deliberately the direction that
@@ -190,6 +236,7 @@ def _model_candidates(config: dict[str, Any]) -> list[CandidateExperiment]:
                         "calibration-plus-weight rather than a lucky blend.",
                         {"ensemble_deepfm_weight": value},
                         "heterogeneous_ensemble",
+                        MODEL_FAMILY_ACTIONS["heterogeneous_ensemble"],
                     ))
                 continue
             rows.append(_candidate(
@@ -198,20 +245,21 @@ def _model_candidates(config: dict[str, Any]) -> list[CandidateExperiment]:
                 "whether score scale, rather than model content, limits the blend.",
                 {"ensemble_normalization": normalization},
                 "heterogeneous_ensemble",
+                MODEL_FAMILY_ACTIONS["heterogeneous_ensemble"],
             ))
     if model != "multitask_deepfm":
         rows.append(_candidate(
             "Use like as auxiliary supervision in a multi-task DeepFM.",
             "Like-only supervision was the most consistent auxiliary signal and adds information unavailable at inference time.",
             {"model": "multitask_deepfm", "training_objective": "bce", "learning_rate": 0.001},
-            "multitask",
+            "multitask", MODEL_FAMILY_ACTIONS["multitask"],
         ))
     if not (model == "multitask_deepfm" and config["training_objective"] == "bpr"):
         rows.append(_candidate(
             "Combine within-user BPR ranking with like-only auxiliary supervision.",
             "FM benefits from BPR and like-only DeepFM has stable rolling evidence; this controlled action changes the main objective without changing the auxiliary target.",
             {"model": "multitask_deepfm", "training_objective": "bpr", "learning_rate": 0.001},
-            "pairwise_multitask",
+            "pairwise_multitask", MODEL_FAMILY_ACTIONS["pairwise_multitask"],
         ))
     if not (
         model == "multitask_deepfm"
@@ -225,6 +273,7 @@ def _model_candidates(config: dict[str, Any]) -> list[CandidateExperiment]:
             {"model": "multitask_deepfm", "training_objective": "bce",
              "auxiliary_signals": "censored_watch", "learning_rate": 0.001},
             "censored_watchtime",
+            MODEL_FAMILY_ACTIONS["censored_watchtime"],
         ))
     if not (
         model == "multitask_deepfm"
@@ -238,27 +287,28 @@ def _model_candidates(config: dict[str, Any]) -> list[CandidateExperiment]:
             {"model": "multitask_deepfm", "training_objective": "bpr",
              "auxiliary_signals": "censored_watch", "learning_rate": 0.001},
             "pairwise_censored_watchtime",
+            MODEL_FAMILY_ACTIONS["pairwise_censored_watchtime"],
         ))
     if model != "dcnv2":
         rows.append(_candidate(
             "Test a low-rank DCNv2 interaction model.",
             "Explicit cross layers test a different interaction mechanism while retaining leakage-safe base fields.",
             {"model": "dcnv2", "training_objective": "bce", "learning_rate": 0.001},
-            "cross_network",
+            "cross_network", MODEL_FAMILY_ACTIONS["cross_network"],
         ))
     if model != "sequence_deepfm":
         rows.append(_candidate(
             "Test strict-causal last-16 candidate-conditioned sequence attention.",
             "Order-aware history is a distinct information source, but prior runtime and accuracy evidence make it a costly exploratory candidate.",
             {"model": "sequence_deepfm", "training_objective": "bce", "learning_rate": 0.001},
-            "sequence_model",
+            "sequence_model", MODEL_FAMILY_ACTIONS["sequence_model"],
         ))
     if model != "lightgbm":
         rows.append(_candidate(
             "Test LightGBM on the original fields.",
             "This provides a non-neural tabular control, though prior evidence is negative.",
             {"model": "lightgbm", "training_objective": "bce"},
-            "tree_model",
+            "tree_model", MODEL_FAMILY_ACTIONS["tree_model"],
         ))
     return rows
 
@@ -274,6 +324,7 @@ def _feature_candidates(config: dict[str, Any]) -> list[CandidateExperiment]:
             f"This isolates the {family} mechanism; categorical gains require matched placebo controls before attribution.",
             {feature: True},
             family,
+            ActionType.TRY_FEATURE,
         ))
     return rows
 
@@ -290,6 +341,7 @@ def _optimization_candidates(config: dict[str, Any]) -> list[CandidateExperiment
                 "This is a low-novelty fallback after higher-information mechanisms are exhausted.",
                 {key: value},
                 "optimization",
+                ActionType.TUNE,
             ))
     return rows
 
@@ -308,6 +360,8 @@ def generate_candidates(config: dict[str, Any]) -> list[CandidateExperiment]:
 
 
 def _family_for_item(item: dict[str, Any]) -> str:
+    if not isinstance(item, dict):
+        return "optimization"
     selection = item.get("candidate_selection")
     if isinstance(selection, dict) and isinstance(selection.get("selected_family"), str):
         return selection["selected_family"]
@@ -334,6 +388,8 @@ def _family_observations(history: list[dict[str, Any]], family: str) -> tuple[li
     weak = 0
     strong_slice_or_diversity = 0
     for item in history:
+        if not isinstance(item, dict):
+            continue
         if _family_for_item(item) != family:
             continue
         delta = item.get("delta_from_parent")
@@ -473,6 +529,240 @@ def _matching_prior_pattern(
     return max(applicable, key=confidence)
 
 
+def _artifact_has_robust_sample(pattern: dict[str, Any]) -> bool:
+    """True only when created_from records at least 3 folds or 4 seeds.
+
+    The generic result.robust flag is not enough: placebo margins set robust=True
+    without a fold or seed count, and those remain soft evidence.
+    """
+    sources = pattern.get("created_from")
+    if not isinstance(sources, list):
+        return False
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        result = source.get("result")
+        if not isinstance(result, dict):
+            continue
+        folds, seeds = result.get("folds"), result.get("seeds")
+        try:
+            if folds is not None and int(folds) >= ROBUST_FOLD_MINIMUM:
+                return True
+        except (TypeError, ValueError):
+            pass
+        try:
+            if seeds is not None and int(seeds) >= ROBUST_SEED_MINIMUM:
+                return True
+        except (TypeError, ValueError):
+            pass
+    return False
+
+
+def _classify_evidence(
+    *,
+    weak: int,
+    advantage: int,
+    pattern: dict[str, Any],
+) -> tuple[bool, bool]:
+    """Split reliable artifact blocks from relaxable in-run or uncertain evidence."""
+    policy = pattern.get("policy")
+    if policy == "stop_direction" and _artifact_has_robust_sample(pattern):
+        return True, False
+    soft = False
+    if weak >= 2 and advantage == 0:
+        soft = True
+    if policy == "stop_direction":
+        soft = True
+    if pattern.get("scientific_verdict") == "UNCERTAIN":
+        soft = True
+    return False, soft
+
+
+def _scoped_feature(candidate: CandidateExperiment) -> str | None:
+    features = [key for key in candidate.changes if key in FEATURE_KEYS]
+    if len(features) == 1:
+        return features[0]
+    return None
+
+
+def _exact_feature_scope(record: dict[str, Any], feature: str) -> bool:
+    applies = record.get("applies_to")
+    if not isinstance(applies, dict):
+        return False
+    scope = applies.get("features")
+    if not isinstance(scope, dict) or not scope:
+        return False
+    if scope.get(feature) is not True:
+        return False
+    return not any(key != feature and value is True for key, value in scope.items())
+
+
+def _runtime_applies(record: dict[str, Any], candidate: CandidateExperiment,
+                     changed: dict[str, Any]) -> bool:
+    if record.get("family") != candidate.family:
+        return False
+    applies = record.get("applies_to")
+    if not isinstance(applies, dict):
+        return True
+    return _policy_applies({"applies_to": applies}, changed)
+
+
+def _robust_scoped_stop(
+    prior_evidence: dict[str, Any] | None,
+    family: str,
+    changed: dict[str, Any],
+) -> bool:
+    """True when an existing robust stop_direction already covers this config."""
+    pattern = _matching_prior_pattern(
+        _prior_family_patterns(prior_evidence), family, changed,
+    )
+    if not pattern or pattern.get("policy") != "stop_direction":
+        return False
+    return _artifact_has_robust_sample(pattern)
+
+
+def _feasibility_effect(
+    candidate: CandidateExperiment,
+    changed: dict[str, Any],
+    prior_evidence: dict[str, Any] | None,
+) -> tuple[bool, bool, float, tuple[str, ...]]:
+    """Apply cheap feasibility evidence without changing the 6-hour budget."""
+    bundle = feasibility_from_prior(prior_evidence)
+    thresholds = bundle["thresholds"]
+    hard = False
+    soft = False
+    reasons: set[str] = set()
+    compute_cost = candidate.compute_cost
+    measured: list[float] = []
+    leakage_seen = False
+    for record in bundle["records"]:
+        if not isinstance(record, dict):
+            continue
+        result = record.get("result")
+        if not isinstance(result, dict):
+            continue
+        kind = record.get("kind") or result.get("kind")
+        if kind == "feature_coverage":
+            feature = _scoped_feature(candidate)
+            if candidate.action_type != ActionType.TRY_FEATURE or feature is None:
+                continue
+            if not _exact_feature_scope(record, feature):
+                continue
+            if not _policy_applies({"applies_to": record.get("applies_to")}, changed):
+                continue
+            try:
+                coverage = float(result["coverage"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            eligible = result.get("eligible_rows")
+            if coverage == 0 and eligible == 0:
+                hard = True
+            elif 0 < coverage < float(thresholds["low_coverage"]):
+                soft = True
+            elif coverage == 0:
+                soft = True
+        elif kind == "prediction_correlation":
+            if candidate.action_type != ActionType.TRY_ENSEMBLE:
+                continue
+            models = result.get("models")
+            expected = ENSEMBLE_MEMBER_PAIRS.get(candidate.family)
+            if not isinstance(models, list) or expected is None:
+                continue
+            if frozenset(models) != expected:
+                continue
+            try:
+                correlation = float(result["correlation"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if correlation < float(thresholds["high_correlation"]):
+                continue
+            reasons.add("high_prediction_correlation")
+            if _robust_scoped_stop(prior_evidence, candidate.family, changed):
+                hard = True
+            else:
+                soft = True
+        elif kind == "family_runtime":
+            if not _runtime_applies(record, candidate, changed):
+                continue
+            try:
+                measured.append(float(result["median_runtime_seconds"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        elif kind == "leakage_status":
+            if candidate.action_type != ActionType.TRY_FEATURE:
+                continue
+            feature = _scoped_feature(candidate)
+            if feature is None or not _exact_feature_scope(record, feature):
+                continue
+            if not _policy_applies({"applies_to": record.get("applies_to")}, changed):
+                continue
+            leakage_seen = True
+            status = result.get("status")
+            if status == "unsafe":
+                hard = True
+                reasons.add("unsafe_leakage")
+            elif status == "safe" and result.get("strict_past") is True:
+                continue
+            else:
+                soft = True
+                reasons.add("uncertain_leakage_evidence")
+    if candidate.action_type == ActionType.TRY_FEATURE and not leakage_seen:
+        soft = True
+        reasons.add("missing_leakage_evidence")
+    if hard:
+        soft = False
+    if measured:
+        reference = float(thresholds["runtime_reference_seconds"])
+        median_runtime = float(statistics.median(sorted(measured)))
+        if reference > 0:
+            compute_cost = min(
+                float(thresholds["runtime_cost_max"]),
+                max(float(thresholds["runtime_cost_min"]), median_runtime / reference),
+            )
+    return hard, soft, compute_cost, tuple(sorted(reasons))
+
+
+def _row_flags(row: Any) -> tuple[bool, bool]:
+    """Read hard/soft flags, including legacy rows that only have direction_stopped."""
+    hard = getattr(row, "hard_blocked", None)
+    soft = getattr(row, "soft_stopped", None)
+    if hard is None and soft is None:
+        stopped = bool(getattr(row, "direction_stopped", False))
+        return stopped, False
+    return bool(hard), bool(soft)
+
+
+def admissible_candidates(
+    ranked: list[Any],
+    *,
+    relax_soft: bool,
+) -> list[Any]:
+    """Return ranked rows allowed in one selection pass.
+
+    Duplicates and illegal configs are omitted before ranking. Hard blocks stay
+    out of both passes. Soft-stopped rows return only when relax_soft is True.
+    Legacy rows that lack the new fields treat direction_stopped as a hard block
+    so an unknown stop is never silently relaxed.
+    """
+    allowed: list[Any] = []
+    for row in ranked:
+        hard_blocked, soft_stopped = _row_flags(row)
+        if hard_blocked:
+            continue
+        if soft_stopped and not relax_soft:
+            continue
+        allowed.append(row)
+    return allowed
+
+
+def choose_ranked(ranked: list[RankedCandidate]) -> list[RankedCandidate]:
+    """Prefer unblocked candidates; relax only soft evidence if the first pass is empty."""
+    preferred = admissible_candidates(ranked, relax_soft=False)
+    if preferred:
+        return preferred
+    return admissible_candidates(ranked, relax_soft=True)
+
+
 def rank_candidates(
     config: dict[str, Any],
     history: list[dict[str, Any]],
@@ -501,6 +791,7 @@ def rank_candidates(
         _prior_family_patterns(prior_evidence)
         if memory_mode == "distilled_patterns" else {}
     )
+    directions = evidence_directions(history)
     ranked: list[RankedCandidate] = []
     for candidate in generate_candidates(config):
         changed = apply_changes(config, candidate.changes)
@@ -519,11 +810,14 @@ def rank_candidates(
             and advantage == 0
             and not unseen_ensemble_variant
         )
+        feas_hard, feas_soft, compute_cost, feas_reasons = _feasibility_effect(
+            candidate, changed, prior_evidence,
+        )
         score = (
             weights["expected_gain"] * candidate.expected_gain
             + weights["evidence_strength"] * candidate.evidence_strength
             + weights["novelty"] * candidate.novelty / (1 + len(deltas))
-            - weights["compute_cost"] * candidate.compute_cost
+            - weights["compute_cost"] * compute_cost
             - weights["redundancy"] * candidate.redundancy
         )
         if observed is not None:
@@ -557,11 +851,48 @@ def rank_candidates(
                 score += 0.01
         if pattern_policy == "stop_direction" and not unseen_ensemble_variant:
             stopped = True
-        if stopped:
+        hard_blocked, soft_stopped = _classify_evidence(
+            weak=weak, advantage=advantage, pattern=pattern,
+        )
+        if stopped and not hard_blocked:
+            soft_stopped = True
+        if (
+            pattern_policy == "gather_evidence"
+            and pattern.get("competition_status") == "ELIGIBLE"
+            and not hard_blocked
+        ):
+            # A submission-eligible uncertain candidate gets one controlled run;
+            # missing optional feasibility records must not silently suppress it.
+            soft_stopped = False
+        if unseen_ensemble_variant and not hard_blocked:
+            # A never-measured calibration neighbor is an information-gathering
+            # action, so family-level noise cannot suppress it.
+            soft_stopped = False
+        if directions.hard_block_for(changed) is not None:
+            hard_blocked, soft_stopped = True, False
+        elif memory_mode != "no_memory" and directions.soft_reason_for(changed) is not None:
+            soft_stopped = True
+        if feas_hard:
+            hard_blocked, soft_stopped = True, False
+        elif feas_soft and not hard_blocked:
+            soft_stopped = True
+        if (
+            pattern_policy == "gather_evidence"
+            and pattern.get("competition_status") == "ELIGIBLE"
+            and not hard_blocked
+        ) or (unseen_ensemble_variant and not hard_blocked):
+            soft_stopped = False
+        if hard_blocked or soft_stopped:
             score -= 1.0
         ranked.append(RankedCandidate(
-            candidate, score, observed, len(deltas), stopped,
-            pattern if pattern else None,
+            candidate=candidate,
+            score=score,
+            observed_mean_delta=observed,
+            family_trials=len(deltas),
+            hard_blocked=hard_blocked,
+            soft_stopped=soft_stopped,
+            evidence_reasons=feas_reasons,
+            retrieved_pattern=pattern if pattern else None,
         ))
     return sorted(ranked, key=lambda row: (-row.score, row.candidate.family,
                                             experiment_key(apply_changes(config, row.candidate.changes))))
@@ -584,21 +915,22 @@ class AutonomousExperimentPlanner:
         self.last_selection: dict[str, Any] | None = None
 
     def select(self, config: dict[str, Any], history: list[dict[str, Any]]) -> CandidateExperiment:
-        ranked = [row for row in rank_candidates(
+        all_ranked = rank_candidates(
             config, history, weights=self.weights, memory_mode=self.memory_mode,
             prior_evidence=self.prior_evidence,
         )
-                  if not row.direction_stopped]
+        preferred = admissible_candidates(all_ranked, relax_soft=False)
+        ranked = preferred or admissible_candidates(all_ranked, relax_soft=True)
         if not ranked:
             raise StopIteration("all legal experiment directions are exhausted or stopped")
         winner = ranked[0]
         counterfactual_choices: dict[str, dict[str, Any] | None] = {}
         selected_key = experiment_key(apply_changes(config, winner.candidate.changes))
         for mode in MEMORY_MODES:
-            mode_ranked = [row for row in rank_candidates(
+            mode_ranked = choose_ranked(rank_candidates(
                 config, history, weights=self.weights, memory_mode=mode,
                 prior_evidence=self.prior_evidence,
-            ) if not row.direction_stopped]
+            ))
             if not mode_ranked:
                 counterfactual_choices[mode] = None
                 continue
@@ -626,8 +958,11 @@ class AutonomousExperimentPlanner:
         self.last_selection = {
             "memory_mode": self.memory_mode,
             "selected_family": winner.candidate.family,
+            "selected_action_type": str(winner.candidate.action_type),
+            "selection_pass": "preferred" if preferred else "relaxed",
             "selected_score": float(winner.score),
             "selected_skill": winner.candidate.skill_id,
+            "evidence_reasons": list(winner.evidence_reasons),
             "criteria": (
                 "expected_gain + evidence_strength + novelty - compute_cost - redundancy; "
                 "scoped artifact policies override family-level patterns only when the "

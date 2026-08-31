@@ -11,7 +11,7 @@ Research logs are separated by purpose:
 
 ## Prerequisites
 
-- Windows PowerShell
+- Windows PowerShell, or macOS/Linux
 - Python 3.11 (the starter kit supports Python 3.9+)
 - KuaiRand-Pure downloaded from the [official Zenodo record](https://zenodo.org/records/10439422)
 
@@ -29,9 +29,8 @@ $env:PYTHONUTF8 = "1"
 `setup.cmd` is the recommended entry point on Windows because it works even when
 the local PowerShell execution policy blocks `.ps1` scripts.
 
-The official baseline currently needs only NumPy. Larger ML dependencies such as
-PyTorch and LightGBM will be selected and pinned when model development begins,
-avoiding a premature heavyweight environment.
+The official baseline currently needs only NumPy. `requirements.txt` already pins
+LightGBM for the first model extension. PyTorch is not a current dependency.
 
 ## Dataset layout
 
@@ -48,8 +47,9 @@ data/
 
 The data directory is ignored by Git. If you store it elsewhere, set
 `TECHJAM_DATA_DIR` in `.env` and pass the same path to starter-kit commands.
-The downloaded archive is verified against MD5
-`0820331067a3784d9691136f772b35a7` before use.
+The Zenodo archive checksum recorded in `configs/project.json` is MD5
+`0820331067a3784d9691136f772b35a7`. `scripts/verify_setup.py` checks extracted
+file presence and the evaluator SHA-256; it does not hash the downloaded archive.
 
 ## Preparation checks
 
@@ -67,13 +67,8 @@ Set-Location .\kuairand-starter-kit
 
 Expected validation scores are approximately GAUC `0.6674`, nDCG@5 `0.5357`,
 and primary `0.6016`. Do not start agent/model development until these reproduce.
-
-Then generate and validate a sample submission:
-
-```powershell
-..\.venv\Scripts\python.exe -X utf8 submit.py --make --split test --data_dir ..\data\KuaiRand-Pure\data ..\submissions\baseline.csv
-..\.venv\Scripts\python.exe -X utf8 submit.py --check --split test --data_dir ..\data\KuaiRand-Pure\data ..\submissions\baseline.csv
-```
+`baseline.py` reports validation metrics; do not pass a test split here.
+Do not run `submit.py --split test` during setup or smoke checks.
 
 ## Protected organizer files
 
@@ -86,7 +81,8 @@ and the virtual environment out of version control.
 The active system is a constrained autonomous research loop. It generates legal
 candidate experiments, scores them by expected gain, evidence strength, novelty,
 compute cost, and redundancy, selects one, trains it, evaluates validation ranking,
-reflects on the result, updates structured memory, and repeats. It never gives an LLM
+reflects on the result, updates structured memory, and repeats. Ranking uses typed
+actions plus hard/soft evidence and feasibility filtering. It never gives an LLM
 permission to edit the repository.
 
 The architecture separates three responsibilities:
@@ -149,14 +145,14 @@ The one-sided objective treats incomplete watch time as exact and a completed pl
 a duration lower bound, so it is not capped MSE. Auxiliary
 outcomes are training-only targets and are never passed as prediction-time features.
 Multi-task DeepFM can also combine a within-user BPR long-view objective with the
-pointwise auxiliary head. In the controlled like-only experiment this scored
+pointwise auxiliary head. In the Person 1 controlled like-only experiment this scored
 `0.603322` versus `0.604400` for BCE; the externally reported `k=32, aux=0.3`
 configuration scored `0.603610`. Both exact configurations remain reproducible but
 are rejected by scoped evidence rather than advertised as improvements.
 The FM branch also supports a learned constant `global_context` field; it improved
 all three rolling folds, but won only 3/4 paired seeds and is therefore still a
 candidate. Candidate-history fields failed their matched placebo check. Run the
-reproducible checks with:
+Person 1 offline (non-agent) reproducible checks with:
 
 ```bash
 python scripts/run_rolling_validation.py
@@ -174,7 +170,9 @@ python scripts/run_pairwise_multitask_ablation.py
 python scripts/run_censored_watchtime_ablation.py
 ```
 
-Run the offline deterministic researcher first:
+Run a full-cap validation-only development loop first. Omitting `--max-iterations`
+uses the `configs/project.json` caps (50 experiments and 6 hours). This is not a
+short smoke test and does not evaluate the test split:
 
 ```powershell
 .\.venv\Scripts\python.exe -X utf8 .\scripts\run_agent.py --researcher deterministic
@@ -186,15 +184,16 @@ On macOS or Linux, use:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python3 run_agent.py --researcher deterministic
+python3 scripts/verify_setup.py
+python3 scripts/run_agent.py --researcher deterministic
 ```
 
 Run the deterministic planner memory ablation with the same experiment budget:
 
 ```bash
-python3 run_agent.py --researcher deterministic --memory-mode no_memory
-python3 run_agent.py --researcher deterministic --memory-mode raw_history
-python3 run_agent.py --researcher deterministic --memory-mode distilled_patterns
+python3 scripts/run_agent.py --researcher deterministic --memory-mode no_memory
+python3 scripts/run_agent.py --researcher deterministic --memory-mode raw_history
+python3 scripts/run_agent.py --researcher deterministic --memory-mode distilled_patterns
 ```
 
 Each run records `planner_memory_mode` in `run_meta.json` and `summary.json`.
@@ -217,16 +216,20 @@ Stress-test cross-run planning against previously logged validation outcomes:
 python3 scripts/replay_planner_memory.py --max-steps 12
 ```
 
-This offline replay does not retrain models or load test metrics. In the current log
-archive, `no_memory` and `raw_history` both formed the two-feature temporal combination
-already rejected by rolling validation. The scoped `distilled_patterns` policy allows
-the not-yet-rolled single feature but blocks the second action that would recreate the
-rejected combination, saving one logged experiment. This demonstrates a changed planning
-trajectory and deliberately does not generalize combination evidence to every individual
-feature; it is not a new independent model-score result.
+This offline replay does not retrain models or load test metrics. It requires an
+untracked local `logs/` tree (`logs/*` is gitignored); a fresh clone has no archive.
+When that local archive is present, `no_memory` and `raw_history` both formed the
+two-feature temporal combination already rejected by rolling validation. The scoped
+`distilled_patterns` policy allows the not-yet-rolled single feature but blocks the
+second action that would recreate the rejected combination, saving one logged
+experiment. This demonstrates a changed planning trajectory and deliberately does
+not generalize combination evidence to every individual feature; it is not a new
+independent model-score result.
 
-To let an OpenAI-compatible model choose experiments, copy `.env.example` to the
-git-ignored `.env`, set the key locally, and run:
+`--researcher llm` is an optional exploratory mode that requires API credentials.
+It is not the documented official run. Do not add `--finalize-test` to casual LLM
+experiments. Copy `.env.example` to the git-ignored `.env`, set the key locally,
+and run:
 
 ```bash
 python3 scripts/check_llm_connection.py
@@ -234,10 +237,12 @@ python3 scripts/run_agent.py --researcher llm
 ```
 
 `scripts/run_agent.py` loads `.env` automatically while preserving values already
-exported by the shell. The example defaults to OpenRouter's OpenAI-compatible endpoint
-and `openai/gpt-4.1-mini`; use `OPENAI_BASE_URL` and `OPENAI_MODEL` to select another
-compatible provider or model. The connection checker reports only status, provider,
-model, and token usage—it never prints the key.
+exported by the shell. Without `.env`, the CLI defaults `--base-url` to
+`https://api.openai.com/v1` and `--model` to `gpt-4.1-mini`. `.env.example` points
+at OpenRouter's OpenAI-compatible endpoint and `openai/gpt-4.1-mini`; set
+`OPENAI_BASE_URL` and `OPENAI_MODEL` to select another compatible provider or model.
+The connection checker reports only status, provider, model, and token usage—it
+never prints the key.
 
 The LLM is a constrained selector, not a code editor: it must return one complete
 `changes` object exactly as listed in the deterministic top-five candidate ranking.
@@ -295,33 +300,59 @@ python3 scripts/build_family_policies.py \
 The LLM path automatically falls back to the deterministic policy if a proposal is
 invalid, duplicated, or temporarily unavailable. `summary.json` records each fallback
 and a sanitized provider error such as `HTTP 401`, so a deterministic proposal cannot
-be mistaken for an LLM decision. Outputs are written to a timestamped
-`logs/run_*` directory, `artifacts/best_config.json`, `artifacts/best_model.npz`, and
-`submissions/final.csv`. All ranking metrics still come from the untouched organizer
-`kuairand-starter-kit/evaluate.py`.
+be mistaken for an LLM decision. Development runs write a timestamped `logs/run_*`
+directory, `artifacts/best_config.json`, and `artifacts/best_model.npz`. They do not
+write `submissions/final.csv`. All ranking metrics still come from the untouched
+organizer `kuairand-starter-kit/evaluate.py`.
 
-Development runs do not evaluate test by default. After the autonomous trajectory is
-finished and frozen, run the one intended final test evaluation with:
+The current CLI cannot finalize an existing `logs/run_*` directory or checkpoint
+without rerunning search. Do not use a later `--researcher llm --finalize-test`
+command to score a previous run. The documented reproducible official command
+currently uses deterministic mode: validation search and the one test evaluation
+are the same process.
 
 ```bash
-python3 run_agent.py --researcher llm --finalize-test
+python3 scripts/run_agent.py --researcher deterministic \
+  --max-iterations 50 --finalize-test
 ```
 
-A validation-only deterministic reference trajectory completed five experiments,
-found the `0.604713` ensemble at iteration 2, reported zero interventions, and stopped
-itself with `stop_reason=converged`. Its `memory_influenced_selections` was zero, so that
-short trajectory demonstrates end-to-end autonomy but not a memory benefit. A longer
-logged-validation replay subsequently showed that distilled cross-run policies skipped
-two rolling-rejected temporal trials. A fresh five-experiment integration run then
-reproduced every validation score, kept test metrics null, and reported zero manual
-interventions; its short trajectory still had no memory-driven choice divergence.
+That command trains on the validation loop, then evaluates test once at the end
+and writes `submissions/final.csv`. Omit `--finalize-test` for development and
+smoke runs.
+
+### Official run status
+
+The finalized official run (`--researcher deterministic --max-iterations 50
+--finalize-test`) has not yet been executed as of this commit. After it completes,
+update this section with the run `summary.json` path, `logs/run_*` directory, and
+`submissions/final.csv` location. Do not invent results.
+
+After `submissions/final.csv` exists from that official run, you may format-check
+it from the starter directory (this reads the test split for row alignment only):
+
+```bash
+cd kuairand-starter-kit
+python3 submit.py --check --split test --data_dir ../data/KuaiRand-Pure/data \
+  ../submissions/final.csv
+```
+
+A validation-only autonomous smoke trajectory (not the official finalized run)
+completed five experiments, found the `0.604713` ensemble at iteration 2, reported
+zero interventions, and stopped itself with `stop_reason=converged`. Its
+`memory_influenced_selections` was zero, so that short trajectory demonstrates
+end-to-end autonomy but not a memory benefit. A longer logged-validation replay
+subsequently showed that distilled cross-run policies skipped two rolling-rejected
+temporal trials. A fresh five-experiment integration run then reproduced every
+validation score, kept test metrics null, and reported zero manual interventions;
+its short trajectory still had no memory-driven choice divergence.
 
 ### Research safety and evidence
 
 - Every training experiment runs in an isolated child process with a 15-minute timeout.
 - The official evaluator is checked against a pinned SHA-256 digest before data loading.
-- Iterations expose validation metrics only; test metrics are computed once, after research,
-  for the validation-best checkpoint. They are never sent back to the researcher.
+- Iterations expose validation metrics only. Test metrics are computed only when
+  `--finalize-test` is passed on that same process, once, after research, for the
+  validation-best checkpoint. They are never sent back to the researcher.
 - Each iteration includes a grounded critique (observation, interpretation, confidence,
   and next test) and is appended to `experiment_history.jsonl`.
 - The manager keeps up to three active branch families. Parent selection combines validation
@@ -342,30 +373,37 @@ interventions; its short trajectory still had no memory-driven choice divergence
 Quick checks that do not require the dataset:
 
 ```bash
-python3 -m unittest discover -s tests -v
+PYTHONPATH=src python3 -m unittest discover -s tests -v
 python3 -m compileall -q src scripts tests
 ```
 
-The authoritative runnable agent is `src/techjam_agent/` through `python run_agent.py`.
-The root command delegates to `scripts/run_agent.py`; its old architecture prototype is
-still available only through explicit `--dry-run` or `--real-run` compatibility flags.
+The authoritative runnable agent is `src/techjam_agent/` through
+`python3 scripts/run_agent.py`. Root `python run_agent.py` with no flags delegates
+to that script. The legacy `agent/` prototype is available only through explicit
+`--dry-run` or `--real-run` on the root command; those flags are not part of
+`scripts/run_agent.py`.
 
 ## Research-agent architecture
 
 The active `src/techjam_agent` Planner/Critic loop and lightweight experiment-tree
 manager include safety checks, persistent evidence memory, budget logic, evidence
 logging, and allow-listed LLM proposals. The earlier root-level implementation remains
-available for architecture smoke tests and comparison.
+available for architecture smoke tests (`run_agent.py --dry-run` / `--real-run`).
+It is not the official competition loop.
 See [the architecture document](docs/architecture.md).
 
-Run the architecture smoke test without training a model:
+The published work that informed this design, the paper-to-component mapping, and the
+mechanisms we deliberately did not implement are recorded in
+[the research foundations document](docs/research_foundations.md).
+
+Run the legacy architecture smoke test without training a model:
 
 ```powershell
 .\.venv\Scripts\python.exe -X utf8 run_agent.py --dry-run
 ```
 
-Run the real validation benchmark with the deterministic Planner and isolated FM
-backend (baseline plus up to three experiments):
+Run the legacy real validation benchmark with the deterministic Planner and isolated
+FM backend (baseline plus up to three experiments):
 
 ```powershell
 .\.venv\Scripts\python.exe -X utf8 run_agent.py --real-run --iterations 3
@@ -379,5 +417,6 @@ metrics, experiment lineage, and the final resource summary.
 Run the unit tests:
 
 ```powershell
+$env:PYTHONPATH = "src"
 .\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -v
 ```
