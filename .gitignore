@@ -64,12 +64,6 @@ logs/run_20260831T171347Z/*
 logs/run_20260831T171347Z/best/*
 !logs/run_20260831T171347Z/best/config.json
 !logs/run_20260831T171347Z/best/metrics.json
-!logs/run_final/
-logs/run_final/*
-!logs/run_final/summary.json
-!logs/run_final/research_trajectory.json
-!logs/run_final/experiment_history.jsonl
-!logs/run_final/iteration_*.json
 submissions/*
 !submissions/.gitkeep
 !submissions/final.csv
