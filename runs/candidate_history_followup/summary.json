@@ -1,0 +1,69 @@
+{
+  "selection_split": "validation only (2022-04-22 through 2022-04-28)",
+  "test_labels_used": false,
+  "results": {
+    "fm_bpr": {
+      "features": {},
+      "metrics": {
+        "GAUC": 0.6705930233001709,
+        "nDCG@5": 0.5373327732086182,
+        "primary": 0.6039628982543945,
+        "best_epoch": 24,
+        "runtime_seconds": 36.17904662503861
+      },
+      "delta_vs_fm_bpr": 0.0
+    },
+    "fm_bpr_prior_video_exposure": {
+      "features": {
+        "prior_video_exposure": true
+      },
+      "metrics": {
+        "GAUC": 0.6709572076797485,
+        "nDCG@5": 0.5372878909111023,
+        "primary": 0.604122519493103,
+        "best_epoch": 24,
+        "runtime_seconds": 33.77074512495892
+      },
+      "delta_vs_fm_bpr": 0.0001596212387084961
+    },
+    "fm_bpr_author_recency": {
+      "features": {
+        "author_recency": true
+      },
+      "metrics": {
+        "GAUC": 0.6707018613815308,
+        "nDCG@5": 0.5373079776763916,
+        "primary": 0.6040049195289612,
+        "best_epoch": 16,
+        "runtime_seconds": 24.212901167047676
+      },
+      "delta_vs_fm_bpr": 4.202127456665039e-05
+    },
+    "fm_bpr_prior_video_count": {
+      "features": {
+        "prior_video_count": true
+      },
+      "metrics": {
+        "GAUC": 0.6704844832420349,
+        "nDCG@5": 0.5373877882957458,
+        "primary": 0.6039361357688904,
+        "best_epoch": 13,
+        "runtime_seconds": 20.42356241599191
+      },
+      "delta_vs_fm_bpr": -2.676248550415039e-05
+    },
+    "fm_bpr_previous_author_same": {
+      "features": {
+        "previous_author_same": true
+      },
+      "metrics": {
+        "GAUC": 0.6707039475440979,
+        "nDCG@5": 0.53731369972229,
+        "primary": 0.6040087938308716,
+        "best_epoch": 16,
+        "runtime_seconds": 24.395001416967716
+      },
+      "delta_vs_fm_bpr": 4.589557647705078e-05
+    }
+  }
+}
