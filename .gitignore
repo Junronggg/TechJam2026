@@ -111,6 +111,9 @@ best/*
 
 # Local research notes and machine-only archives.
 docs/*
+!docs/
+!docs/TRY.md
+!docs/AGENT-TRY.md
 local_archive/
 
 # Editors and operating systems
