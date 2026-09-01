@@ -122,6 +122,49 @@ class CandidatePlanningTests(unittest.TestCase):
         self.assertEqual(selected.retrieved_pattern["scientific_verdict"], "UNCERTAIN")
         self.assertEqual(selected.retrieved_pattern["competition_status"], "ELIGIBLE")
 
+    def test_censored_watchtime_is_distinct_legal_research_family(self):
+        rows = rank_candidates(load_config(), [])
+        censored = next(
+            row for row in rows if row.candidate.family == "censored_watchtime"
+        )
+        self.assertEqual(censored.candidate.changes["auxiliary_signals"], "censored_watch")
+        self.assertEqual(censored.candidate.changes["training_objective"], "bce")
+        self.assertEqual(censored.candidate.changes["learning_rate"], 0.001)
+
+    def test_uncertain_submission_eligible_policy_boosts_without_confirming(self):
+        config = apply_changes(
+            load_config(), {"training_objective": "bpr", "learning_rate": 0.0003}
+        )
+        evidence = {
+            "family_policies": [{
+                "family": "global_context",
+                "policy": "gather_evidence",
+                "scientific_verdict": "UNCERTAIN",
+                "competition_status": "ELIGIBLE",
+                "confidence": 0.7,
+                "applies_to": {
+                    "task": "long_view",
+                    "feature_schema": "v3",
+                    "models": ["fm"],
+                    "training_objectives": ["bpr"],
+                    "features": {"global_context": True},
+                    "hyperparameters": {},
+                },
+            }]
+        }
+        selected = next(
+            row for row in rank_candidates(config, [], prior_evidence=evidence)
+            if row.candidate.family == "global_context"
+        )
+        control = next(
+            row for row in rank_candidates(config, [], memory_mode="no_memory")
+            if row.candidate.family == "global_context"
+        )
+        self.assertGreater(selected.score, control.score)
+        self.assertFalse(selected.direction_stopped)
+        self.assertEqual(selected.retrieved_pattern["scientific_verdict"], "UNCERTAIN")
+        self.assertEqual(selected.retrieved_pattern["competition_status"], "ELIGIBLE")
+
     def test_repeated_noise_stops_a_direction_without_slice_or_diversity_gain(self):
         history = []
         for iteration in (1, 2):

@@ -250,6 +250,12 @@ Invalid, incomplete, modified, or duplicate choices are retried and then audited
 deterministic fallback. `configs/research_context.json` supplies training-only dataset
 facts and conditional method guidance; it contains no validation/test answer sheet.
 
+The LLM is a constrained selector, not a code editor: it must return one complete
+`changes` object exactly as listed in the deterministic top-five candidate ranking.
+Invalid, incomplete, modified, or duplicate choices are retried and then audited before
+deterministic fallback. `configs/research_context.json` supplies training-only dataset
+facts and conditional method guidance; it contains no validation/test answer sheet.
+
 Both the deterministic planner and the LLM receive validation-only persistent evidence from
 `configs/research_evidence.json`. Before every run, `configs/evidence_manifest.json`
 routes selected rolling, placebo, and paired-seed artifacts through the deterministic

@@ -559,6 +559,26 @@ class AgentTests(unittest.TestCase):
              {"config": censored_pointwise}, {"config": censored_pairwise}],
         )
         self.assertEqual(proposal.changes, {
+            "model": "multitask_deepfm",
+            "training_objective": "bce",
+            "auxiliary_signals": "censored_watch",
+            "learning_rate": 0.001,
+        })
+
+        censored_pointwise = apply_changes(ensemble, proposal.changes)
+        censored_pairwise = apply_changes(ensemble, {
+            "model": "multitask_deepfm",
+            "training_objective": "bpr",
+            "auxiliary_signals": "censored_watch",
+            "learning_rate": 0.001,
+        })
+        proposal = DeterministicResearcher().propose(
+            ensemble,
+            [{"config": self.config}, {"config": ensemble},
+             {"config": pointwise}, {"config": pairwise},
+             {"config": censored_pointwise}, {"config": censored_pairwise}],
+        )
+        self.assertEqual(proposal.changes, {
             "model": "dcnv2",
             "training_objective": "bce",
             "learning_rate": 0.001,
