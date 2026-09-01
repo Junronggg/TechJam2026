@@ -698,9 +698,78 @@ failed run can be audited in the same format.
 
 ## Evidence and reproduction files
 
-- Curated model/feature chronology: [`docs/TRY.md`](docs/TRY.md)
-- Curated agent notes: [`docs/AGENT-TRY.md`](docs/AGENT-TRY.md)
-- Submitted run records: `logs/run_final/summary.json`,
-  `logs/run_final/research_trajectory.json`,
-  `logs/run_final/experiment_history.jsonl`, and `logs/run_final/iteration_*.json`
-- Selected predictions: `submissions/final.csv`
+- Model/feature chronology: [`TRY.md`](TRY.md)
+- Agent planning and autonomy chronology: [`AGENT-TRY.md`](AGENT-TRY.md)
+- Raw per-iteration records: the selected `logs/run_*/iteration_*.json` files produced by the run
+- Run-level accounting: the matching `logs/run_*/summary.json` and `run_meta.json`
+- Typical model ablation commands are listed in the reproduction section of `TRY.md`.
+
+## Agent trajectory and autonomy record
+
+This section consolidates the agent-only evidence documented in
+[`AGENT-TRY.md`](AGENT-TRY.md). Model and feature ablations remain in
+[`TRY.md`](TRY.md); this section focuses on planning, memory, controller
+behaviour, resource use, and human intervention.
+
+### Autonomous loop
+
+```text
+observe validation-only evidence
+  -> generate legal candidates
+  -> score evidence, expected gain, novelty, cost, and redundancy
+  -> select one candidate
+  -> execute isolated training and validation
+  -> critic separates observation from interpretation
+  -> keep, reject, stop, or request confirmation
+  -> update experiment history and research memory
+  -> repeat or stop on convergence, budget, or search exhaustion
+```
+
+The controller never gives the researcher test labels or promotion authority.
+Every candidate is checked against the registered action space before training.
+Failures, fallbacks, and rejected branches remain auditable evidence rather
+than being silently removed.
+
+### Agent-focused evidence
+
+| Study | What was tested | Result |
+|---|---|---|
+| Memory ablation | `no_memory`, `raw_history`, and `distilled_patterns` under the same short budget | All reached Primary `0.604713`; the short trajectory did not change its selected actions. |
+| First complete autonomous trajectory | Deterministic planner from baseline through four candidate experiments | Best Primary `0.604713`; 5 total experiments; 0 manual interventions; stopped by convergence. |
+| Cross-run memory replay | Replayed validation history without retraining or loading test metrics | Scoped distilled memory skipped two temporal trials already rejected by rolling validation. This validates a changed planning path, not a new model score. |
+| Autonomous calibration follow-up | Planner selected a nearby blend-weight experiment after a calibration result | Primary `0.605291`; the follow-up was selected without a human choosing the action. |
+| Paired-seed confirmation | Re-trained the rank-calibrated candidate and reference on seeds 0–3 | Candidate won 3/4 seeds; mean delta `+0.000403`; interval crossed zero, so the result remains `UNCERTAIN / ELIGIBLE`. |
+| Local calibration scan | Added the bounded `0.63`/`0.64` neighbourhood to the existing blend-weight search | Validation peak `0.605365`; not treated as statistically confirmed. |
+| OpenRouter researcher | OpenAI-compatible LLM selected legal candidates and handled invalid output | LLM and deterministic fallback paths were both exercised; manual interventions remained `0`. |
+
+### Autonomy accounting
+
+The representative OpenRouter run used 11 requests, 1 proposal failure, and 1
+deterministic fallback, with 123,572 total tokens and 809.7 seconds of wall
+clock in the underlying agent record. The deterministic runs report zero LLM
+requests and zero manual interventions. These values are reported separately
+from model-training runtime so the resource accounting is reproducible.
+
+### Scope and limitations
+
+- The planner is autonomous within the registered, safety-checked capability
+  set; it does not claim unrestricted repository modification.
+- The LLM is a researcher/selector and must return a complete legal candidate;
+  malformed or incomplete proposals are retried and then deterministically
+  recovered.
+- The system is evidence-driven search, not reinforcement learning or claimed
+  parameter-level self-learning.
+- The hidden competition test is unavailable locally and was not used to pick
+  any candidate.
+
+## Final local test evaluation
+
+After validation selection, the frozen submission model was evaluated once on
+the available local test split. The reported aggregate Primary was
+**`0.599365`**. This result is local-only and was not sent back to the Planner;
+the competition hidden-test score is calculated by the organizers after
+submission.
+
+The corresponding prediction artifact is `submissions/final.csv` when the
+finalization command is run. The final evaluation should not be repeated for
+research selection, and its test labels must not be added to planning memory.

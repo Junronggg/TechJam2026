@@ -1,0 +1,544 @@
+[
+  {
+    "iteration": 0,
+    "parent_id": null,
+    "source": "system",
+    "llm_call_ids": [],
+    "observation": null,
+    "diagnosis": null,
+    "hypothesis": "Reproduce the selected starting configuration.",
+    "evidence_ids": [],
+    "changes": {},
+    "expected_effect": null,
+    "estimated_cost": null,
+    "research_phase": null,
+    "expansion_mode": null,
+    "reference_ids": [],
+    "strategy_id": null,
+    "evolution_recipe": null,
+    "predicted_utility": null,
+    "search_outcome": "valid_nonimproving",
+    "search_reward": 0,
+    "validation_metrics": {
+      "GAUC": 0.6722293429895262,
+      "nDCG@5": 0.5385177122891033,
+      "primary": 0.6053735276393147
+    },
+    "metric_deltas": {
+      "GAUC": null,
+      "nDCG@5": null,
+      "primary": null
+    },
+    "decision": "KEEP",
+    "critic": {
+      "observation": "Validation Primary=0.605374, GAUC=0.672229, nDCG@5=0.538518.",
+      "interpretation": "This run establishes a validation reference. It is not an improvement over a previous best.",
+      "confidence": "high",
+      "verdict": "noise",
+      "delta": null,
+      "meaningful_improvement": false,
+      "next_test": "The change in this configuration is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+      "reasons": [
+        "validation_primary_only",
+        "no_parent_to_compare"
+      ],
+      "metric_deltas": {
+        "GAUC": null,
+        "nDCG@5": null,
+        "primary": null
+      },
+      "hypothesis_status": "inconclusive",
+      "evidence_strength": "baseline_reference",
+      "seed_count": 1,
+      "reflection_triggered": false,
+      "reflection_reasons": [],
+      "general_lesson": null,
+      "next_questions": [],
+      "bottleneck": "uncertain",
+      "recommended_strategy_ids": [
+        "strategy_optimization_stability"
+      ],
+      "failure_category": null
+    },
+    "fallback": null,
+    "token_usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    }
+  },
+  {
+    "iteration": 1,
+    "parent_id": "baseline",
+    "source": "llm",
+    "llm_call_ids": [
+      "llm_e805648a9d3d481ba5d79c2ab7ef234c"
+    ],
+    "observation": "Current best model uses embedding_dim=16. Prior evidence shows increasing embedding_dim can refine model capacity and potentially improve ranking metrics without changing model family or training objective.",
+    "diagnosis": "The baseline embedding dimension may limit model capacity, constraining GAUC and nDCG@5 improvements. Increasing embedding_dim to 32 could enhance representation power and improve validation Primary.",
+    "hypothesis": "Increasing embedding_dim from 16 to 32 will improve validation GAUC and nDCG@5, thus increasing Primary by better capturing feature interactions and user-item affinities.",
+    "evidence_ids": [
+      "prior_run_20260831T151900Z_5",
+      "iteration_000"
+    ],
+    "changes": {
+      "embedding_dim": 32
+    },
+    "expected_effect": {
+      "GAUC": "increase",
+      "nDCG@5": "increase",
+      "primary": "increase"
+    },
+    "estimated_cost": "medium",
+    "research_phase": "explore",
+    "expansion_mode": "primary",
+    "reference_ids": [
+      "prior_run_20260831T151900Z_5",
+      "prior_run_20260830T103426Z_1",
+      "prior_run_20260831T110752Z_2",
+      "prior_run_20260831T114206Z_2"
+    ],
+    "strategy_id": "strategy_optimization_stability",
+    "evolution_recipe": null,
+    "predicted_utility": 0.592422,
+    "search_outcome": "valid_nonimproving",
+    "search_reward": 0,
+    "validation_metrics": {
+      "GAUC": 0.6722574710165986,
+      "nDCG@5": 0.5385132556493191,
+      "primary": 0.6053853633329589
+    },
+    "metric_deltas": {
+      "GAUC": 2.8128027072416018e-05,
+      "nDCG@5": -4.4566397842116245e-06,
+      "primary": 1.1835693644157708e-05
+    },
+    "decision": "KEEP",
+    "critic": {
+      "observation": "Validation Primary=0.605385, GAUC=0.672257, nDCG@5=0.538513 versus selected parent 0.605374 (delta=+0.000012). Component changes: delta_GAUC=+0.000028, delta_nDCG@5=-0.000004. Recent validation evidence: iteration 0 validation Primary=0.605374.",
+      "interpretation": "Validation Primary changed by +0.000012, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression. GAUC and nDCG@5 moved in opposite directions, so the aggregate hides a metric trade-off.",
+      "confidence": "low",
+      "verdict": "noise",
+      "delta": 1.1835693644157708e-05,
+      "meaningful_improvement": false,
+      "next_test": "The change in embedding_dim=32 is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+      "reasons": [
+        "validation_primary_only",
+        "delta_within_epsilon",
+        "tiny_positive_not_meaningful",
+        "component_metric_tradeoff",
+        "used_recent_validation_history"
+      ],
+      "metric_deltas": {
+        "GAUC": 2.8128027072416018e-05,
+        "nDCG@5": -4.4566397842116245e-06,
+        "primary": 1.1835693644157708e-05
+      },
+      "hypothesis_status": "inconclusive",
+      "evidence_strength": "single_seed",
+      "seed_count": 1,
+      "reflection_triggered": true,
+      "reflection_reasons": [
+        "component_metric_tradeoff"
+      ],
+      "general_lesson": "embedding_dim=32 produced an informative but unconfirmed result.",
+      "next_questions": [
+        "Which user or item slices caused GAUC and nDCG@5 to diverge?"
+      ],
+      "bottleneck": "top_rank_quality",
+      "recommended_strategy_ids": [
+        "strategy_ranking_alignment",
+        "strategy_personalization_signal"
+      ],
+      "failure_category": null
+    },
+    "fallback": null,
+    "token_usage": {
+      "prompt_tokens": 5855,
+      "completion_tokens": 316,
+      "total_tokens": 6171
+    }
+  },
+  {
+    "iteration": 2,
+    "parent_id": "baseline",
+    "source": "llm",
+    "llm_call_ids": [
+      "llm_2f33be86cc01499382e5678d244d9b15",
+      "llm_21bc58e8f63f42dbb66415e217289ca7"
+    ],
+    "observation": "Previous code_branch candidate was rejected due to forbidden attribute '__init__'. Among legal candidates, candidate_74fc1754a4cc proposes changing validation_metric to 'GAUC' to align training with within-user ranking, addressing metric trade-offs observed in prior runs.",
+    "diagnosis": "Metric trade-off observed where GAUC and nDCG@5 moved in opposite directions, suggesting misalignment between training objective and evaluation metric.",
+    "hypothesis": "Changing validation_metric to 'GAUC' will better align training with the GAUC metric, potentially improving both GAUC and nDCG@5, thus increasing Primary metric.",
+    "evidence_ids": [
+      "iteration_001",
+      "prior_run_20260831T151900Z_5",
+      "strategy_ranking_alignment"
+    ],
+    "changes": {
+      "validation_metric": "GAUC"
+    },
+    "expected_effect": {
+      "GAUC": "increase",
+      "nDCG@5": "uncertain",
+      "primary": "increase"
+    },
+    "estimated_cost": "low",
+    "research_phase": "explore",
+    "expansion_mode": "primary",
+    "reference_ids": [
+      "prior_run_20260831T151900Z_5",
+      "prior_run_20260830T103426Z_1",
+      "prior_run_20260831T110752Z_2",
+      "prior_run_20260831T114206Z_4"
+    ],
+    "strategy_id": "strategy_ranking_alignment",
+    "evolution_recipe": null,
+    "predicted_utility": 0.504078,
+    "search_outcome": "valid_nonimproving",
+    "search_reward": 0,
+    "validation_metrics": {
+      "GAUC": 0.6724999100142978,
+      "nDCG@5": 0.5381104302284259,
+      "primary": 0.6053051701213619
+    },
+    "metric_deltas": {
+      "GAUC": 0.000270567024771573,
+      "nDCG@5": -0.00040728206067741635,
+      "primary": -6.835751795286615e-05
+    },
+    "decision": "REJECT",
+    "critic": {
+      "observation": "Validation Primary=0.605305, GAUC=0.672500, nDCG@5=0.538110 versus selected parent 0.605374 (delta=-0.000068). Component changes: delta_GAUC=+0.000271, delta_nDCG@5=-0.000407. Recent validation evidence: iteration 0 validation Primary=0.605374; iteration 1 validation Primary=0.605385.",
+      "interpretation": "Validation Primary changed by -0.000068, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression. GAUC and nDCG@5 moved in opposite directions, so the aggregate hides a metric trade-off.",
+      "confidence": "low",
+      "verdict": "noise",
+      "delta": -6.835751795286615e-05,
+      "meaningful_improvement": false,
+      "next_test": "The change in validation_metric=GAUC is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+      "reasons": [
+        "validation_primary_only",
+        "delta_within_epsilon",
+        "component_metric_tradeoff",
+        "used_recent_validation_history"
+      ],
+      "metric_deltas": {
+        "GAUC": 0.000270567024771573,
+        "nDCG@5": -0.00040728206067741635,
+        "primary": -6.835751795286615e-05
+      },
+      "hypothesis_status": "inconclusive",
+      "evidence_strength": "single_seed",
+      "seed_count": 1,
+      "reflection_triggered": true,
+      "reflection_reasons": [
+        "component_metric_tradeoff"
+      ],
+      "general_lesson": "validation_metric=GAUC produced an informative but unconfirmed result.",
+      "next_questions": [
+        "Which user or item slices caused GAUC and nDCG@5 to diverge?"
+      ],
+      "bottleneck": "top_rank_quality",
+      "recommended_strategy_ids": [
+        "strategy_ranking_alignment",
+        "strategy_personalization_signal"
+      ],
+      "failure_category": null
+    },
+    "fallback": null,
+    "token_usage": {
+      "prompt_tokens": 12579,
+      "completion_tokens": 1983,
+      "total_tokens": 14562
+    }
+  },
+  {
+    "iteration": 3,
+    "parent_id": "baseline",
+    "source": "llm",
+    "llm_call_ids": [
+      "llm_2c2bffaa06754561a409c0b07f5d66c1",
+      "llm_ca5cec0860d04cdaaafa726f1798589c"
+    ],
+    "observation": "Current best model is hybrid_blend with bpr objective and embedding_dim=16. Prior evidence suggests adding leakage-safe personalization signals can improve ranking without metric trade-off.",
+    "diagnosis": "Validation Primary is limited by lack of personalization signals that capture user long-view behavior and time decay of tag popularity, as indicated by profile_tag_metadata and strategy_personalization_signal evidence.",
+    "hypothesis": "Enabling user_long_view_rate and time_decay_tag_popularity features will add useful personalization signals, improving both GAUC and nDCG@5, thus increasing Primary.",
+    "evidence_ids": [
+      "iteration_001",
+      "iteration_001",
+      "profile_tag_metadata",
+      "strategy_personalization_signal"
+    ],
+    "changes": {
+      "user_long_view_rate": true,
+      "time_decay_tag_popularity": true
+    },
+    "expected_effect": {
+      "GAUC": "increase",
+      "nDCG@5": "increase",
+      "primary": "increase"
+    },
+    "estimated_cost": "medium",
+    "research_phase": "explore",
+    "expansion_mode": "primary",
+    "reference_ids": [
+      "prior_run_20260831T151900Z_5",
+      "prior_run_20260830T103426Z_1",
+      "prior_run_20260831T110752Z_2",
+      "prior_run_20260831T114206Z_4"
+    ],
+    "strategy_id": "strategy_personalization_signal",
+    "evolution_recipe": null,
+    "predicted_utility": 0.492988,
+    "search_outcome": "valid_nonimproving",
+    "search_reward": 0,
+    "validation_metrics": {
+      "GAUC": 0.6719237660215351,
+      "nDCG@5": 0.5383606786461218,
+      "primary": 0.6051422223338285
+    },
+    "metric_deltas": {
+      "GAUC": -0.0003055769679910503,
+      "nDCG@5": -0.00015703364298147449,
+      "primary": -0.00023130530548620687
+    },
+    "decision": "REJECT",
+    "critic": {
+      "observation": "Validation Primary=0.605142, GAUC=0.671924, nDCG@5=0.538361 versus selected parent 0.605374 (delta=-0.000231). Component changes: delta_GAUC=-0.000306, delta_nDCG@5=-0.000157. Recent validation evidence: iteration 0 validation Primary=0.605374; iteration 1 validation Primary=0.605385; iteration 2 validation Primary=0.605305.",
+      "interpretation": "Validation Primary changed by -0.000231, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression.",
+      "confidence": "low",
+      "verdict": "noise",
+      "delta": -0.00023130530548620687,
+      "meaningful_improvement": false,
+      "next_test": "The change in user_long_view_rate=True, time_decay_tag_popularity=True is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+      "reasons": [
+        "validation_primary_only",
+        "delta_within_epsilon",
+        "used_recent_validation_history"
+      ],
+      "metric_deltas": {
+        "GAUC": -0.0003055769679910503,
+        "nDCG@5": -0.00015703364298147449,
+        "primary": -0.00023130530548620687
+      },
+      "hypothesis_status": "inconclusive",
+      "evidence_strength": "single_seed",
+      "seed_count": 1,
+      "reflection_triggered": false,
+      "reflection_reasons": [],
+      "general_lesson": null,
+      "next_questions": [],
+      "bottleneck": "weak_or_redundant_feature",
+      "recommended_strategy_ids": [
+        "strategy_interaction_capacity",
+        "strategy_ranking_alignment"
+      ],
+      "failure_category": null
+    },
+    "fallback": null,
+    "token_usage": {
+      "prompt_tokens": 12782,
+      "completion_tokens": 33108,
+      "total_tokens": 45890
+    }
+  },
+  {
+    "iteration": 4,
+    "parent_id": "baseline",
+    "source": "deterministic_fallback",
+    "llm_call_ids": [
+      "llm_3fd6e17c7b6c40da854efb792c3519b2",
+      "llm_4acdaf692664496a863ea5e122f4fe3b",
+      "llm_d98c4d40d4f94405ae2d8d0af8ed2e6e"
+    ],
+    "observation": "This candidate is available in the Controller-generated legal experiment catalog.",
+    "diagnosis": "Worst measured validation slice is tab=8 with Primary=0.20771461946545303.",
+    "hypothesis": "Change interaction inductive bias: test whether {'model': 'multitask', 'training_objective': 'group_softmax', 'negatives_per_positive': 4, 'auxiliary_weight': 0.1} improves validation ranking.",
+    "evidence_ids": [
+      "iteration_003",
+      "strategy_interaction_capacity"
+    ],
+    "changes": {
+      "model": "multitask",
+      "training_objective": "group_softmax",
+      "negatives_per_positive": 4,
+      "auxiliary_weight": 0.1
+    },
+    "expected_effect": {
+      "GAUC": "uncertain",
+      "nDCG@5": "uncertain",
+      "primary": "increase"
+    },
+    "estimated_cost": "high",
+    "research_phase": "explore",
+    "expansion_mode": "primary",
+    "reference_ids": [
+      "prior_run_20260831T151900Z_5",
+      "prior_run_20260830T103426Z_1",
+      "prior_run_20260831T110752Z_2",
+      "prior_run_20260831T114206Z_4"
+    ],
+    "strategy_id": "strategy_interaction_capacity",
+    "evolution_recipe": "evolve_ranking_multitask",
+    "predicted_utility": 0.300734,
+    "search_outcome": "valid_nonimproving",
+    "search_reward": 0,
+    "validation_metrics": {
+      "GAUC": 0.6713530839291668,
+      "nDCG@5": 0.5368485546668416,
+      "primary": 0.6041008192980042
+    },
+    "metric_deltas": {
+      "GAUC": -0.0008762590603593745,
+      "nDCG@5": -0.0016691576222617188,
+      "primary": -0.0012727083413105467
+    },
+    "decision": "REJECT",
+    "critic": {
+      "observation": "Validation Primary=0.604101, GAUC=0.671353, nDCG@5=0.536849 versus selected parent 0.605374 (delta=-0.001273). Component changes: delta_GAUC=-0.000876, delta_nDCG@5=-0.001669. Recent validation evidence: iteration 1 validation Primary=0.605385; iteration 2 validation Primary=0.605305; iteration 3 validation Primary=0.605142.",
+      "interpretation": "Validation Primary changed by -0.001273, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression.",
+      "confidence": "low",
+      "verdict": "noise",
+      "delta": -0.0012727083413105467,
+      "meaningful_improvement": false,
+      "next_test": "The change in model=multitask, training_objective=group_softmax, negatives_per_positive=4, auxiliary_weight=0.1 is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+      "reasons": [
+        "validation_primary_only",
+        "delta_within_epsilon",
+        "used_recent_validation_history"
+      ],
+      "metric_deltas": {
+        "GAUC": -0.0008762590603593745,
+        "nDCG@5": -0.0016691576222617188,
+        "primary": -0.0012727083413105467
+      },
+      "hypothesis_status": "inconclusive",
+      "evidence_strength": "single_seed",
+      "seed_count": 1,
+      "reflection_triggered": true,
+      "reflection_reasons": [
+        "model_family_test"
+      ],
+      "general_lesson": "model=multitask, training_objective=group_softmax, negatives_per_positive=4, auxiliary_weight=0.1 produced an informative but unconfirmed result.",
+      "next_questions": [
+        "Did the model fail because of its inductive bias or its input encoding?"
+      ],
+      "bottleneck": "interaction_capacity_not_dominant",
+      "recommended_strategy_ids": [
+        "strategy_personalization_signal",
+        "strategy_ranking_alignment"
+      ],
+      "failure_category": null
+    },
+    "fallback": {
+      "used": true,
+      "reason_code": "invalid_json",
+      "reason": "LLMProposalFailure: LLM proposal failed after 3 attempts: invalid_json",
+      "proposal_episode_id": "proposal_980532c3b23341dbb33705134e0c2bb6",
+      "llm_call_ids": [
+        "llm_3fd6e17c7b6c40da854efb792c3519b2",
+        "llm_4acdaf692664496a863ea5e122f4fe3b",
+        "llm_d98c4d40d4f94405ae2d8d0af8ed2e6e"
+      ]
+    },
+    "token_usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    }
+  },
+  {
+    "iteration": 5,
+    "parent_id": "baseline",
+    "source": "llm",
+    "llm_call_ids": [
+      "llm_e86a419164e9487f8e8d8864e28818fc",
+      "llm_7d1572d0ecc840f88794a8bc9486f1f1"
+    ],
+    "observation": "Current baseline uses random negative sampling; prior evidence suggests aligning training negatives with within-user ranking may improve ranking metrics.",
+    "diagnosis": "Validation Primary improvements require better alignment of training objective with ranking quality; negative sampling strategy is a promising lever.",
+    "hypothesis": "Changing negative_sampling_strategy to 'same_author' will better align training with user-specific ranking preferences, improving both GAUC and nDCG@5 and thus Primary.",
+    "evidence_ids": [
+      "iteration_004",
+      "iteration_001",
+      "iteration_001"
+    ],
+    "changes": {
+      "negative_sampling_strategy": "same_author"
+    },
+    "expected_effect": {
+      "GAUC": "increase",
+      "nDCG@5": "increase",
+      "primary": "increase"
+    },
+    "estimated_cost": "medium",
+    "research_phase": "explore",
+    "expansion_mode": "intra_branch",
+    "reference_ids": [
+      "prior_run_20260831T151900Z_5",
+      "prior_run_20260830T103426Z_1",
+      "prior_run_20260831T110752Z_2",
+      "iteration_004"
+    ],
+    "strategy_id": "strategy_ranking_alignment",
+    "evolution_recipe": null,
+    "predicted_utility": 0.469155,
+    "search_outcome": "valid_nonimproving",
+    "search_reward": 0,
+    "validation_metrics": {
+      "GAUC": 0.6723524893988969,
+      "nDCG@5": 0.5384759905761732,
+      "primary": 0.6054142399875351
+    },
+    "metric_deltas": {
+      "GAUC": 0.0001231464093707224,
+      "nDCG@5": -4.17217129300429e-05,
+      "primary": 4.0712348220339756e-05
+    },
+    "decision": "KEEP",
+    "critic": {
+      "observation": "Validation Primary=0.605414, GAUC=0.672352, nDCG@5=0.538476 versus selected parent 0.605374 (delta=+0.000041). Component changes: delta_GAUC=+0.000123, delta_nDCG@5=-0.000042. Recent validation evidence: iteration 2 validation Primary=0.605305; iteration 3 validation Primary=0.605142; iteration 4 validation Primary=0.604101.",
+      "interpretation": "Validation Primary changed by +0.000041, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression. GAUC and nDCG@5 moved in opposite directions, so the aggregate hides a metric trade-off.",
+      "confidence": "low",
+      "verdict": "noise",
+      "delta": 4.0712348220339756e-05,
+      "meaningful_improvement": false,
+      "next_test": "The change in negative_sampling_strategy=same_author is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+      "reasons": [
+        "validation_primary_only",
+        "delta_within_epsilon",
+        "tiny_positive_not_meaningful",
+        "component_metric_tradeoff",
+        "used_recent_validation_history"
+      ],
+      "metric_deltas": {
+        "GAUC": 0.0001231464093707224,
+        "nDCG@5": -4.17217129300429e-05,
+        "primary": 4.0712348220339756e-05
+      },
+      "hypothesis_status": "inconclusive",
+      "evidence_strength": "single_seed",
+      "seed_count": 1,
+      "reflection_triggered": true,
+      "reflection_reasons": [
+        "component_metric_tradeoff"
+      ],
+      "general_lesson": "negative_sampling_strategy=same_author produced an informative but unconfirmed result.",
+      "next_questions": [
+        "Which user or item slices caused GAUC and nDCG@5 to diverge?"
+      ],
+      "bottleneck": "top_rank_quality",
+      "recommended_strategy_ids": [
+        "strategy_ranking_alignment",
+        "strategy_personalization_signal"
+      ],
+      "failure_category": null
+    },
+    "fallback": null,
+    "token_usage": {
+      "prompt_tokens": 12561,
+      "completion_tokens": 1478,
+      "total_tokens": 14039
+    }
+  }
+]

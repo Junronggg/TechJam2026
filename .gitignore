@@ -17,16 +17,53 @@ data/*
 # Generated experiment outputs. Only the final evidence package is uploadable.
 artifacts/*
 !artifacts/.gitkeep
+# Keep the small final-selection records needed to audit/reproduce a submission.
 !artifacts/best_config.json
-!artifacts/best_metrics.json
 !artifacts/best_manifest.json
+!artifacts/best_metrics.json
+!artifacts/final_test_metrics.json
+!artifacts/best_model.npz
 logs/*
 !logs/.gitkeep
-!logs/run_final/
-!logs/run_final/summary.json
-!logs/run_final/research_trajectory.json
-!logs/run_final/experiment_history.jsonl
-!logs/run_final/iteration_*.json
+# Keep compact audit records for the selected runs referenced by RUN_LOG.md.
+# Checkpoints, model binaries, stdout/stderr, provider-call payloads, and all
+# other run directories remain ignored.
+!logs/run_20260831T131357Z/
+logs/run_20260831T131357Z/*
+!logs/run_20260831T131357Z/run_meta.json
+!logs/run_20260831T131357Z/summary.json
+!logs/run_20260831T131357Z/iteration_*.json
+!logs/run_20260831T131357Z/experiment_history.jsonl
+!logs/run_20260831T131357Z/research_trajectory.json
+!logs/run_20260831T131357Z/tree_snapshot.json
+!logs/run_20260831T131357Z/best/
+logs/run_20260831T131357Z/best/*
+!logs/run_20260831T131357Z/best/config.json
+!logs/run_20260831T131357Z/best/metrics.json
+!logs/run_20260831T160000Z/
+logs/run_20260831T160000Z/*
+!logs/run_20260831T160000Z/run_meta.json
+!logs/run_20260831T160000Z/summary.json
+!logs/run_20260831T160000Z/iteration_*.json
+!logs/run_20260831T160000Z/experiment_history.jsonl
+!logs/run_20260831T160000Z/research_trajectory.json
+!logs/run_20260831T160000Z/tree_snapshot.json
+!logs/run_20260831T160000Z/best/
+logs/run_20260831T160000Z/best/*
+!logs/run_20260831T160000Z/best/config.json
+!logs/run_20260831T160000Z/best/metrics.json
+!logs/run_20260831T171347Z/
+logs/run_20260831T171347Z/*
+!logs/run_20260831T171347Z/run_meta.json
+!logs/run_20260831T171347Z/summary.json
+!logs/run_20260831T171347Z/iteration_*.json
+!logs/run_20260831T171347Z/experiment_history.jsonl
+!logs/run_20260831T171347Z/research_trajectory.json
+!logs/run_20260831T171347Z/tree_snapshot.json
+!logs/run_20260831T171347Z/best/
+logs/run_20260831T171347Z/best/*
+!logs/run_20260831T171347Z/best/config.json
+!logs/run_20260831T171347Z/best/metrics.json
 submissions/*
 !submissions/.gitkeep
 !submissions/final.csv
