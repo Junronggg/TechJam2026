@@ -7,8 +7,8 @@ reproduce the research loop.
 
 Research logs are separated by purpose:
 
-- [`TRY.md`](TRY.md): model, loss, feature engineering, rolling validation and ensemble experiments.
-- [`AGENT-TRY.md`](AGENT-TRY.md): Agent trajectories, runtime, memory ablations, stopping and intervention audits.
+- [`TRY.md`](docs/TRY.md): model, loss, feature engineering, rolling validation and ensemble experiments.
+- [`AGENT-TRY.md`](docs/AGENT-TRY.md): Agent trajectories, runtime, memory ablations, stopping and intervention audits.
 - [`RUN_LOG.md`](RUN_LOG.md): consolidated per-iteration run log, agent decisions, resource accounting, and final-evaluation record.
 
 ## Results at a glance
