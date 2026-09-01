@@ -1,0 +1,12 @@
+{
+  "source_run": "run_20260831T154525Z",
+  "source_iteration": 4,
+  "validation_primary": 0.6052483320236206,
+  "submission_path": "submissions/final.csv",
+  "final_test_metrics": {
+    "GAUC": 0.666354,
+    "nDCG@5": 0.532377,
+    "primary": 0.599365,
+    "rows": 170588
+  }
+}

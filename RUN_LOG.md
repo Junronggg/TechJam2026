@@ -3,7 +3,9 @@
 This is the consolidated research log for the KuaiRand recommendation system.
 The entries are ordered by experiment sequence, not by calendar time. Date, clock
 time, and runtime are intentionally omitted. The log includes the model, loss,
-feature, validation, robustness, and ensemble experiments recorded in `TRY.md`.
+feature, validation, robustness, ensemble, and agent-planning experiments. The
+longer source notes are kept locally in [`docs/TRY.md`](docs/TRY.md) and
+[`docs/AGENT-TRY.md`](docs/AGENT-TRY.md).
 
 All ordinary scores below are **validation** scores. The official research metric is
 
@@ -656,10 +658,49 @@ code/configuration, chose an experiment, repaired a failed process, or restarted
 agent while it was running. The offline ablations were also executed as recorded
 experiments without changing the official evaluator.
 
+## Consolidated agent record
+
+The agent log is included here so the submitted run can be read from one file. It
+records what the planner observed, what it selected, how the controller evaluated
+the result, and why it continued or stopped.
+
+### Planning and memory checks
+
+| Check | Result | Meaning |
+|---|---:|---|
+| `no_memory` / `raw_history` / `distilled_patterns` ablation | same 5-step path, Primary `0.604713` | Memory did not change this short trajectory |
+| Cross-run replay | distilled policy skipped 2 rolling-rejected temporal combinations | Memory can prevent a known bad combination |
+| Persistent-evidence fresh run | same metrics and decisions | Evidence loading did not alter training |
+| Manual interventions | `0` | No human chose, repaired, or restarted an experiment |
+| LLM requests in the recorded run | `0` | Deterministic fallback was sufficient and reproducible |
+
+### End-to-end autonomous trajectory
+
+| Agent step | Automatically selected action | Validation Primary | Decision |
+|---:|---|---:|---|
+| 0 | FM + BCE reference | `0.601470` | `REFERENCE` |
+| 1 | FM + BPR, learning rate `0.0003` | `0.603963` | `KEEP_CANDIDATE` |
+| 2 | FM+BPR + DeepFM+BCE blend, weight `0.4` | `0.604713` | `KEEP_CANDIDATE` |
+| 3 | FM z-score + DeepFM rank calibration | `0.604746` | `KEEP_CANDIDATE` |
+| 4 | Same calibration, weight `0.6` | `0.605248` | `KEEP_CANDIDATE` |
+
+At each step the controller validated the configuration, ran the isolated worker,
+recorded metrics and diagnostics, updated research memory, and ranked the next
+legal candidates. The run stopped at the declared convergence/budget boundary;
+no test labels were used to select an action.
+
+### Agent errors and recovery
+
+All five recorded iterations completed with `error: null`. There were no retries,
+timeouts, deterministic fallbacks, manual restarts, or evaluator-integrity failures.
+The controller still records these fields in every iteration record so a future
+failed run can be audited in the same format.
+
 ## Evidence and reproduction files
 
-- Model/feature chronology: [`TRY.md`](TRY.md)
-- Agent planning and autonomy chronology: [`AGENT-TRY.md`](AGENT-TRY.md)
-- Latest raw agent records: `logs/run_20260831T154525Z/iteration_000.json` through `iteration_004.json`
-- Latest agent summary: `logs/run_20260831T154525Z/summary.json`
-- Typical model ablation commands are listed in the reproduction section of `TRY.md`.
+- Curated model/feature chronology: [`docs/TRY.md`](docs/TRY.md)
+- Curated agent notes: [`docs/AGENT-TRY.md`](docs/AGENT-TRY.md)
+- Submitted run records: `logs/run_final/summary.json`,
+  `logs/run_final/research_trajectory.json`,
+  `logs/run_final/experiment_history.jsonl`, and `logs/run_final/iteration_*.json`
+- Selected predictions: `submissions/final.csv`
