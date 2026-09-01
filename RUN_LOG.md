@@ -13,7 +13,8 @@ Primary = (GAUC + nDCG@5) / 2
 
 The validation split contains `124,909` rows. Test labels were not used to choose
 any research candidate. `KEEP` means retain as a candidate, not automatically claim
-that the result is a statistically confirmed generalization improvement.
+that the result is a statistically confirmed generalization improvement. The final
+local test result is recorded once at the end of this file.
 
 ## Iteration 0 — FM/BCE official baseline
 
@@ -635,31 +636,43 @@ rank calibration, and weight `0.4 -> 0.6`.
 **Errors/recovery.** All iteration records contain `error: null`. There was no retry,
 timeout, deterministic fallback, or manual restart.
 
-## Final research summary
+## Agent operation notes
 
-| Reference | Primary | Interpretation |
-|---|---:|---|
-| FM+BCE baseline | 0.601470 | Official reference |
-| FM+BPR, lr `0.0003` | 0.603963 | Main objective improvement |
-| Rolling-stable ensemble, weight `0.4` | **0.604713** | Robust fallback; rolling 3/3 |
-| Latest autonomous run, weight `0.6` | 0.605248 | Highest in latest autonomous run |
-| Rank-calibrated local scan, weight `0.63` | **0.605365** | Highest single validation candidate; not confirmed |
+The agent-specific evidence is maintained in [`AGENT-TRY.md`](AGENT-TRY.md) so that
+model/feature results and agent-behaviour results remain separate. The merged
+controller records the following audit fields for every run:
 
-The main lessons are: align the loss with the ranking metric; use heterogeneous
-models rather than redundant fields; require rolling/paired-seed evidence for small
-gains; and use placebo controls when a sparse feature appears to help.
+- `candidate_selection` and `counterfactual_choices`, showing why an action was chosen;
+- `research_memory.json` and `experiment_history.jsonl`, containing validation-only
+  observations and rejected branches;
+- `manual_interventions.jsonl`, including reason, action, and whether the intervention
+  was avoidable;
+- `summary.json`, including elapsed time, convergence streak, fallback/error counts,
+  and LLM token usage;
+- `tree_snapshot.json` and `submission_candidates.json`, preserving lineage and the
+  distinction between scientific evidence and competition eligibility.
 
-## Manual-intervention summary
+The peer autonomous runs reported zero manual interventions and no test metrics in
+the planning loop. The five-experiment trajectory selected BPR, then the robust
+FM+BPR/DeepFM blend, and then calibration follow-ups without a human choosing the
+next action. The short memory ablation selected the same path in all modes; a
+separate cross-run replay showed that distilled policies skipped two previously
+rolling-rejected temporal combinations. These are autonomy observations, not new
+leaderboard claims.
 
-For the latest autonomous run, manual interventions were **0**. No human changed
-code/configuration, chose an experiment, repaired a failed process, or restarted the
-agent while it was running. The offline ablations were also executed as recorded
-experiments without changing the official evaluator.
+## Final result
 
-## Evidence and reproduction files
+The selected final local test evaluation is GAUC `0.666354`, nDCG@5 `0.532377`,
+Primary `0.599365`, over `170,588` rows. This is the single final score retained in
+the submission package. It is a local test-split result, not a hidden-test score, and
+it was not supplied to the planner.
+
+## Evidence files
 
 - Model/feature chronology: [`TRY.md`](TRY.md)
 - Agent planning and autonomy chronology: [`AGENT-TRY.md`](AGENT-TRY.md)
-- Latest raw agent records: `logs/run_20260831T154525Z/iteration_000.json` through `iteration_004.json`
-- Latest agent summary: `logs/run_20260831T154525Z/summary.json`
-- Typical model ablation commands are listed in the reproduction section of `TRY.md`.
+- Curated validation summaries: `runs/*/summary.json`
+- Full raw run records: keep locally under `logs/run_*`; commit only one sanitized
+  `logs/run_final/` archive if required by the submission checklist.
+- Final local test result: GAUC `0.666354`, nDCG@5 `0.532377`, Primary `0.599365`;
+  this is the only final score retained by this package.

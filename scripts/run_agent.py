@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from techjam_agent.controller import Controller
 from techjam_agent.config import apply_changes
 from techjam_agent.data_profile import load_planner_context
+from techjam_agent.local_env import load_local_env
 from techjam_agent.proposals import DeterministicResearcher, OpenAICompatibleResearcher
 from techjam_agent.isolated import IsolatedExperimentRunner
 from techjam_agent.research_state import (
@@ -22,12 +23,23 @@ from techjam_agent.research_state import (
 )
 
 
+load_local_env(ROOT / ".env")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the progressive autonomous ML research loop")
     parser.add_argument(
         "--researcher", choices=("auto", "deterministic", "llm"), default="auto",
         help="Use the LLM when OPENAI_API_KEY is available; otherwise use the offline researcher.",
     )
+    parser.add_argument(
+        "--memory-mode", choices=("no_memory", "raw_history", "distilled_patterns"),
+        default="distilled_patterns",
+        help="Compatibility label for the planner memory ablation; main planner always uses structured history.",
+    )
+    parser.add_argument("--evidence-file", help="Optional validation-only evidence JSON to expose in run metadata.")
+    parser.add_argument("--evidence-manifest", help="Optional evidence manifest path retained for CLI compatibility.")
+    parser.add_argument("--research-context", help="Optional research-context JSON retained for CLI compatibility.")
     parser.add_argument(
         "--autonomous", action=argparse.BooleanOptionalAction, default=True,
         help="Enable bounded self-expanding candidate bundles (default: on).",
@@ -60,8 +72,20 @@ def main() -> int:
         help="Ignore completed logs when constructing planner memory (the incumbent is still protected).",
     )
     parser.add_argument(
-        "--final-eval", action="store_true",
-        help="After research, evaluate the validation-best checkpoint on test and write submission.",
+        "--final-eval", "--finalize-test", dest="final_eval", action="store_true",
+        help="After research, evaluate the validation-best checkpoint on test and write submission (one-shot).",
+    )
+    parser.add_argument(
+        "--research-after-convergence", action="store_true",
+        help="Continue exploring after the competition convergence point when budget permits.",
+    )
+    parser.add_argument(
+        "--auto-confirm", action="store_true",
+        help="Retained compatibility flag; confirmation runs are not implicit in this merged controller.",
+    )
+    parser.add_argument(
+        "--intervention", action="append", default=[], metavar="REASON::ACTION::AVOIDABLE",
+        help="Record a human intervention for the autonomy audit (repeatable).",
     )
     args = parser.parse_args()
 
@@ -86,6 +110,15 @@ def main() -> int:
         ROOT / "logs", research_state,
         validation_dir=ROOT / "artifacts" / "validation-candidates",
     )
+    if args.final_eval:
+        final_metrics = ROOT / "artifacts" / "final_test_metrics.json"
+        final_submission = ROOT / "submissions" / "final.csv"
+        if final_metrics.exists() or final_submission.exists():
+            parser.error(
+                "test finalization is already recorded in this workspace; "
+                "omit --finalize-test for validation-only research and do not "
+                "overwrite the existing final.csv"
+            )
     configured = args.data_dir or os.getenv("TECHJAM_DATA_DIR", project["data_dir"])
     data_dir = Path(configured)
     if not data_dir.is_absolute():
@@ -112,6 +145,16 @@ def main() -> int:
         )
     )
     run_id = datetime.now(timezone.utc).strftime("run_%Y%m%dT%H%M%SZ")
+    if args.final_eval:
+        # The one official finalization owns the stable submission artifacts.
+        artifacts_dir = ROOT / "artifacts"
+        submissions_dir = ROOT / "submissions"
+    else:
+        # Validation-only research must not overwrite the model paired with the
+        # already-finalized submission.  Keep every exploratory checkpoint local
+        # to its run so it can still be audited or promoted deliberately.
+        artifacts_dir = ROOT / "runs" / run_id / "artifacts"
+        submissions_dir = ROOT / "runs" / run_id / "submissions"
     local_runner = ExperimentRunner(ROOT, data_dir, ROOT / project["starter_dir"],
                                     project.get("official_evaluator_sha256"))
     runner = IsolatedExperimentRunner(
@@ -119,17 +162,25 @@ def main() -> int:
         project["experiment_timeout_seconds"],
         project.get("model_timeout_seconds"),
     )
-    controller = Controller(runner, researcher, initial, project, ROOT / "logs" / run_id,
-                            ROOT / "artifacts", ROOT / "submissions",
-                            prior_history=prior_history, shared_incumbent=incumbent,
-                            initial_checkpoint=(
-                                incumbent_checkpoint if args.start_from == "incumbent" else None
-                            ),
-                            initial_metrics=(
-                                incumbent["validation_metrics"]
-                                if args.start_from == "incumbent" and incumbent_checkpoint
-                                else None
-                            ))
+    controller = Controller(
+        runner, researcher, initial, project, ROOT / "logs" / run_id,
+        artifacts_dir, submissions_dir,
+        prior_history=prior_history, shared_incumbent=incumbent,
+        initial_checkpoint=(
+            incumbent_checkpoint if args.start_from == "incumbent" else None
+        ),
+        initial_metrics=(
+            incumbent["validation_metrics"]
+            if args.start_from == "incumbent" and incumbent_checkpoint else None
+        ),
+    )
+    for raw in args.intervention:
+        parts = raw.split("::")
+        if len(parts) != 3 or parts[2].strip().lower() not in {"true", "false"}:
+            parser.error("--intervention must be REASON::ACTION::true|false")
+        controller.record_intervention(
+            parts[0], parts[1], parts[2].strip().lower() == "true"
+        )
     print(
         f"Starting from {args.start_from}: model={initial['model']} "
         f"objective={initial['training_objective']} | prior experiments={len(prior_history)}",
@@ -148,7 +199,12 @@ def main() -> int:
             f"Data profile: {profile_path if data_profile is not None else 'not found; planner has no EDA context'}",
             flush=True,
         )
-    summary = controller.run(args.max_iterations, final_evaluation=args.final_eval)
+    summary = controller.run(
+        args.max_iterations,
+        final_evaluation=args.final_eval,
+        research_after_convergence=args.research_after_convergence,
+        auto_confirm=args.auto_confirm,
+    )
     print(json.dumps(summary, indent=2))
     return 0 if summary["best_primary"] is not None else 1
 

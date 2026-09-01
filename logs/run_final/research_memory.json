@@ -1,0 +1,261 @@
+{
+  "version": 2,
+  "source": "validation_only",
+  "test_metrics_included": false,
+  "hypotheses": [
+    {
+      "iteration": 1,
+      "hypothesis": "Align FM training with within-user ranking using BPR.",
+      "family": "ranking_objective",
+      "status": "promising",
+      "evidence": {
+        "validation_primary": 0.6039628982543945,
+        "delta_from_parent": 0.0024933815002441406,
+        "delta_from_best": 0.0024933815002441406,
+        "placebo_verdict": null,
+        "strongest_slice_gain": 0.0036609768867492676,
+        "within_user_score_correlation": 0.9270616871771824,
+        "pair_error_recovery_rate": 0.14671408823868218,
+        "confirmation_status": null,
+        "scientific_status": null,
+        "competition_status": null
+      },
+      "confidence": "medium",
+      "reason": "Validation Primary increased by more than epsilon 0.002. This is a single-seed observation, not a statistical significance test.",
+      "next_test": "Repeat training_objective=bpr, learning_rate=0.0003 on a new seed before treating the gain as stable. One seed is not a statistical significance test."
+    },
+    {
+      "iteration": 2,
+      "hypothesis": "Blend FM+BPR with DeepFM+BCE.",
+      "family": "heterogeneous_ensemble",
+      "status": "uncertain",
+      "evidence": {
+        "validation_primary": 0.6047128438949585,
+        "delta_from_parent": 0.0007499456405639648,
+        "delta_from_best": 0.0007499456405639648,
+        "placebo_verdict": null,
+        "strongest_slice_gain": 0.0018600821495056152,
+        "within_user_score_correlation": 0.9931125995828609,
+        "pair_error_recovery_rate": 0.04489695424855533,
+        "confirmation_status": null,
+        "scientific_status": null,
+        "competition_status": null
+      },
+      "confidence": "low",
+      "reason": "Validation Primary changed by +0.000750, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression.",
+      "next_test": "The change in model=ensemble, training_objective=hybrid, ensemble_deepfm_weight=0.4 is within epsilon 0.002. Try a different mechanism instead of a smaller nud…"
+    },
+    {
+      "iteration": 3,
+      "hypothesis": "Calibrate the ensemble with fm_zscore_deepfm_rank.",
+      "family": "heterogeneous_ensemble",
+      "status": "uncertain",
+      "evidence": {
+        "validation_primary": 0.6047455072402954,
+        "delta_from_parent": 3.266334533691406e-05,
+        "delta_from_best": 3.266334533691406e-05,
+        "placebo_verdict": null,
+        "strongest_slice_gain": 0.004262328147888184,
+        "within_user_score_correlation": 0.9936672910948998,
+        "pair_error_recovery_rate": 0.020043927911678715,
+        "confirmation_status": null,
+        "scientific_status": null,
+        "competition_status": null
+      },
+      "confidence": "low",
+      "reason": "Validation Primary changed by +0.000033, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression.",
+      "next_test": "The change in ensemble_normalization=fm_zscore_deepfm_rank is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs."
+    },
+    {
+      "iteration": 4,
+      "hypothesis": "Tune the DeepFM weight after rank calibration.",
+      "family": "heterogeneous_ensemble",
+      "status": "uncertain",
+      "evidence": {
+        "validation_primary": 0.6052911281585693,
+        "delta_from_parent": 0.0005456209182739258,
+        "delta_from_best": 0.0005456209182739258,
+        "placebo_verdict": null,
+        "strongest_slice_gain": 0.005078762769699097,
+        "within_user_score_correlation": 0.996083226548374,
+        "pair_error_recovery_rate": 0.03382092069677494,
+        "confirmation_status": null,
+        "scientific_status": null,
+        "competition_status": null
+      },
+      "confidence": "low",
+      "reason": "Validation Primary changed by +0.000546, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression.",
+      "next_test": "The change in ensemble_deepfm_weight=0.65 is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs."
+    }
+  ],
+  "research_patterns": [
+    {
+      "family": "heterogeneous_ensemble",
+      "task_description": "Evaluate the heterogeneous_ensemble experiment family.",
+      "solution_description": "Do not repeat equivalent variants without a distinct information source.",
+      "thought_template": "Select a different family; reopen only after new evidence changes the mechanism.",
+      "policy": "stop_direction",
+      "evidence": {
+        "trials": 3,
+        "positive": 0,
+        "negative_or_noise": 3,
+        "failed": 0,
+        "reinterpreted": 0,
+        "control_pending": 0,
+        "control_passed": 0,
+        "low_coverage": 0,
+        "slice_or_diversity": 0,
+        "mean_delta_from_parent": 0.00044274330139160156,
+        "best_delta_from_parent": 0.0007499456405639648
+      }
+    },
+    {
+      "family": "ranking_objective",
+      "task_description": "Evaluate the ranking_objective experiment family.",
+      "solution_description": "The family has positive validation evidence worth confirming.",
+      "thought_template": "Confirm with rolling folds or paired seeds before promotion; avoid fine-grid tuning.",
+      "policy": "exploit_with_confirmation",
+      "evidence": {
+        "trials": 1,
+        "positive": 1,
+        "negative_or_noise": 0,
+        "failed": 0,
+        "reinterpreted": 0,
+        "control_pending": 0,
+        "control_passed": 0,
+        "low_coverage": 0,
+        "slice_or_diversity": 1,
+        "mean_delta_from_parent": 0.0024933815002441406,
+        "best_delta_from_parent": 0.0024933815002441406
+      }
+    }
+  ],
+  "summary": {
+    "baseline_reference": {
+      "iteration": 0,
+      "validation_primary": 0.6014695167541504,
+      "model": "fm",
+      "training_objective": "bce"
+    },
+    "best_observed": {
+      "iteration": 4,
+      "validation_primary": 0.6052911281585693,
+      "model": "ensemble",
+      "training_objective": "hybrid",
+      "changes": {
+        "ensemble_deepfm_weight": 0.65
+      }
+    },
+    "counts": {
+      "total": 5,
+      "baseline_reference": 1,
+      "candidate_verdicts": 4,
+      "unclassified_candidates": 0,
+      "promising": 1,
+      "uncertain": 3,
+      "negative": 0,
+      "failed": 0
+    },
+    "promising": [
+      {
+        "iteration": 1,
+        "changes": {
+          "training_objective": "bpr",
+          "learning_rate": 0.0003
+        },
+        "verdict": "promote",
+        "primary": 0.6039628982543945,
+        "delta": 0.0024933815002441406,
+        "next_test": "Repeat training_objective=bpr, learning_rate=0.0003 on a new seed before treating the gain as stable. One seed is not a statistical significance test.",
+        "hypothesis": "Align FM training with within-user ranking using BPR."
+      }
+    ],
+    "uncertain": [
+      {
+        "iteration": 2,
+        "changes": {
+          "model": "ensemble",
+          "training_objective": "hybrid",
+          "ensemble_deepfm_weight": 0.4
+        },
+        "verdict": "noise",
+        "primary": 0.6047128438949585,
+        "delta": 0.0007499456405639648,
+        "next_test": "The change in model=ensemble, training_objective=hybrid, ensemble_deepfm_weight=0.4 is within epsilon 0.002. Try a different mechanism instead of a smaller nud…",
+        "hypothesis": "Blend FM+BPR with DeepFM+BCE."
+      },
+      {
+        "iteration": 3,
+        "changes": {
+          "ensemble_normalization": "fm_zscore_deepfm_rank"
+        },
+        "verdict": "noise",
+        "primary": 0.6047455072402954,
+        "delta": 3.266334533691406e-05,
+        "next_test": "The change in ensemble_normalization=fm_zscore_deepfm_rank is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+        "hypothesis": "Calibrate the ensemble with fm_zscore_deepfm_rank."
+      },
+      {
+        "iteration": 4,
+        "changes": {
+          "ensemble_deepfm_weight": 0.65
+        },
+        "verdict": "noise",
+        "primary": 0.6052911281585693,
+        "delta": 0.0005456209182739258,
+        "next_test": "The change in ensemble_deepfm_weight=0.65 is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+        "hypothesis": "Tune the DeepFM weight after rank calibration."
+      }
+    ],
+    "negative": [],
+    "failed": [],
+    "tried_signatures": [
+      {
+        "iteration": 0,
+        "model": "fm",
+        "training_objective": "bce",
+        "changes": {},
+        "key_hash": "530edee92580"
+      },
+      {
+        "iteration": 1,
+        "model": "fm",
+        "training_objective": "bpr",
+        "changes": {
+          "training_objective": "bpr",
+          "learning_rate": 0.0003
+        },
+        "key_hash": "9aba255dc96a"
+      },
+      {
+        "iteration": 2,
+        "model": "ensemble",
+        "training_objective": "hybrid",
+        "changes": {
+          "model": "ensemble",
+          "training_objective": "hybrid",
+          "ensemble_deepfm_weight": 0.4
+        },
+        "key_hash": "66d16abd9b0a"
+      },
+      {
+        "iteration": 3,
+        "model": "ensemble",
+        "training_objective": "hybrid",
+        "changes": {
+          "ensemble_normalization": "fm_zscore_deepfm_rank"
+        },
+        "key_hash": "0a84b16c533d"
+      },
+      {
+        "iteration": 4,
+        "model": "ensemble",
+        "training_objective": "hybrid",
+        "changes": {
+          "ensemble_deepfm_weight": 0.65
+        },
+        "key_hash": "621c2b71fc79"
+      }
+    ]
+  }
+}

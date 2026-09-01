@@ -1,1 +1,0 @@
-{"status": "success", "metrics": {"GAUC": 0.6726911790865322, "nDCG@5": 0.5387185050031825, "primary": 0.6057048420448574, "users": 22377, "rows": 124909, "blend_weights": [0.6000000000000001, 0.2, 0.1999999999999999], "best_epoch": 4, "runtime_seconds": 280.125}}

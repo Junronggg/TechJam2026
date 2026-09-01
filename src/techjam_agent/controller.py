@@ -12,6 +12,7 @@ from typing import Any, Callable
 from .config import apply_changes, validate_config
 from .autonomous_branch import materialize_code_branch
 from .critic import review
+from .interventions import InterventionLogger
 from .memory import is_duplicate_config
 from .proposals import (
     DeterministicResearcher,
@@ -110,6 +111,7 @@ class Controller:
         self.llm_error_categories: dict[str, int] = {}
         self._last_llm_call_ids: list[str] = []
         self._research_context: dict[str, Any] = {}
+        self.interventions = InterventionLogger(self.run_dir / "manual_interventions.jsonl")
         self.initial_checkpoint = initial_checkpoint
         self.initial_metrics = _validation_metrics_only(initial_metrics)
         incumbent_metrics = (
@@ -193,6 +195,10 @@ class Controller:
         _write_json(self.run_dir / "tree_snapshot.json", self.tree.snapshot())
         with (self.run_dir / "experiment_history.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(item, ensure_ascii=False, default=_json_default) + "\n")
+
+    def record_intervention(self, reason: str, action: str, avoidable: bool) -> dict[str, Any]:
+        """Record an explicit human action without treating normal launch options as intervention."""
+        return self.interventions.record(reason, action, avoidable)
 
     def _execute(self, iteration: int, config: dict[str, Any], proposal: Proposal,
                  parent: ExperimentParent | None = None, *,
@@ -398,6 +404,18 @@ class Controller:
         timeout = _as_float(self.project.get("experiment_timeout_seconds"))
         return timeout if timeout is not None and timeout > 0 else 0.0
 
+    def _test_finalization_consumed(self) -> bool:
+        """Return whether this workspace already produced its one final test result.
+
+        Test labels are a one-shot resource for the official run.  Checking both
+        artifacts makes the guard safe after an interrupted copy or a partially
+        completed finalization.
+        """
+        return (
+            (self.artifacts_dir / "final_test_metrics.json").exists()
+            or (self.submissions_dir / "final.csv").exists()
+        )
+
     def _elapsed(self) -> float:
         return self.clock() - self.started
 
@@ -542,7 +560,20 @@ class Controller:
         max_iterations: int | None = None,
         *,
         final_evaluation: bool = True,
+        finalize_test: bool | None = None,
+        research_after_convergence: bool = False,
+        auto_confirm: bool = False,
     ) -> dict[str, Any]:
+        # ``finalize_test`` is the peer-branch spelling; keep it as an alias so
+        # old commands remain reproducible after the merge.
+        if finalize_test is not None:
+            final_evaluation = bool(finalize_test)
+        if final_evaluation and self._test_finalization_consumed():
+            raise RuntimeError(
+                "test finalization has already been consumed for this workspace; "
+                "run validation-only experiments without --finalize-test and keep "
+                "the existing final.csv as the fallback"
+            )
         limits = self.project["run_limits"]
         cap = self._iteration_cap(max_iterations)
         budget_seconds = float(limits["max_wall_clock_hours"]) * 3600.0
@@ -589,7 +620,7 @@ class Controller:
                     stop_reason = "baseline_failed"
                     break
                 continue
-            if self._converged():
+            if self._converged() and not research_after_convergence:
                 stop_reason = "converged"
                 break
             # Keep the no-argument hook stable for custom controllers while exposing
@@ -734,7 +765,11 @@ class Controller:
                        else self.shared_best_score
                    ),
                    "best_iteration": self.best_iteration,
-                   "manual_interventions": 0,
+                   "manual_interventions": self.interventions.count,
+                   "avoidable_manual_interventions": self.interventions.avoidable_count,
+                   "intervention_log": str(self.interventions.path),
+                   "research_after_convergence": bool(research_after_convergence),
+                   "auto_confirm": bool(auto_confirm),
                    "autonomous_mode": self.autonomous_mode,
                    "candidate_generation": (
                        "dynamic_compatible_bundles" if self.autonomous_mode else "registered_catalog"

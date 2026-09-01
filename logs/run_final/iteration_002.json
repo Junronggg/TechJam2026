@@ -1,0 +1,1058 @@
+{
+  "iteration": 2,
+  "timestamp": "2026-08-31T12:45:05.545547+00:00",
+  "hypothesis": "Blend FM+BPR with DeepFM+BCE.",
+  "reason": "The two objectives learn complementary ranking errors and the blend improved all rolling folds.",
+  "changes": {
+    "model": "ensemble",
+    "training_objective": "hybrid",
+    "ensemble_deepfm_weight": 0.4
+  },
+  "source": "deterministic",
+  "token_usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "llm_attempts": 0,
+  "parent_id": "exp_001",
+  "parent_primary": 0.6039628982543945,
+  "parent_score": 0.6039628982543945,
+  "global_best_primary_before": 0.6039628982543945,
+  "global_best_node_id_before": "exp_001",
+  "expanded_global_best": true,
+  "config": {
+    "model": "ensemble",
+    "training_objective": "hybrid",
+    "hyperparameters": {
+      "embedding_dim": 16,
+      "learning_rate": 0.0003,
+      "epochs": 40,
+      "l2": 1e-06,
+      "batch_size": 8192,
+      "patience": 4,
+      "pairs_per_positive": 1,
+      "negative_sampling": "random",
+      "hard_negative_candidates": 2,
+      "deepfm_hidden_dim": 32,
+      "hybrid_bpr_weight": 0.5,
+      "ensemble_deepfm_weight": 0.4,
+      "ensemble_normalization": "zscore",
+      "auxiliary_loss_weight": 0.1,
+      "auxiliary_signals": "like",
+      "dcn_cross_layers": 2,
+      "dcn_low_rank": 16,
+      "sequence_length": 16,
+      "feature_control": "real",
+      "seed": 0
+    },
+    "features": {
+      "user_long_view_rate": false,
+      "item_long_view_rate": false,
+      "continuous_history_stats": false,
+      "user_tab_long_view_rate": false,
+      "user_tab_cross": false,
+      "user_author_cross": false,
+      "user_recent_3d_activity": false,
+      "item_recent_3d_exposure": false,
+      "prior_video_positive": false,
+      "author_positive_recency": false,
+      "prior_video_count": false,
+      "previous_author_same": false,
+      "global_context": false,
+      "video_tag": false,
+      "video_upload_type": false,
+      "user_active_degree": false,
+      "user_register_days_range": false,
+      "duration_semantic_bucket": false,
+      "video_music_type": false,
+      "video_tag_components": false
+    },
+    "lightgbm_hyperparameters": {
+      "learning_rate": 0.05,
+      "num_leaves": 31,
+      "n_estimators": 500,
+      "min_child_samples": 100,
+      "subsample": 0.9,
+      "colsample_bytree": 0.9,
+      "reg_lambda": 0.0001,
+      "early_stopping_rounds": 30
+    }
+  },
+  "manual_intervention": false,
+  "candidate_selection": {
+    "memory_mode": "distilled_patterns",
+    "selected_family": "heterogeneous_ensemble",
+    "selected_score": 0.632,
+    "selected_skill": "train_model",
+    "criteria": "expected_gain + evidence_strength + novelty - compute_cost - redundancy; scoped artifact policies override family-level patterns only when the candidate configuration matches their declared scope",
+    "retrieved_pattern": {
+      "family": "heterogeneous_ensemble",
+      "policy": "exploit_with_confirmation",
+      "confidence": 0.82,
+      "evidence": null,
+      "policy_id": "b81d5db8426c0130",
+      "scientific_verdict": "VALIDATED",
+      "competition_status": "ELIGIBLE",
+      "applies_to": {
+        "task": "long_view",
+        "feature_schema": "v3",
+        "models": [
+          "ensemble"
+        ],
+        "training_objectives": [
+          "hybrid"
+        ],
+        "features": {},
+        "hyperparameters": {
+          "ensemble_deepfm_weight": 0.4
+        }
+      },
+      "expires_if": [
+        "task_changed",
+        "model_changed_outside_scope",
+        "feature_schema_changed",
+        "source_artifact_changed"
+      ],
+      "created_from": [
+        {
+          "source_id": "ensemble_rolling_v1",
+          "kind": "rolling_fold_field",
+          "path": "runs/rolling_validation/summary.json",
+          "sha256": "b1a67f72fd9b128fba6a37f38569033d076dd531ed526b1fa339391543f8e203",
+          "result": {
+            "signal": "positive",
+            "mean_delta": 0.0011228521664937337,
+            "wins": 3,
+            "folds": 3,
+            "robust": true
+          }
+        }
+      ],
+      "source": "persistent_validation_memory"
+    },
+    "decision_stage": "slow_confirmation",
+    "counterfactual_choices": {
+      "no_memory": {
+        "family": "heterogeneous_ensemble",
+        "changes": {
+          "model": "ensemble",
+          "training_objective": "hybrid",
+          "ensemble_deepfm_weight": 0.4
+        },
+        "score": 0.552,
+        "differs_from_selected": false
+      },
+      "raw_history": {
+        "family": "heterogeneous_ensemble",
+        "changes": {
+          "model": "ensemble",
+          "training_objective": "hybrid",
+          "ensemble_deepfm_weight": 0.4
+        },
+        "score": 0.552,
+        "differs_from_selected": false
+      },
+      "distilled_patterns": {
+        "family": "heterogeneous_ensemble",
+        "changes": {
+          "model": "ensemble",
+          "training_objective": "hybrid",
+          "ensemble_deepfm_weight": 0.4
+        },
+        "score": 0.632,
+        "differs_from_selected": false
+      }
+    },
+    "memory_changed_choice": false,
+    "ranked_candidates": [
+      {
+        "hypothesis": "Blend FM+BPR with DeepFM+BCE.",
+        "reason": "The two objectives learn complementary ranking errors and the blend improved all rolling folds.",
+        "changes": {
+          "model": "ensemble",
+          "training_objective": "hybrid",
+          "ensemble_deepfm_weight": 0.4
+        },
+        "family": "heterogeneous_ensemble",
+        "expected_gain": 0.82,
+        "evidence_strength": 0.9,
+        "novelty": 0.7,
+        "compute_cost": 0.7,
+        "redundancy": 0.3,
+        "skill_id": "train_model",
+        "required_confirmation": [
+          "run_rolling",
+          "run_paired_seeds",
+          "analyze_prediction_diversity"
+        ],
+        "risk": "moderate",
+        "score": 0.632,
+        "observed_mean_delta": null,
+        "family_trials": 0,
+        "direction_stopped": false,
+        "retrieved_pattern": {
+          "family": "heterogeneous_ensemble",
+          "policy": "exploit_with_confirmation",
+          "confidence": 0.82,
+          "evidence": null,
+          "policy_id": "b81d5db8426c0130",
+          "scientific_verdict": "VALIDATED",
+          "competition_status": "ELIGIBLE",
+          "applies_to": {
+            "task": "long_view",
+            "feature_schema": "v3",
+            "models": [
+              "ensemble"
+            ],
+            "training_objectives": [
+              "hybrid"
+            ],
+            "features": {},
+            "hyperparameters": {
+              "ensemble_deepfm_weight": 0.4
+            }
+          },
+          "expires_if": [
+            "task_changed",
+            "model_changed_outside_scope",
+            "feature_schema_changed",
+            "source_artifact_changed"
+          ],
+          "created_from": [
+            {
+              "source_id": "ensemble_rolling_v1",
+              "kind": "rolling_fold_field",
+              "path": "runs/rolling_validation/summary.json",
+              "sha256": "b1a67f72fd9b128fba6a37f38569033d076dd531ed526b1fa339391543f8e203",
+              "result": {
+                "signal": "positive",
+                "mean_delta": 0.0011228521664937337,
+                "wins": 3,
+                "folds": 3,
+                "robust": true
+              }
+            }
+          ],
+          "source": "persistent_validation_memory"
+        }
+      },
+      {
+        "hypothesis": "Use like as auxiliary supervision in a multi-task DeepFM.",
+        "reason": "Like-only supervision was the most consistent auxiliary signal and adds information unavailable at inference time.",
+        "changes": {
+          "model": "multitask_deepfm",
+          "training_objective": "bce",
+          "learning_rate": 0.001
+        },
+        "family": "multitask",
+        "expected_gain": 0.62,
+        "evidence_strength": 0.75,
+        "novelty": 0.7,
+        "compute_cost": 0.65,
+        "redundancy": 0.45,
+        "skill_id": "train_with_auxiliary_loss",
+        "required_confirmation": [
+          "run_rolling",
+          "run_paired_seeds",
+          "analyze_prediction_diversity"
+        ],
+        "risk": "moderate",
+        "score": 0.5145,
+        "observed_mean_delta": null,
+        "family_trials": 0,
+        "direction_stopped": false,
+        "retrieved_pattern": {
+          "family": "multitask",
+          "policy": "exploit_with_confirmation",
+          "confidence": 0.82,
+          "evidence": null,
+          "policy_id": "83592dab1ac6bb72",
+          "scientific_verdict": "VALIDATED",
+          "competition_status": "ELIGIBLE",
+          "applies_to": {
+            "task": "long_view",
+            "feature_schema": "v3",
+            "models": [
+              "multitask_deepfm"
+            ],
+            "training_objectives": [
+              "bce"
+            ],
+            "features": {},
+            "hyperparameters": {
+              "auxiliary_loss_weight": 0.1,
+              "auxiliary_signals": "like"
+            }
+          },
+          "expires_if": [
+            "task_changed",
+            "model_changed_outside_scope",
+            "feature_schema_changed",
+            "source_artifact_changed"
+          ],
+          "created_from": [
+            {
+              "source_id": "like_multitask_rolling_v1",
+              "kind": "rolling_aggregate",
+              "path": "runs/rolling_multitask_like/summary.json",
+              "sha256": "9aee63a0bcca9474d900b557b82bb93d3c13c0b2d7bebe92f5a8aa99240e48ce",
+              "result": {
+                "signal": "positive",
+                "mean_delta": 0.00030934810638427734,
+                "wins": 3,
+                "folds": 3,
+                "robust": true
+              }
+            }
+          ],
+          "source": "persistent_validation_memory"
+        }
+      },
+      {
+        "hypothesis": "Test a low-rank DCNv2 interaction model.",
+        "reason": "Explicit cross layers test a different interaction mechanism while retaining leakage-safe base fields.",
+        "changes": {
+          "model": "dcnv2",
+          "training_objective": "bce",
+          "learning_rate": 0.001
+        },
+        "family": "cross_network",
+        "expected_gain": 0.52,
+        "evidence_strength": 0.65,
+        "novelty": 0.65,
+        "compute_cost": 0.6,
+        "redundancy": 0.85,
+        "skill_id": "train_model",
+        "required_confirmation": [
+          "run_rolling",
+          "run_paired_seeds",
+          "analyze_prediction_diversity"
+        ],
+        "risk": "high_redundancy",
+        "score": 0.40950000000000003,
+        "observed_mean_delta": null,
+        "family_trials": 0,
+        "direction_stopped": false,
+        "retrieved_pattern": {
+          "family": "cross_network",
+          "policy": "exploit_with_confirmation",
+          "confidence": 0.82,
+          "evidence": null,
+          "policy_id": "6307005496cecbf3",
+          "scientific_verdict": "VALIDATED",
+          "competition_status": "ELIGIBLE",
+          "applies_to": {
+            "task": "long_view",
+            "feature_schema": "v3",
+            "models": [
+              "dcnv2"
+            ],
+            "training_objectives": [
+              "bce"
+            ],
+            "features": {},
+            "hyperparameters": {
+              "dcn_cross_layers": 2,
+              "dcn_low_rank": 16
+            }
+          },
+          "expires_if": [
+            "task_changed",
+            "model_changed_outside_scope",
+            "feature_schema_changed",
+            "source_artifact_changed"
+          ],
+          "created_from": [
+            {
+              "source_id": "dcnv2_rolling_v1",
+              "kind": "rolling_aggregate",
+              "path": "runs/rolling_dcnv2/summary.json",
+              "sha256": "4d1022c721da505ac897f6369d35c56e9af653faef9213fb5e917f4aec14c704",
+              "result": {
+                "signal": "positive",
+                "mean_delta": 0.0002484917640686035,
+                "wins": 3,
+                "folds": 3,
+                "robust": true
+              }
+            }
+          ],
+          "source": "persistent_validation_memory"
+        }
+      },
+      {
+        "hypothesis": "Test leakage-safe global_context as a single feature intervention.",
+        "reason": "This isolates the global_context mechanism; categorical gains require matched placebo controls before attribution.",
+        "changes": {
+          "global_context": true
+        },
+        "family": "global_context",
+        "expected_gain": 0.45,
+        "evidence_strength": 0.45,
+        "novelty": 0.45,
+        "compute_cost": 0.2,
+        "redundancy": 0.8,
+        "skill_id": "build_feature",
+        "required_confirmation": [
+          "run_rolling",
+          "run_paired_seeds"
+        ],
+        "risk": "high_redundancy",
+        "score": 0.36,
+        "observed_mean_delta": null,
+        "family_trials": 0,
+        "direction_stopped": false,
+        "retrieved_pattern": {
+          "family": "global_context",
+          "policy": "gather_evidence",
+          "confidence": 0.7,
+          "evidence": null,
+          "policy_id": "99f1e644e413c136",
+          "scientific_verdict": "UNCERTAIN",
+          "competition_status": "ELIGIBLE",
+          "applies_to": {
+            "task": "long_view",
+            "feature_schema": "v3",
+            "models": [
+              "fm"
+            ],
+            "training_objectives": [
+              "bpr"
+            ],
+            "features": {
+              "global_context": true
+            },
+            "hyperparameters": {}
+          },
+          "expires_if": [
+            "task_changed",
+            "model_changed_outside_scope",
+            "feature_schema_changed",
+            "source_artifact_changed"
+          ],
+          "created_from": [
+            {
+              "source_id": "global_context_rolling_v1",
+              "kind": "rolling_aggregate",
+              "path": "runs/rolling_constant_context/summary.json",
+              "sha256": "d4e0620f6eb7dad44e56244426602b5ce4759a92ed32584604182dc55759c689",
+              "result": {
+                "signal": "positive",
+                "mean_delta": 0.0008104244867960612,
+                "wins": 3,
+                "folds": 3,
+                "robust": true
+              }
+            },
+            {
+              "source_id": "global_context_multiseed_v1",
+              "kind": "paired_seed",
+              "path": "runs/global_context_multiseed/summary.json",
+              "sha256": "f568c6b584860fb5928b41ecb0fe145244aeb021c68f7fdee21ae565074ba591",
+              "result": {
+                "signal": "uncertain",
+                "mean_delta": 0.000332564115524292,
+                "wins": 3,
+                "seeds": 4,
+                "interval": [
+                  -0.0004273370560317222,
+                  0.001092465287080306
+                ],
+                "robust": true
+              }
+            }
+          ],
+          "source": "persistent_validation_memory"
+        }
+      },
+      {
+        "hypothesis": "Use a one-sided censored watch-time auxiliary objective.",
+        "reason": "Incomplete plays provide exact log-watch targets, while completed plays provide only a duration lower bound; this is materially different from capped MSE.",
+        "changes": {
+          "model": "multitask_deepfm",
+          "training_objective": "bce",
+          "auxiliary_signals": "censored_watch",
+          "learning_rate": 0.001
+        },
+        "family": "censored_watchtime",
+        "expected_gain": 0.58,
+        "evidence_strength": 0.55,
+        "novelty": 0.9,
+        "compute_cost": 0.7,
+        "redundancy": 0.3,
+        "skill_id": "train_with_auxiliary_loss",
+        "required_confirmation": [
+          "run_rolling",
+          "run_paired_seeds",
+          "analyze_prediction_diversity"
+        ],
+        "risk": "moderate",
+        "score": 0.3405000000000001,
+        "observed_mean_delta": null,
+        "family_trials": 0,
+        "direction_stopped": false,
+        "retrieved_pattern": {
+          "family": "censored_watchtime",
+          "policy": "gather_evidence",
+          "confidence": 0.4,
+          "evidence": null,
+          "policy_id": "26748e2a18fac263",
+          "scientific_verdict": "INSUFFICIENT",
+          "competition_status": "RESEARCH_ONLY",
+          "applies_to": {
+            "task": "long_view",
+            "feature_schema": "v3",
+            "models": [
+              "multitask_deepfm"
+            ],
+            "training_objectives": [
+              "bce"
+            ],
+            "features": {},
+            "hyperparameters": {
+              "auxiliary_loss_weight": 0.1,
+              "auxiliary_signals": "censored_watch",
+              "embedding_dim": 16,
+              "learning_rate": 0.001
+            }
+          },
+          "expires_if": [
+            "task_changed",
+            "model_changed_outside_scope",
+            "feature_schema_changed",
+            "source_artifact_changed"
+          ],
+          "created_from": [
+            {
+              "source_id": "censored_watchtime_bce_v1",
+              "kind": "single_delta",
+              "path": "runs/censored_watchtime_ablation/summary.json",
+              "sha256": "8a31e24adf42bc703d9778e950632f354290e8189fb3d30fb6dd3ce2ee3f6a97",
+              "result": {
+                "signal": "noise",
+                "delta": 7.700920104980469e-05,
+                "robust": false
+              }
+            }
+          ],
+          "source": "persistent_validation_memory"
+        }
+      }
+    ],
+    "decision_record": {
+      "hypothesis": "Blend FM+BPR with DeepFM+BCE.",
+      "mechanism_basis": "The two objectives learn complementary ranking errors and the blend improved all rolling folds.",
+      "family": "heterogeneous_ensemble",
+      "proposed_action": "train_model",
+      "expected_gain": 0.82,
+      "novelty": 0.7,
+      "risk": "moderate",
+      "required_confirmation": [
+        "run_rolling",
+        "run_paired_seeds",
+        "analyze_prediction_diversity"
+      ]
+    }
+  },
+  "diagnostic_group": null,
+  "parent_selection": {
+    "parent_id": "exp_001",
+    "parent_branch": "ranking_objective",
+    "priority": 0.6070575364454979,
+    "exploitation": 0.6039628982543945,
+    "exploration_bonus": 0.0020962941479364104,
+    "novelty_bonus": 0.001,
+    "runtime_penalty": 1.6559568330730171e-06,
+    "repetition_penalty": 0.0,
+    "failed_child_penalty": 0.0,
+    "rejected_node_penalty": 0.0,
+    "visits": 0
+  },
+  "status": "success",
+  "metrics": {
+    "GAUC": 0.6714804172515869,
+    "nDCG@5": 0.5379453301429749,
+    "primary": 0.6047128438949585,
+    "users": 22377,
+    "rows": 124909,
+    "best_epoch": 0,
+    "runtime_seconds": 59.62860737502342
+  },
+  "delta_from_parent": 0.0007499456405639648,
+  "delta_from_best": 0.0007499456405639648,
+  "decision": "KEEP",
+  "error": null,
+  "diagnostics": {
+    "slice_metrics": {
+      "overall": {
+        "GAUC": 0.6714804172515869,
+        "nDCG@5": 0.5379453301429749,
+        "primary": 0.6047128438949585,
+        "users": 22377,
+        "rows": 124909,
+        "positive_rate": 0.3132840692996979
+      },
+      "history=cold_0_2": {
+        "GAUC": 0.6770427823066711,
+        "nDCG@5": 0.47937190532684326,
+        "primary": 0.5782073736190796,
+        "users": 994,
+        "rows": 1627,
+        "positive_rate": 0.3964351713657379
+      },
+      "history=medium_3_10": {
+        "GAUC": 0.6640937924385071,
+        "nDCG@5": 0.5208068490028381,
+        "primary": 0.5924503207206726,
+        "users": 3077,
+        "rows": 7213,
+        "positive_rate": 0.38527658581733704
+      },
+      "history=rich_11_plus": {
+        "GAUC": 0.6718372702598572,
+        "nDCG@5": 0.5370979309082031,
+        "primary": 0.6044676303863525,
+        "users": 19412,
+        "rows": 116069,
+        "positive_rate": 0.3076445758342743
+      },
+      "item_popularity=head": {
+        "GAUC": 0.6591513752937317,
+        "nDCG@5": 0.5219242572784424,
+        "primary": 0.5905377864837646,
+        "users": 18688,
+        "rows": 61998,
+        "positive_rate": 0.35538244247436523
+      },
+      "item_popularity=middle": {
+        "GAUC": 0.6757044196128845,
+        "nDCG@5": 0.45291218161582947,
+        "primary": 0.5643082857131958,
+        "users": 17516,
+        "rows": 53101,
+        "positive_rate": 0.2828948497772217
+      },
+      "item_popularity=tail": {
+        "GAUC": 0.6711075901985168,
+        "nDCG@5": 0.28154751658439636,
+        "primary": 0.4763275384902954,
+        "users": 6149,
+        "rows": 9793,
+        "positive_rate": 0.21137547492980957
+      },
+      "duration=long_120s_plus": {
+        "GAUC": 0.6397646069526672,
+        "nDCG@5": 0.4322394132614136,
+        "primary": 0.5360020399093628,
+        "users": 16106,
+        "rows": 39710,
+        "positive_rate": 0.29433393478393555
+      },
+      "duration=medium_30_120s": {
+        "GAUC": 0.6512152552604675,
+        "nDCG@5": 0.5014195442199707,
+        "primary": 0.5763174295425415,
+        "users": 17051,
+        "rows": 49568,
+        "positive_rate": 0.3491567075252533
+      },
+      "duration=short_lt_30s": {
+        "GAUC": 0.696079671382904,
+        "nDCG@5": 0.43737977743148804,
+        "primary": 0.566729724407196,
+        "users": 14402,
+        "rows": 35631,
+        "positive_rate": 0.28449946641921997
+      },
+      "period=early": {
+        "GAUC": 0.666637659072876,
+        "nDCG@5": 0.5145487189292908,
+        "primary": 0.5905932188034058,
+        "users": 19873,
+        "rows": 82079,
+        "positive_rate": 0.32038646936416626
+      },
+      "period=late": {
+        "GAUC": 0.6672045588493347,
+        "nDCG@5": 0.45854994654655457,
+        "primary": 0.5628772377967834,
+        "users": 15039,
+        "rows": 42830,
+        "positive_rate": 0.2996731400489807
+      }
+    },
+    "strong_slice_gain": false,
+    "diversity_advantage": false,
+    "complementarity": {
+      "overall": {
+        "model_a": {
+          "GAUC": 0.6705930233001709,
+          "nDCG@5": 0.5373327732086182,
+          "primary": 0.6039628982543945,
+          "users": 22377,
+          "rows": 124909
+        },
+        "model_b": {
+          "GAUC": 0.6714804172515869,
+          "nDCG@5": 0.5379453301429749,
+          "primary": 0.6047128438949585,
+          "users": 22377,
+          "rows": 124909
+        },
+        "primary_delta_b_minus_a": 0.0007499456405639648,
+        "within_user_score_correlation": 0.9931125995828609,
+        "users": 22377,
+        "model_b_user_wins": 1603,
+        "model_a_user_wins": 1449,
+        "ties": 19325,
+        "model_b_user_win_rate": 0.07163605487777629,
+        "mean_per_user_primary_delta": 0.0005763048709049129,
+        "model_a_pair_errors": 69047,
+        "model_b_recovered_a_errors": 3100,
+        "pair_error_recovery_rate": 0.04489695424855533,
+        "model_b_new_pair_errors": 2802,
+        "pair_error_introduction_rate": 0.019811220702089297
+      },
+      "history=cold_0_2": {
+        "model_a": {
+          "GAUC": 0.6964980363845825,
+          "nDCG@5": 0.48121321201324463,
+          "primary": 0.5888556241989136,
+          "users": 994,
+          "rows": 1627
+        },
+        "model_b": {
+          "GAUC": 0.6770427823066711,
+          "nDCG@5": 0.47937190532684326,
+          "primary": 0.5782073736190796,
+          "users": 994,
+          "rows": 1627
+        },
+        "primary_delta_b_minus_a": -0.010648250579833984,
+        "within_user_score_correlation": 0.9936772404505273,
+        "users": 994,
+        "model_b_user_wins": 3,
+        "model_a_user_wins": 9,
+        "ties": 982,
+        "model_b_user_win_rate": 0.0030181086519114686,
+        "mean_per_user_primary_delta": -0.003435747389856673,
+        "model_a_pair_errors": 99,
+        "model_b_recovered_a_errors": 3,
+        "pair_error_recovery_rate": 0.030303030303030304,
+        "model_b_new_pair_errors": 9,
+        "pair_error_introduction_rate": 0.04017857142857143
+      },
+      "history=medium_3_10": {
+        "model_a": {
+          "GAUC": 0.6646395921707153,
+          "nDCG@5": 0.5211880207061768,
+          "primary": 0.592913806438446,
+          "users": 3077,
+          "rows": 7213
+        },
+        "model_b": {
+          "GAUC": 0.6640937924385071,
+          "nDCG@5": 0.5208068490028381,
+          "primary": 0.5924503207206726,
+          "users": 3077,
+          "rows": 7213
+        },
+        "primary_delta_b_minus_a": -0.0004634857177734375,
+        "within_user_score_correlation": 0.9917944465166811,
+        "users": 3077,
+        "model_b_user_wins": 43,
+        "model_a_user_wins": 48,
+        "ties": 2986,
+        "model_b_user_win_rate": 0.013974650633734157,
+        "mean_per_user_primary_delta": -0.00019287545373212342,
+        "model_a_pair_errors": 1194,
+        "model_b_recovered_a_errors": 51,
+        "pair_error_recovery_rate": 0.04271356783919598,
+        "model_b_new_pair_errors": 53,
+        "pair_error_introduction_rate": 0.021864686468646866
+      },
+      "history=rich_11_plus": {
+        "model_a": {
+          "GAUC": 0.6707288026809692,
+          "nDCG@5": 0.5361594557762146,
+          "primary": 0.6034440994262695,
+          "users": 19412,
+          "rows": 116069
+        },
+        "model_b": {
+          "GAUC": 0.6718372702598572,
+          "nDCG@5": 0.5370979309082031,
+          "primary": 0.6044676303863525,
+          "users": 19412,
+          "rows": 116069
+        },
+        "primary_delta_b_minus_a": 0.0010235309600830078,
+        "within_user_score_correlation": 0.9931784167703741,
+        "users": 19412,
+        "model_b_user_wins": 1530,
+        "model_a_user_wins": 1366,
+        "ties": 16516,
+        "model_b_user_win_rate": 0.07881722645786111,
+        "mean_per_user_primary_delta": 0.0009062380996477936,
+        "model_a_pair_errors": 65755,
+        "model_b_recovered_a_errors": 2957,
+        "pair_error_recovery_rate": 0.04496996426127291,
+        "model_b_new_pair_errors": 2668,
+        "pair_error_introduction_rate": 0.019853553994523158
+      },
+      "item_popularity=head": {
+        "model_a": {
+          "GAUC": 0.6573673486709595,
+          "nDCG@5": 0.521630048751831,
+          "primary": 0.5894986987113953,
+          "users": 18688,
+          "rows": 61998
+        },
+        "model_b": {
+          "GAUC": 0.6591513752937317,
+          "nDCG@5": 0.5219242572784424,
+          "primary": 0.5905377864837646,
+          "users": 18688,
+          "rows": 61998
+        },
+        "primary_delta_b_minus_a": 0.0010390877723693848,
+        "within_user_score_correlation": 0.9940634854461329,
+        "users": 18688,
+        "model_b_user_wins": 618,
+        "model_a_user_wins": 568,
+        "ties": 17502,
+        "model_b_user_win_rate": 0.03306934931506849,
+        "mean_per_user_primary_delta": 0.0005174713102547851,
+        "model_a_pair_errors": 20159,
+        "model_b_recovered_a_errors": 876,
+        "pair_error_recovery_rate": 0.04345453643533905,
+        "model_b_new_pair_errors": 802,
+        "pair_error_introduction_rate": 0.0207315496962647
+      },
+      "item_popularity=middle": {
+        "model_a": {
+          "GAUC": 0.6741641759872437,
+          "nDCG@5": 0.4524279534816742,
+          "primary": 0.5632960796356201,
+          "users": 17516,
+          "rows": 53101
+        },
+        "model_b": {
+          "GAUC": 0.6757044196128845,
+          "nDCG@5": 0.45291218161582947,
+          "primary": 0.5643082857131958,
+          "users": 17516,
+          "rows": 53101
+        },
+        "primary_delta_b_minus_a": 0.0010122060775756836,
+        "within_user_score_correlation": 0.992855833763339,
+        "users": 17516,
+        "model_b_user_wins": 407,
+        "model_a_user_wins": 365,
+        "ties": 16744,
+        "model_b_user_win_rate": 0.023235898606987895,
+        "mean_per_user_primary_delta": 0.0005666177225464386,
+        "model_a_pair_errors": 12090,
+        "model_b_recovered_a_errors": 576,
+        "pair_error_recovery_rate": 0.04764267990074442,
+        "model_b_new_pair_errors": 501,
+        "pair_error_introduction_rate": 0.019671744934820167
+      },
+      "item_popularity=tail": {
+        "model_a": {
+          "GAUC": 0.6729933619499207,
+          "nDCG@5": 0.2816868722438812,
+          "primary": 0.47734010219573975,
+          "users": 6149,
+          "rows": 9793
+        },
+        "model_b": {
+          "GAUC": 0.6711075901985168,
+          "nDCG@5": 0.28154751658439636,
+          "primary": 0.4763275384902954,
+          "users": 6149,
+          "rows": 9793
+        },
+        "primary_delta_b_minus_a": -0.001012563705444336,
+        "within_user_score_correlation": 0.9869010060869319,
+        "users": 6149,
+        "model_b_user_wins": 19,
+        "model_a_user_wins": 24,
+        "ties": 6106,
+        "model_b_user_win_rate": 0.003089933322491462,
+        "mean_per_user_primary_delta": -0.00012141700733979032,
+        "model_a_pair_errors": 465,
+        "model_b_recovered_a_errors": 23,
+        "pair_error_recovery_rate": 0.04946236559139785,
+        "model_b_new_pair_errors": 26,
+        "pair_error_introduction_rate": 0.02666666666666667
+      },
+      "duration=long_120s_plus": {
+        "model_a": {
+          "GAUC": 0.6397436261177063,
+          "nDCG@5": 0.4319517910480499,
+          "primary": 0.5358477234840393,
+          "users": 16106,
+          "rows": 39710
+        },
+        "model_b": {
+          "GAUC": 0.6397646069526672,
+          "nDCG@5": 0.4322394132614136,
+          "primary": 0.5360020399093628,
+          "users": 16106,
+          "rows": 39710
+        },
+        "primary_delta_b_minus_a": 0.00015431642532348633,
+        "within_user_score_correlation": 0.9923909731025786,
+        "users": 16106,
+        "model_b_user_wins": 284,
+        "model_a_user_wins": 241,
+        "ties": 15581,
+        "model_b_user_win_rate": 0.017633180181298894,
+        "mean_per_user_primary_delta": 0.00019588418366480064,
+        "model_a_pair_errors": 7306,
+        "model_b_recovered_a_errors": 338,
+        "pair_error_recovery_rate": 0.046263345195729534,
+        "model_b_new_pair_errors": 300,
+        "pair_error_introduction_rate": 0.022865853658536585
+      },
+      "duration=medium_30_120s": {
+        "model_a": {
+          "GAUC": 0.6502742767333984,
+          "nDCG@5": 0.5011340975761414,
+          "primary": 0.5757042169570923,
+          "users": 17051,
+          "rows": 49568
+        },
+        "model_b": {
+          "GAUC": 0.6512152552604675,
+          "nDCG@5": 0.5014195442199707,
+          "primary": 0.5763174295425415,
+          "users": 17051,
+          "rows": 49568
+        },
+        "primary_delta_b_minus_a": 0.0006132125854492188,
+        "within_user_score_correlation": 0.99312109512447,
+        "users": 17051,
+        "model_b_user_wins": 443,
+        "model_a_user_wins": 423,
+        "ties": 16185,
+        "model_b_user_win_rate": 0.02598088088675151,
+        "mean_per_user_primary_delta": 0.00042277543171012996,
+        "model_a_pair_errors": 13329,
+        "model_b_recovered_a_errors": 641,
+        "pair_error_recovery_rate": 0.048090629454572736,
+        "model_b_new_pair_errors": 600,
+        "pair_error_introduction_rate": 0.023873945567404107
+      },
+      "duration=short_lt_30s": {
+        "model_a": {
+          "GAUC": 0.6946969032287598,
+          "nDCG@5": 0.4370031952857971,
+          "primary": 0.565850019454956,
+          "users": 14402,
+          "rows": 35631
+        },
+        "model_b": {
+          "GAUC": 0.696079671382904,
+          "nDCG@5": 0.43737977743148804,
+          "primary": 0.566729724407196,
+          "users": 14402,
+          "rows": 35631
+        },
+        "primary_delta_b_minus_a": 0.0008797049522399902,
+        "within_user_score_correlation": 0.993469158862332,
+        "users": 14402,
+        "model_b_user_wins": 183,
+        "model_a_user_wins": 155,
+        "ties": 14064,
+        "model_b_user_win_rate": 0.012706568532148313,
+        "mean_per_user_primary_delta": 0.0005101382232916442,
+        "model_a_pair_errors": 5378,
+        "model_b_recovered_a_errors": 227,
+        "pair_error_recovery_rate": 0.042208999628114544,
+        "model_b_new_pair_errors": 187,
+        "pair_error_introduction_rate": 0.014794303797468355
+      },
+      "period=early": {
+        "model_a": {
+          "GAUC": 0.6661716103553772,
+          "nDCG@5": 0.51413494348526,
+          "primary": 0.5901532769203186,
+          "users": 19873,
+          "rows": 82079
+        },
+        "model_b": {
+          "GAUC": 0.666637659072876,
+          "nDCG@5": 0.5145487189292908,
+          "primary": 0.5905932188034058,
+          "users": 19873,
+          "rows": 82079
+        },
+        "primary_delta_b_minus_a": 0.0004399418830871582,
+        "within_user_score_correlation": 0.9930051239470883,
+        "users": 19873,
+        "model_b_user_wins": 916,
+        "model_a_user_wins": 865,
+        "ties": 18092,
+        "model_b_user_win_rate": 0.04609268857243496,
+        "mean_per_user_primary_delta": 0.0002092800965266348,
+        "model_a_pair_errors": 32147,
+        "model_b_recovered_a_errors": 1491,
+        "pair_error_recovery_rate": 0.04638068871123278,
+        "model_b_new_pair_errors": 1343,
+        "pair_error_introduction_rate": 0.02087997512437811
+      },
+      "period=late": {
+        "model_a": {
+          "GAUC": 0.6643191576004028,
+          "nDCG@5": 0.45771509408950806,
+          "primary": 0.5610171556472778,
+          "users": 15039,
+          "rows": 42830
+        },
+        "model_b": {
+          "GAUC": 0.6672045588493347,
+          "nDCG@5": 0.45854994654655457,
+          "primary": 0.5628772377967834,
+          "users": 15039,
+          "rows": 42830
+        },
+        "primary_delta_b_minus_a": 0.0018600821495056152,
+        "within_user_score_correlation": 0.9933155517567456,
+        "users": 15039,
+        "model_b_user_wins": 336,
+        "model_a_user_wins": 280,
+        "ties": 14423,
+        "model_b_user_win_rate": 0.022341911031318572,
+        "mean_per_user_primary_delta": 0.0010028332050134282,
+        "model_a_pair_errors": 9917,
+        "model_b_recovered_a_errors": 467,
+        "pair_error_recovery_rate": 0.047090854088938185,
+        "model_b_new_pair_errors": 400,
+        "pair_error_introduction_rate": 0.019516955354964626
+      }
+    },
+    "within_user_score_correlation": 0.9931125995828609,
+    "pair_error_recovery_rate": 0.04489695424855533,
+    "strongest_slice": "period=late",
+    "strongest_slice_gain": 0.0018600821495056152
+  },
+  "research_decision": "KEEP_CANDIDATE",
+  "critique": {
+    "observation": "Validation Primary=0.604713, GAUC=0.671480, nDCG@5=0.537945 versus previous best 0.603963 (delta=+0.000750). Recent validation evidence: iteration 0 validation Primary=0.601470; iteration 1 validation Primary=0.603963.",
+    "interpretation": "Validation Primary changed by +0.000750, which is within epsilon 0.002. Treat this as noise, not a confirmed improvement or regression.",
+    "confidence": "low",
+    "verdict": "noise",
+    "delta": 0.0007499456405639648,
+    "meaningful_improvement": false,
+    "next_test": "The change in model=ensemble, training_objective=hybrid, ensemble_deepfm_weight=0.4 is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+    "reasons": [
+      "validation_primary_only",
+      "delta_within_epsilon",
+      "tiny_positive_not_meaningful",
+      "used_recent_validation_history"
+    ]
+  }
+}

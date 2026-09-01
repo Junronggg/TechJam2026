@@ -1,0 +1,210 @@
+{
+  "iteration": 0,
+  "timestamp": "2026-08-31T12:43:46.586116+00:00",
+  "hypothesis": "Reproduce the official FM baseline.",
+  "reason": "A verified baseline anchors every subsequent comparison.",
+  "changes": {},
+  "source": "system",
+  "token_usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "llm_attempts": 0,
+  "parent_id": null,
+  "parent_primary": null,
+  "parent_score": null,
+  "global_best_primary_before": null,
+  "global_best_node_id_before": null,
+  "expanded_global_best": false,
+  "config": {
+    "model": "fm",
+    "training_objective": "bce",
+    "hyperparameters": {
+      "embedding_dim": 16,
+      "learning_rate": 0.001,
+      "epochs": 40,
+      "l2": 1e-06,
+      "batch_size": 8192,
+      "patience": 4,
+      "pairs_per_positive": 1,
+      "negative_sampling": "random",
+      "hard_negative_candidates": 2,
+      "deepfm_hidden_dim": 32,
+      "hybrid_bpr_weight": 0.5,
+      "ensemble_deepfm_weight": 0.4,
+      "ensemble_normalization": "zscore",
+      "auxiliary_loss_weight": 0.1,
+      "auxiliary_signals": "like",
+      "dcn_cross_layers": 2,
+      "dcn_low_rank": 16,
+      "sequence_length": 16,
+      "feature_control": "real",
+      "seed": 0
+    },
+    "features": {
+      "user_long_view_rate": false,
+      "item_long_view_rate": false,
+      "continuous_history_stats": false,
+      "user_tab_long_view_rate": false,
+      "user_tab_cross": false,
+      "user_author_cross": false,
+      "user_recent_3d_activity": false,
+      "item_recent_3d_exposure": false,
+      "prior_video_positive": false,
+      "author_positive_recency": false,
+      "prior_video_count": false,
+      "previous_author_same": false,
+      "global_context": false,
+      "video_tag": false,
+      "video_upload_type": false,
+      "user_active_degree": false,
+      "user_register_days_range": false,
+      "duration_semantic_bucket": false,
+      "video_music_type": false,
+      "video_tag_components": false
+    },
+    "lightgbm_hyperparameters": {
+      "learning_rate": 0.05,
+      "num_leaves": 31,
+      "n_estimators": 500,
+      "min_child_samples": 100,
+      "subsample": 0.9,
+      "colsample_bytree": 0.9,
+      "reg_lambda": 0.0001,
+      "early_stopping_rounds": 30
+    }
+  },
+  "manual_intervention": false,
+  "candidate_selection": null,
+  "diagnostic_group": null,
+  "parent_selection": null,
+  "status": "success",
+  "metrics": {
+    "GAUC": 0.6671333909034729,
+    "nDCG@5": 0.5358057022094727,
+    "primary": 0.6014695167541504,
+    "best_epoch": 7,
+    "runtime_seconds": 21.62867645797087
+  },
+  "delta_from_parent": null,
+  "delta_from_best": null,
+  "decision": "KEEP",
+  "error": null,
+  "diagnostics": {
+    "slice_metrics": {
+      "overall": {
+        "GAUC": 0.6671333909034729,
+        "nDCG@5": 0.5358057022094727,
+        "primary": 0.6014695167541504,
+        "users": 22377,
+        "rows": 124909,
+        "positive_rate": 0.3132840692996979
+      },
+      "history=cold_0_2": {
+        "GAUC": 0.698443591594696,
+        "nDCG@5": 0.4808901250362396,
+        "primary": 0.5896668434143066,
+        "users": 994,
+        "rows": 1627,
+        "positive_rate": 0.3964351713657379
+      },
+      "history=medium_3_10": {
+        "GAUC": 0.6589447855949402,
+        "nDCG@5": 0.5215421915054321,
+        "primary": 0.5902434587478638,
+        "users": 3077,
+        "rows": 7213,
+        "positive_rate": 0.38527658581733704
+      },
+      "history=rich_11_plus": {
+        "GAUC": 0.667577862739563,
+        "nDCG@5": 0.5347188115119934,
+        "primary": 0.6011483669281006,
+        "users": 19412,
+        "rows": 116069,
+        "positive_rate": 0.3076445758342743
+      },
+      "item_popularity=head": {
+        "GAUC": 0.6566910147666931,
+        "nDCG@5": 0.5213914513587952,
+        "primary": 0.5890412330627441,
+        "users": 18688,
+        "rows": 61998,
+        "positive_rate": 0.35538244247436523
+      },
+      "item_popularity=middle": {
+        "GAUC": 0.671002209186554,
+        "nDCG@5": 0.45186081528663635,
+        "primary": 0.5614315271377563,
+        "users": 17516,
+        "rows": 53101,
+        "positive_rate": 0.2828948497772217
+      },
+      "item_popularity=tail": {
+        "GAUC": 0.6672950983047485,
+        "nDCG@5": 0.28100427985191345,
+        "primary": 0.4741497039794922,
+        "users": 6149,
+        "rows": 9793,
+        "positive_rate": 0.21137547492980957
+      },
+      "duration=long_120s_plus": {
+        "GAUC": 0.6331470012664795,
+        "nDCG@5": 0.431226521730423,
+        "primary": 0.53218674659729,
+        "users": 16106,
+        "rows": 39710,
+        "positive_rate": 0.29433393478393555
+      },
+      "duration=medium_30_120s": {
+        "GAUC": 0.647113025188446,
+        "nDCG@5": 0.5005087852478027,
+        "primary": 0.5738109350204468,
+        "users": 17051,
+        "rows": 49568,
+        "positive_rate": 0.3491567075252533
+      },
+      "duration=short_lt_30s": {
+        "GAUC": 0.6941496729850769,
+        "nDCG@5": 0.4367142915725708,
+        "primary": 0.5654319524765015,
+        "users": 14402,
+        "rows": 35631,
+        "positive_rate": 0.28449946641921997
+      },
+      "period=early": {
+        "GAUC": 0.6647704243659973,
+        "nDCG@5": 0.5139213800430298,
+        "primary": 0.5893459320068359,
+        "users": 19873,
+        "rows": 82079,
+        "positive_rate": 0.32038646936416626
+      },
+      "period=late": {
+        "GAUC": 0.6586461067199707,
+        "nDCG@5": 0.45647624135017395,
+        "primary": 0.5575611591339111,
+        "users": 15039,
+        "rows": 42830,
+        "positive_rate": 0.2996731400489807
+      }
+    },
+    "strong_slice_gain": false,
+    "diversity_advantage": false
+  },
+  "research_decision": "REFERENCE",
+  "critique": {
+    "observation": "Validation Primary=0.601470, GAUC=0.667133, nDCG@5=0.535806.",
+    "interpretation": "This run establishes a validation reference. It is not an improvement over a previous best.",
+    "confidence": "high",
+    "verdict": "noise",
+    "delta": null,
+    "meaningful_improvement": false,
+    "next_test": "The change in this configuration is within epsilon 0.002. Try a different mechanism instead of a smaller nudge of the same knobs.",
+    "reasons": [
+      "validation_primary_only",
+      "no_parent_to_compare"
+    ]
+  }
+}

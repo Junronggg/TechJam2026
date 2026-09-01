@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -265,6 +267,132 @@ class AgentTests(unittest.TestCase):
             tree = json.loads((base / "logs" / "tree_snapshot.json").read_text())
             self.assertEqual(tree["nodes"][1]["parent_id"], "baseline")
             self.assertEqual(summary["final_test_metrics"]["primary"], 0.60)
+
+    def test_test_finalization_is_one_shot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            artifacts = base / "artifacts"
+            artifacts.mkdir(parents=True)
+            (artifacts / "final_test_metrics.json").write_text("{}", encoding="utf-8")
+            controller = Controller(FakeRunner(), DeterministicResearcher(), self.config,
+                self.project, base / "logs", artifacts, base / "submissions")
+            with self.assertRaisesRegex(RuntimeError, "already been consumed"):
+                controller.run(max_iterations=1)
+
+    def test_history_availability_is_strict_and_target_free(self):
+        splits = {
+            "train": [
+                (1, "u1", "v1", "a1", "t", 10_000.0, 1),
+                (1, "u1", "v2", "a2", "t", 20_000.0, 0),
+                (1, "u1", "v3", "a3", "t", 30_000.0, 1),
+            ],
+            "valid": [
+                (2, "u1", "v4", "a4", "t", 40_000.0, 0),
+                (2, "u1", "v5", "a5", "t", 130_000.0, 1),
+                (2, "u1", "v6", "a6", "t", 50_000.0, 0),
+            ],
+        }
+        times = {
+            "train": np.asarray([100, 100, 200]),
+            "valid": np.asarray([300, 300, 400]),
+        }
+        lengths = strict_history_lengths(splits, times)
+        self.assertEqual(lengths["train"].tolist(), [0, 0, 2])
+        self.assertEqual(lengths["valid"].tolist(), [3, 3, 5])
+        changed = {
+            name: [(*row[:-1], 1 - row[-1]) for row in rows]
+            for name, rows in splits.items()
+        }
+        changed_lengths = strict_history_lengths(changed, times)
+        np.testing.assert_array_equal(lengths["valid"], changed_lengths["valid"])
+        slices = build_slice_values(splits, lengths)
+        self.assertEqual(slices["history"].tolist(), ["medium_3_10"] * 3)
+        self.assertEqual(
+            slices["duration"].tolist(),
+            ["medium_30_120s", "long_120s_plus", "medium_30_120s"],
+        )
+
+    def test_last_k_sequences_block_same_time_and_validation_labels(self):
+        splits = {
+            "train": [
+                (1, "u1", "v1", "a1", "t", 10.0, 1),
+                (1, "u1", "v2", "a2", "t", 10.0, 0),
+                (1, "u1", "v3", "a3", "t", 10.0, 1),
+            ],
+            "valid": [
+                (2, "u1", "v4", "a4", "t", 10.0, 1),
+                (2, "u1", "v5", "a5", "t", 10.0, 0),
+            ],
+        }
+        times = {
+            "train": np.asarray([100, 100, 200]),
+            "valid": np.asarray([300, 400]),
+        }
+        encoded = {
+            "train": (
+                np.asarray([[10, 20, 30, 40, 50], [11, 21, 31, 40, 50],
+                            [12, 22, 32, 40, 50]], dtype=np.int32),
+                np.asarray([1, 0, 1], dtype=np.float32),
+                ["u1", "u1", "u1"],
+            ),
+            "valid": (
+                np.asarray([[13, 23, 33, 40, 50], [14, 24, 34, 40, 50]],
+                           dtype=np.int32),
+                np.asarray([1, 0], dtype=np.float32),
+                ["u1", "u1"],
+            ),
+        }
+        sequences = strict_past_sequences(splits, times, encoded, max_length=4)
+        self.assertEqual(sequences["train"]["length"].tolist(), [0, 0, 2])
+        self.assertEqual(sequences["train"]["behavior"][2].tolist(), [0, 0, 2, 1])
+        self.assertEqual(sequences["valid"]["length"].tolist(), [3, 4])
+        # A past validation impression is exposure-only even when its label is 1.
+        self.assertEqual(sequences["valid"]["behavior"][1, -1], 1)
+        flipped = copy.deepcopy(encoded)
+        flipped["valid"] = (
+            encoded["valid"][0], 1 - encoded["valid"][1], encoded["valid"][2]
+        )
+        changed = strict_past_sequences(splits, times, flipped, max_length=4)
+        np.testing.assert_array_equal(
+            sequences["valid"]["behavior"], changed["valid"]["behavior"]
+        )
+
+    def test_placebo_suite_requires_real_feature_to_beat_controls(self):
+        real = np.asarray([0, 1, 1, 2, 2, 2], dtype=np.int32)
+        variants = categorical_placebos(real, cardinality=3, seed=7)
+        self.assertEqual(set(variants), {
+            "real", "constant", "shuffled", "random_same_cardinality"
+        })
+        self.assertEqual(sorted(variants["shuffled"].tolist()), sorted(real.tolist()))
+        self.assertTrue(np.all(variants["constant"] == 0))
+        rejected = placebo_verdict(0.6042, {"constant": 0.6044, "shuffled": 0.6040})
+        self.assertEqual(rejected["verdict"], "REINTERPRET")
+        kept = placebo_verdict(0.6046, {"constant": 0.6044, "shuffled": 0.6040})
+        self.assertEqual(kept["verdict"], "KEEP_CANDIDATE")
+
+    def test_slice_complementarity_reports_error_recovery(self):
+        def evaluator(users, labels, scores):
+            labels = np.asarray(labels)
+            scores = np.asarray(scores)
+            positive = float(scores[labels == 1].mean()) if np.any(labels == 1) else 0.0
+            negative = float(scores[labels == 0].mean()) if np.any(labels == 0) else 0.0
+            primary = positive - negative
+            return {"GAUC": primary, "nDCG@5": primary, "primary": primary,
+                    "users": len(set(users)), "rows": len(labels)}
+
+        users = ["u1", "u1", "u2", "u2"]
+        labels = np.asarray([1, 0, 1, 0], dtype=np.float32)
+        scores_a = np.asarray([0.0, 1.0, 0.8, 0.2], dtype=np.float32)
+        scores_b = np.asarray([1.0, 0.0, 0.7, 0.3], dtype=np.float32)
+        slices = {"history": np.asarray(["cold", "cold", "rich", "rich"], dtype=object)}
+        metrics = evaluate_slices(evaluator, users, labels, scores_b, slices)
+        self.assertIn("history=cold", metrics)
+        comparison = conditional_complementarity(
+            evaluator, users, labels, scores_a, scores_b, slices
+        )
+        self.assertGreater(comparison["overall"]["primary_delta_b_minus_a"], 0)
+        self.assertEqual(comparison["overall"]["model_b_recovered_a_errors"], 1)
+        self.assertEqual(comparison["overall"]["model_b_new_pair_errors"], 0)
 
     def test_official_evaluator_matches_pinned_digest(self):
         expected = self.project["official_evaluator_sha256"]

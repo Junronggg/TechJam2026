@@ -1,0 +1,14 @@
+{
+  "source_run": "run_20260831T124346Z",
+  "validation_only": true,
+  "researcher": "deterministic",
+  "manual_interventions": 0,
+  "iterations": [
+    {"iteration": 0, "action": "FM+BCE baseline", "primary": 0.6014695168, "decision": "REFERENCE"},
+    {"iteration": 1, "action": "FM+BPR, learning_rate=0.0003", "primary": 0.6039628983, "delta": 0.0024933815, "decision": "KEEP_CANDIDATE"},
+    {"iteration": 2, "action": "FM+BPR + DeepFM ensemble, z-score, weight=0.4", "primary": 0.6047128439, "delta": 0.0007499456, "decision": "KEEP_CANDIDATE"},
+    {"iteration": 3, "action": "FM z-score + DeepFM rank calibration", "primary": 0.6047455072, "delta": 0.0000326633, "decision": "KEEP_CANDIDATE"},
+    {"iteration": 4, "action": "Calibrated ensemble, DeepFM weight=0.65", "primary": 0.6052911282, "delta": 0.0005456210, "decision": "KEEP_CANDIDATE"}
+  ],
+  "conclusion": "The final value is a validation candidate. It was not confirmed by this run with rolling or paired seeds, and no test labels were read."
+}
