@@ -10,6 +10,28 @@ Research logs are separated by purpose:
 - [`AGENT-TRY.md`](AGENT-TRY.md): Agent trajectories, runtime, memory ablations, stopping and intervention audits.
 - [`RUN_LOG.md`](RUN_LOG.md): consolidated per-iteration run log, agent decisions, resource accounting, and final-evaluation record.
 
+## Results at a glance
+
+The required benchmark is **KuaiRand-Pure**. The official aggregate metric is
+`Primary = (GAUC + nDCG@5) / 2`.
+
+| Evaluation | GAUC | nDCG@5 | Primary | Status |
+|---|---:|---:|---:|---|
+| Official FM/BCE validation reference | 0.667133 | 0.535806 | 0.601470 | Reproducibility baseline |
+| Best validation candidate | **0.6732213** | **0.5385662** | **0.6058938** | Selected validation checkpoint |
+| Final local test evaluation | Not recorded | Not recorded | **0.599365** | Reported after validation selection |
+
+The final local-test output supplied for this branch contained only the
+aggregate Primary, so its GAUC and nDCG@5 are marked **Not recorded** rather
+than copied from another run. The two component metrics for the selected
+validation checkpoint are verified in [`RUN_LOG.md`](RUN_LOG.md). The local
+test result is not a hidden-test score; the organizers calculate the hidden
+score after submission.
+
+The complete hypotheses, configuration diffs, per-iteration metrics, error and
+recovery events, autonomy accounting, and final-test note are in
+[`RUN_LOG.md`](RUN_LOG.md).
+
 ## Prerequisites
 
 - Windows PowerShell, or macOS/Linux
@@ -327,28 +349,13 @@ That command trains on the validation loop, then evaluates test once at the end
 and writes `submissions/final.csv`. Omit `--finalize-test` for development and
 smoke runs.
 
-### Final evaluation status
+### Final evaluation details
 
 The frozen validation selection was evaluated once on the available local test
 split after research. The reported final local-test Primary was **`0.599365`**.
-This number is not a validation score and is not a hidden-test result; the
-organizers calculate the hidden score after submission.
-
-| Result | Primary | Interpretation |
-|---|---:|---|
-| Official validation reference | 0.601470 | FM+BCE baseline in the reproducibility log |
-| Best validation candidate | 0.605365 | Rank-calibrated candidate; validation-only |
-| Final local test evaluation | **0.599365** | Frozen submission model, evaluated after selection |
-
-The final evaluation does not send test metrics back to the Planner. The full
-agent trajectory and the per-iteration hypothesis, change, metrics, decision,
-and recovery records are consolidated in [`RUN_LOG.md`](RUN_LOG.md); the raw
-machine-readable records remain under the selected `logs/run_*` directory.
-
-Because the final output supplied for this branch reports the aggregate Primary
-only, GAUC and nDCG@5 for this particular local-test run are intentionally not
-reconstructed or guessed. Validation GAUC and nDCG@5 are reported in `TRY.md`
-and in the per-iteration JSON records.
+The final evaluation does not send test metrics back to the Planner. See the
+[results table above](#results-at-a-glance) and [`RUN_LOG.md`](RUN_LOG.md) for
+the complete audit record.
 
 After `submissions/final.csv` exists from that official run, you may format-check
 it from the starter directory (this reads the test split for row alignment only):
