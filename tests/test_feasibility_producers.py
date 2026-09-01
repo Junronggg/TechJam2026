@@ -299,17 +299,20 @@ class CorrelationInputTests(unittest.TestCase):
     def test_missing_correlation_inputs_are_reported_not_fabricated(self) -> None:
         from prediction_correlation import emit_from_existing_summary
 
-        missing = missing_correlation_inputs(ROOT)
-        self.assertTrue(missing["official_validation_checkpoints"])
-        self.assertTrue(missing["existing_correlation_summaries"])
-        report = format_missing_correlation_inputs(missing)
-        self.assertIn("Person 1 must supply", report)
-        for path in missing["official_validation_checkpoints"]:
-            self.assertIn(path, report)
+        # Keep this contract test independent of optional local checkpoints
+        # produced by earlier experiments.
         with tempfile.TemporaryDirectory() as tmp:
-            output = Path(tmp) / "correlation.json"
+            root = Path(tmp)
+            missing = missing_correlation_inputs(root)
+            self.assertTrue(missing["official_validation_checkpoints"])
+            self.assertTrue(missing["existing_correlation_summaries"])
+            report = format_missing_correlation_inputs(missing)
+            self.assertIn("Person 1 must supply", report)
+            for path in missing["official_validation_checkpoints"]:
+                self.assertIn(path, report)
+            output = root / "correlation.json"
             self.assertFalse(output.exists())
-            existing = Path(tmp) / "summary.json"
+            existing = root / "summary.json"
             existing.write_text(json.dumps({
                 "test_labels_used": False,
                 "official_validation": {
