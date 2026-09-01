@@ -1,0 +1,20 @@
+{
+  "started_at": "2026-08-31T16:00:00.378266+00:00",
+  "benchmark": "KuaiRand-Pure",
+  "limits": {
+    "max_iterations": 50,
+    "max_wall_clock_hours": 6,
+    "convergence_epsilon": 0.002,
+    "convergence_rounds": 3,
+    "min_candidate_experiments": 5
+  },
+  "max_total_experiments": 50,
+  "prior_experiments_loaded": 100,
+  "researcher": {
+    "type": "OpenAICompatibleResearcher",
+    "model": "openai/gpt-4.1-mini",
+    "base_url": "https://openrouter.ai/api/v1",
+    "allow_code_branches": true,
+    "autonomous_mode": true
+  }
+}

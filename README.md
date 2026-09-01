@@ -8,6 +8,7 @@ Research logs are separated by purpose:
 
 - [`TRY.md`](TRY.md): model, loss, feature engineering, rolling validation and ensemble experiments.
 - [`AGENT-TRY.md`](AGENT-TRY.md): Agent trajectories, runtime, memory ablations, stopping and intervention audits.
+- [`RUN_LOG.md`](RUN_LOG.md): consolidated per-iteration run log, agent decisions, resource accounting, and final-evaluation record.
 
 ## Prerequisites
 
@@ -326,12 +327,28 @@ That command trains on the validation loop, then evaluates test once at the end
 and writes `submissions/final.csv`. Omit `--finalize-test` for development and
 smoke runs.
 
-### Official run status
+### Final evaluation status
 
-The finalized official run (`--researcher deterministic --max-iterations 50
---finalize-test`) has not yet been executed as of this commit. After it completes,
-update this section with the run `summary.json` path, `logs/run_*` directory, and
-`submissions/final.csv` location. Do not invent results.
+The frozen validation selection was evaluated once on the available local test
+split after research. The reported final local-test Primary was **`0.599365`**.
+This number is not a validation score and is not a hidden-test result; the
+organizers calculate the hidden score after submission.
+
+| Result | Primary | Interpretation |
+|---|---:|---|
+| Official validation reference | 0.601470 | FM+BCE baseline in the reproducibility log |
+| Best validation candidate | 0.605365 | Rank-calibrated candidate; validation-only |
+| Final local test evaluation | **0.599365** | Frozen submission model, evaluated after selection |
+
+The final evaluation does not send test metrics back to the Planner. The full
+agent trajectory and the per-iteration hypothesis, change, metrics, decision,
+and recovery records are consolidated in [`RUN_LOG.md`](RUN_LOG.md); the raw
+machine-readable records remain under the selected `logs/run_*` directory.
+
+Because the final output supplied for this branch reports the aggregate Primary
+only, GAUC and nDCG@5 for this particular local-test run are intentionally not
+reconstructed or guessed. Validation GAUC and nDCG@5 are reported in `TRY.md`
+and in the per-iteration JSON records.
 
 After `submissions/final.csv` exists from that official run, you may format-check
 it from the starter directory (this reads the test split for row alignment only):
@@ -351,6 +368,14 @@ subsequently showed that distilled cross-run policies skipped two rolling-reject
 temporal trials. A fresh five-experiment integration run then reproduced every
 validation score, kept test metrics null, and reported zero manual interventions;
 its short trajectory still had no memory-driven choice divergence.
+
+Generated output is intentionally filtered in `.gitignore`: the compact
+per-iteration JSON, run metadata, summaries, and best-run config/metrics for the
+selected audit runs are retainable, while checkpoints, model binaries,
+stdout/stderr, provider-call payloads, caches, and unrelated run directories
+remain ignored. Final-selection records (`artifacts/best_*.json`,
+`artifacts/final_test_metrics.json`, and `submissions/final.csv`) are likewise
+allow-listed when they are produced.
 
 ### Research safety and evidence
 

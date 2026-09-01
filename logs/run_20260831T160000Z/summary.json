@@ -1,0 +1,49 @@
+{
+  "stop_reason": "converged",
+  "stop_detail": null,
+  "iterations": 6,
+  "total_experiments": 6,
+  "candidate_experiments": 5,
+  "prior_experiments_loaded": 100,
+  "best_primary": 0.6054142399875351,
+  "best_ndcg_at_5": 0.5385177122891033,
+  "best_ndcg_iteration": 0,
+  "best_ndcg_primary": 0.6053735276393147,
+  "shared_best_primary": 0.6054142399875351,
+  "best_iteration": 5,
+  "manual_interventions": 0,
+  "autonomous_mode": true,
+  "candidate_generation": "dynamic_compatible_bundles",
+  "final_test_metrics": null,
+  "convergence_streak": 5,
+  "elapsed_seconds": 3699.4219999999914,
+  "remaining_seconds": 17900.57800000001,
+  "wall_clock_seconds": 3699.4219999999914,
+  "llm_requests": 10,
+  "llm_failures": 1,
+  "llm_http_requests": 10,
+  "llm_http_failures": 0,
+  "llm_proposal_failures": 1,
+  "llm_fallbacks": 1,
+  "llm_error_categories": {
+    "code_validation": 2,
+    "invalid_json": 4
+  },
+  "llm_tokens": {
+    "prompt_tokens": 62608,
+    "completion_tokens": 135189,
+    "total_tokens": 197797
+  },
+  "limits": {
+    "max_total_experiments": 50,
+    "official_max_iterations": 50,
+    "max_wall_clock_hours": 6,
+    "wall_clock_budget_seconds": 21600.0,
+    "convergence_epsilon": 0.002,
+    "convergence_rounds": 3,
+    "min_candidate_experiments": 5,
+    "experiment_cost_seconds": 900.0,
+    "minimum_experiment_reserve_seconds": 60.0,
+    "max_active_branches": 3
+  }
+}
