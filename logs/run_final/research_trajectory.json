@@ -1,0 +1,98 @@
+{
+  "run_id": "run_final",
+  "source_run": "run_20260831T154525Z",
+  "iterations": [
+    {
+      "iteration": 0,
+      "hypothesis": "Reproduce the official FM baseline.",
+      "changes": {},
+      "metrics": {
+        "GAUC": 0.6671333909034729,
+        "nDCG@5": 0.5358057022094727,
+        "primary": 0.6014695167541504,
+        "best_epoch": 7,
+        "runtime_seconds": 20.299658665957395
+      },
+      "decision": "KEEP",
+      "error": null,
+      "manual_intervention": false
+    },
+    {
+      "iteration": 1,
+      "hypothesis": "Align FM training with within-user ranking using BPR.",
+      "changes": {
+        "training_objective": "bpr",
+        "learning_rate": 0.0003
+      },
+      "metrics": {
+        "GAUC": 0.6705930233001709,
+        "nDCG@5": 0.5373327732086182,
+        "primary": 0.6039628982543945,
+        "best_epoch": 24,
+        "runtime_seconds": 37.61413945804816
+      },
+      "decision": "KEEP",
+      "error": null,
+      "manual_intervention": false
+    },
+    {
+      "iteration": 2,
+      "hypothesis": "Blend FM+BPR with DeepFM+BCE.",
+      "changes": {
+        "model": "ensemble",
+        "training_objective": "hybrid",
+        "ensemble_deepfm_weight": 0.4
+      },
+      "metrics": {
+        "GAUC": 0.6714804172515869,
+        "nDCG@5": 0.5379453301429749,
+        "primary": 0.6047128438949585,
+        "users": 22377,
+        "rows": 124909,
+        "best_epoch": 0,
+        "runtime_seconds": 67.70743449998554
+      },
+      "decision": "KEEP",
+      "error": null,
+      "manual_intervention": false
+    },
+    {
+      "iteration": 3,
+      "hypothesis": "Calibrate the ensemble with fm_zscore_deepfm_rank.",
+      "changes": {
+        "ensemble_normalization": "fm_zscore_deepfm_rank"
+      },
+      "metrics": {
+        "GAUC": 0.6715402603149414,
+        "nDCG@5": 0.5379508137702942,
+        "primary": 0.6047455072402954,
+        "users": 22377,
+        "rows": 124909,
+        "best_epoch": 0,
+        "runtime_seconds": 68.49895825004205
+      },
+      "decision": "KEEP",
+      "error": null,
+      "manual_intervention": false
+    },
+    {
+      "iteration": 4,
+      "hypothesis": "Tune the calibrated DeepFM weight to 0.6.",
+      "changes": {
+        "ensemble_deepfm_weight": 0.6
+      },
+      "metrics": {
+        "GAUC": 0.6719948053359985,
+        "nDCG@5": 0.5385018587112427,
+        "primary": 0.6052483320236206,
+        "users": 22377,
+        "rows": 124909,
+        "best_epoch": 0,
+        "runtime_seconds": 65.0935388749931
+      },
+      "decision": "KEEP",
+      "error": null,
+      "manual_intervention": false
+    }
+  ]
+}

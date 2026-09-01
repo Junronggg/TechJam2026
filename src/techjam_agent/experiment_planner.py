@@ -289,32 +289,6 @@ def _model_candidates(config: dict[str, Any]) -> list[CandidateExperiment]:
             "pairwise_censored_watchtime",
             MODEL_FAMILY_ACTIONS["pairwise_censored_watchtime"],
         ))
-    if not (
-        model == "multitask_deepfm"
-        and config["training_objective"] == "bce"
-        and config["hyperparameters"]["auxiliary_signals"] == "censored_watch"
-    ):
-        rows.append(_candidate(
-            "Use a one-sided censored watch-time auxiliary objective.",
-            "Incomplete plays provide exact log-watch targets, while completed plays "
-            "provide only a duration lower bound; this is materially different from capped MSE.",
-            {"model": "multitask_deepfm", "training_objective": "bce",
-             "auxiliary_signals": "censored_watch", "learning_rate": 0.001},
-            "censored_watchtime",
-        ))
-    if not (
-        model == "multitask_deepfm"
-        and config["training_objective"] == "bpr"
-        and config["hyperparameters"]["auxiliary_signals"] == "censored_watch"
-    ):
-        rows.append(_candidate(
-            "Combine within-user BPR with one-sided censored watch-time supervision.",
-            "This aligns the main objective with ranking while retaining uncapped lower-bound "
-            "information from completed plays.",
-            {"model": "multitask_deepfm", "training_objective": "bpr",
-             "auxiliary_signals": "censored_watch", "learning_rate": 0.001},
-            "pairwise_censored_watchtime",
-        ))
     if model != "dcnv2":
         rows.append(_candidate(
             "Test a low-rank DCNv2 interaction model.",
