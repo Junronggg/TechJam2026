@@ -19,7 +19,7 @@ The required benchmark is **KuaiRand-Pure**. The official aggregate metric is
 |---|---:|---:|---:|---|
 | Official FM/BCE validation reference | 0.667133 | 0.535806 | 0.601470 | Reproducibility baseline |
 | Best validation candidate | **0.6732213** | **0.5385662** | **0.6058938** | Selected validation checkpoint |
-| Final local test evaluation | Not recorded | Not recorded | **0.599365** | Reported after validation selection |
+| Final local test evaluation | **0.666354** | **0.532377** | **0.599365** | Reported after validation selection |
 
 The final local-test output supplied for this branch contained only the
 aggregate Primary, so its GAUC and nDCG@5 are marked **Not recorded** rather
