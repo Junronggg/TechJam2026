@@ -445,6 +445,12 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(values["valid"]["previous_author_same"].tolist(), [0, 1])
         self.assertEqual(values["test"]["prior_video_count"].tolist(), [2])
         self.assertEqual(values["test"]["previous_author_same"].tolist(), [0])
+        self.assertEqual(values["train"]["prior_video_exposure"].tolist(), [1, 0, 0])
+        self.assertEqual(values["valid"]["prior_video_exposure"].tolist(), [1, 0])
+        self.assertEqual(values["test"]["prior_video_exposure"].tolist(), [1])
+        self.assertEqual(values["train"]["author_recency"].tolist(), [1, 0, 0])
+        self.assertEqual(values["valid"]["author_recency"].tolist(), [2, 3])
+        self.assertEqual(values["test"]["author_recency"].tolist(), [5])
 
         changed = {name: list(rows) for name, rows in splits.items()}
         changed["valid"] = [row[:-1] + (1 - row[-1],) for row in splits["valid"]]
@@ -460,8 +466,13 @@ class AgentTests(unittest.TestCase):
             {"model": "ensemble", "training_objective": "hybrid",
              "ensemble_deepfm_weight": 0.4},
         )
+        calibrated = apply_changes(
+            ensemble, {"ensemble_normalization": "fm_zscore_deepfm_rank"}
+        )
+        tuned = apply_changes(calibrated, {"ensemble_deepfm_weight": 0.65})
         proposal = DeterministicResearcher().propose(
-            ensemble, [{"config": self.config}, {"config": ensemble}]
+            ensemble, [{"config": self.config}, {"config": ensemble},
+                       {"config": calibrated}, {"config": tuned}]
         )
         self.assertEqual(proposal.changes, {
             "model": "multitask_deepfm",
@@ -475,6 +486,10 @@ class AgentTests(unittest.TestCase):
             {"model": "ensemble", "training_objective": "hybrid",
              "ensemble_deepfm_weight": 0.4},
         )
+        calibrated = apply_changes(
+            ensemble, {"ensemble_normalization": "fm_zscore_deepfm_rank"}
+        )
+        tuned = apply_changes(calibrated, {"ensemble_deepfm_weight": 0.65})
         multitask = apply_changes(
             ensemble,
             {"model": "multitask_deepfm", "training_objective": "bce",
@@ -485,6 +500,8 @@ class AgentTests(unittest.TestCase):
             [
                 {"config": self.config},
                 {"config": ensemble},
+                {"config": calibrated},
+                {"config": tuned},
                 {"config": multitask},
             ],
         )
@@ -500,6 +517,10 @@ class AgentTests(unittest.TestCase):
             {"model": "ensemble", "training_objective": "hybrid",
              "ensemble_deepfm_weight": 0.4},
         )
+        calibrated = apply_changes(
+            ensemble, {"ensemble_normalization": "fm_zscore_deepfm_rank"}
+        )
+        tuned = apply_changes(calibrated, {"ensemble_deepfm_weight": 0.65})
         pointwise = apply_changes(
             ensemble,
             {"model": "multitask_deepfm", "training_objective": "bce",
@@ -513,7 +534,29 @@ class AgentTests(unittest.TestCase):
         proposal = DeterministicResearcher().propose(
             ensemble,
             [{"config": self.config}, {"config": ensemble},
-             {"config": pointwise}, {"config": pairwise}],
+             {"config": calibrated}, {"config": tuned}, {"config": pointwise},
+             {"config": pairwise}],
+        )
+        self.assertEqual(proposal.changes, {
+            "model": "multitask_deepfm",
+            "training_objective": "bce",
+            "auxiliary_signals": "censored_watch",
+            "learning_rate": 0.001,
+        })
+
+        censored_pointwise = apply_changes(ensemble, proposal.changes)
+        censored_pairwise = apply_changes(ensemble, {
+            "model": "multitask_deepfm",
+            "training_objective": "bpr",
+            "auxiliary_signals": "censored_watch",
+            "learning_rate": 0.001,
+        })
+        proposal = DeterministicResearcher().propose(
+            ensemble,
+            [{"config": self.config}, {"config": ensemble},
+             {"config": calibrated}, {"config": tuned}, {"config": pointwise},
+             {"config": pairwise},
+             {"config": censored_pointwise}, {"config": censored_pairwise}],
         )
         self.assertEqual(proposal.changes, {
             "model": "multitask_deepfm",

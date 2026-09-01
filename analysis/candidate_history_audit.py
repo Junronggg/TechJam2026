@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import sys
@@ -12,9 +13,15 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "kuairand-starter-kit"))
 
 from evaluate import evaluate
+from techjam_agent.feasibility_producers import (
+    COVERAGE_SUMMARY_PATH,
+    coverage_summary_from_signals,
+    write_versioned_json,
+)
 
 
 TRAIN_END = 20220421
@@ -74,7 +81,8 @@ def bucket_summary(values: np.ndarray, labels: np.ndarray) -> dict:
     return result
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     data_dir = ROOT / "data/KuaiRand-Pure/data"
     video_to_author = {}
     with (data_dir / "video_features_basic_pure.csv").open(
@@ -189,7 +197,30 @@ def main() -> int:
         },
     }
     print(json.dumps(payload, indent=2))
+    if args.write_summary:
+        write_versioned_json(
+            coverage_summary_from_signals(signals, test_labels_used=False),
+            args.output,
+        )
     return 0
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Audit candidate-history coverage on official validation dates"
+    )
+    parser.add_argument(
+        "--write-summary",
+        action="store_true",
+        help="Write versioned validation-only coverage JSON after printing stdout",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=ROOT / COVERAGE_SUMMARY_PATH,
+        help="Coverage JSON path used only with --write-summary",
+    )
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

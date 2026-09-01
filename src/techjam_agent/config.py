@@ -18,7 +18,18 @@ ALLOWED_VALUES = {
     "hard_negative_candidates": (2, 4),
     "deepfm_hidden_dim": (16, 32, 64),
     "hybrid_bpr_weight": (0.25, 0.5, 0.75),
-    "ensemble_deepfm_weight": (0.3, 0.4, 0.5),
+    # The 0.63/0.64 neighbors were added after a fixed-output local scan
+    # found a narrow optimum around the earlier 0.65 candidate.  They remain
+    # ordinary legal candidates; rolling/seed evidence still decides whether
+    # either is safe to promote.
+    "ensemble_deepfm_weight": (0.3, 0.4, 0.5, 0.6, 0.63, 0.64, 0.65, 0.7),
+    # Ranking is invariant to monotone score transforms within a user.  Keep
+    # the default z-score blend for backwards compatibility, but let the
+    # planner test a rank-calibrated DeepFM branch without changing either
+    # trained model.
+    "ensemble_normalization": (
+        "zscore", "fm_zscore_deepfm_rank", "fm_rank_deepfm_zscore"
+    ),
     "auxiliary_loss_weight": (0.05, 0.1, 0.2, 0.3, 0.5),
     "auxiliary_signals": (
         "click", "like", "completion", "click_like", "click_like_completion",
@@ -43,7 +54,18 @@ FEATURE_KEYS = (
     "author_positive_recency",
     "prior_video_count",
     "previous_author_same",
+    "prior_video_exposure",
+    "author_recency",
     "global_context",
+    # Static metadata known before an impression; unlike target statistics,
+    # these fields are not computed from validation/test labels.
+    "video_tag",
+    "video_upload_type",
+    "user_active_degree",
+    "user_register_days_range",
+    "duration_semantic_bucket",
+    "video_music_type",
+    "video_tag_components",
 )
 MODELS = (
     "fm", "deepfm", "multitask_deepfm", "sequence_deepfm", "dcnv2",
@@ -98,6 +120,7 @@ def validate_config(config: dict[str, Any]) -> None:
         controlled = [key for key in (
             "prior_video_positive", "author_positive_recency",
             "prior_video_count", "previous_author_same",
+            "prior_video_exposure", "author_recency",
         ) if features[key]]
         if len(controlled) != 1:
             raise ValueError(
@@ -117,8 +140,18 @@ def validate_config(config: dict[str, Any]) -> None:
                                                "author_positive_recency",
                                                "prior_video_count",
                                                "previous_author_same",
+                                               "prior_video_exposure",
+                                               "author_recency",
                                                "global_context")):
         raise ValueError("categorical crosses and temporal buckets require an FM-family model")
+    if config["model"] == "lightgbm" and any(features[key] for key in
+                                              ("video_tag", "user_active_degree",
+                                              "video_upload_type",
+                                              "user_register_days_range",
+                                              "duration_semantic_bucket",
+                                              "video_music_type",
+                                              "video_tag_components")):
+        raise ValueError("static metadata fields currently require an FM-family model")
 
 
 def apply_changes(base: dict[str, Any], changes: dict[str, Any]) -> dict[str, Any]:

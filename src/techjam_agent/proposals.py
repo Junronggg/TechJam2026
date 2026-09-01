@@ -9,11 +9,13 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterator
 
 from .config import ALLOWED_VALUES, FEATURE_KEYS, MODELS, OBJECTIVES, apply_changes, experiment_key
+from .experiment_planner import AutonomousExperimentPlanner, rank_candidates
 from .memory import (
     PLANNER_RECENT_HISTORY,
     EvidenceDirections,
     build_memory_summary,
     collect_tried_keys,
+    distill_research_patterns,
     evidence_directions,
 )
 from .research_prompt import (

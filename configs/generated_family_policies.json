@@ -6,7 +6,7 @@
   "feature_schema": "v3",
   "family_policies": [
     {
-      "policy_id": "f1742fc00ea59263",
+      "policy_id": "36c9057c1b4792cc",
       "family": "candidate_history",
       "policy": "stop_direction",
       "scientific_verdict": "REJECTED",
@@ -57,7 +57,7 @@
           "source_id": "candidate_video_count_v1",
           "kind": "single_delta",
           "path": "runs/candidate_history_followup/summary.json",
-          "sha256": "742e8b76671cce84c8292185d8c779703c413e61ea45dd338a079fdcb05477fe",
+          "sha256": "e653d5f4f99d216a5fad6b2e2a3105226a6f34331ecd49a422bc52f65186a1b2",
           "result": {
             "signal": "noise",
             "delta": -2.676248550415039e-05,
@@ -68,7 +68,7 @@
           "source_id": "candidate_previous_author_v1",
           "kind": "single_delta",
           "path": "runs/candidate_history_followup/summary.json",
-          "sha256": "742e8b76671cce84c8292185d8c779703c413e61ea45dd338a079fdcb05477fe",
+          "sha256": "e653d5f4f99d216a5fad6b2e2a3105226a6f34331ecd49a422bc52f65186a1b2",
           "result": {
             "signal": "noise",
             "delta": 4.589557647705078e-05,

@@ -58,6 +58,9 @@ runs/pairwise_multitask_ablation/*
 !runs/censored_watchtime_ablation/
 runs/censored_watchtime_ablation/*
 !runs/censored_watchtime_ablation/summary.json
+!runs/candidate_history_audit/
+runs/candidate_history_audit/*
+!runs/candidate_history_audit/summary.json
 best/*
 !best/.gitkeep
 

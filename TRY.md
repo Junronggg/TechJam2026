@@ -5,7 +5,7 @@
 
 ## 一页结论
 
-当前提交候选：
+当前提交候选（按验证集峰值）：
 
 ```text
 FM + BPR                    60%
@@ -15,6 +15,16 @@ Validation Primary     0.604713
 Rolling validation      3/3 folds 提升
 Rolling mean delta      +0.001123（相对 FM+BPR）
 ```
+
+最新候选：在同一 FM+BPR 与 DeepFM+BCE 上，把 DeepFM 分支改为用户内
+rank 校准，并将权重设为 `0.63`，Validation Primary **0.605365**。
+它相对原冠军 `0.604713` 增加 **+0.000652**；这是固定模型输出上的局部权重扫描结果，
+尚未作为一次新的完整 Agent 训练轨迹。原 `0.65` 候选为 **0.605291**，rolling
+相对原冠军为 `+0.001029 / -0.000504 / +0.000547`，2/3 folds、平均 **+0.000357**。
+因此 `0.605365` 是当前验证集峰值，`0.604713` 仍是 rolling 3/3 的稳健参考。
+随后按固定 seeds `0–3` 做 paired-seed confirmation：3/4 个 seed 为正，平均
+`+0.000403`，近似 95% 区间为 `[-0.000074, +0.000880]`。区间跨 0，所以科学状态是
+`UNCERTAIN`，但比赛提交状态仍为 `ELIGIBLE`；不能把它写成“已统计确认的稳健冠军”。
 
 值得保留、但不能直接替换冠军的单模型方向：
 
@@ -72,6 +82,54 @@ Rolling mean delta      +0.001123（相对 FM+BPR）
 | 13 | Global-context FM + DeepFM | 0.604674 | -0.000039 vs champion | rolling 3/3、平均 +0.000460；暂列候选，不替换冠军 |
 | 14 | DeepFM + one-sided censored watch-time | 0.603939 | +0.000077 vs DeepFM | INSUFFICIENT；机制不同于 capped MSE，但增量仍是噪声量级 |
 | 14 | BPR + one-sided censored watch-time | 0.602523 | -0.001339 vs DeepFM | REJECT exact config；pairwise 主任务进一步下降 |
+| 15 | `video_music_type`（视频静态 metadata）+ FM+BPR | 0.604077 | +0.000114 vs FM+BPR | 小幅单 split，未超过 ensemble；暂不纳入冠军 |
+| 15 | `video_tag_components`（拆分多值 tag）+ FM+BPR | 0.604302 | +0.000339 vs FM+BPR | 比 exact tag 表示更好，但仍低于 ensemble |
+| 15 | `video_tag_components` ensemble | 0.604415 | -0.000298 vs 原冠军 | 组件信息没有形成互补，REJECT |
+| 16 | FM z-score + DeepFM rank，weight=0.4 | 0.604746 | +0.000033 vs 原冠军 | 校准方式本身有微小收益 |
+| 16 | FM z-score + DeepFM rank，weight=0.65 | **0.605291** | **+0.000578 vs 原冠军** | Validation-best candidate；rolling 2/3、均值 +0.000357；paired seeds 后为 `UNCERTAIN / ELIGIBLE` |
+| 17 | Autonomous follow-up：rank calibration 后自动测试 weight=0.65 | **0.605291** | **+0.003821 vs FM+BCE；+0.000578 vs 原冠军** | Agent 自主选中；rolling 2/3，paired seeds 3/4，区间跨 0 |
+| 20 | Rank-calibrated ensemble paired seeds 0–3 | mean delta **+0.000403** | 3/4 seeds 为正；区间 `[-0.000074, +0.000880]` | `UNCERTAIN / ELIGIBLE`；不能宣称统计确认 |
+| 21 | Rank-calibrated local weight scan：weight=0.63 | **0.605365** | +0.000652 vs 原冠军 | 新 validation peak；固定输出、尚未通过独立 seed 确认 |
+| 21 | Rank-calibrated local weight scan：weight=0.64 | 0.605352 | +0.000639 vs 原冠军 | 接近峰值；rolling 2/3、均值 +0.000350 |
+| 21 | weight=0.63 paired seeds 0–3（复用相同组件 checkpoint） | mean delta **+0.000430** | 4/4 seeds 为正；区间 `[-0.000061, +0.000922]` | `UNCERTAIN / ELIGIBLE`；区间仍跨 0 |
+| 22 | Train-only shadow validation：weight=0.63 | mean delta **+0.000085** | 3/4 窗口提升；第 4 窗口 -0.000484 | 有轻微跨时间优势，但增益接近噪声 |
+| 18 | `prior_video_exposure`（严格过去的同视频曝光） | 0.604123 | +0.000160 vs FM+BPR | 比 positive-history 更接近 candidate-specific history，但仍低于 ensemble；不确认 |
+| 18 | `author_recency`（严格过去的同 author 任意曝光） | 0.604005 | +0.000042 vs FM+BPR | 没有可检测增益；不确认 |
+| 19 | FM+BPR + censored watch-time head | 0.604108 | +0.000145 vs FM+BPR | one-sided watch-time 辅助目标的直接对照；小于当前波动 |
+| 19 | 上述 watch-time + `prior_video_exposure` + `author_recency` | 0.604222 | +0.000114 vs watch-time FM | 7-field 组合仍未超过当前冠军；不能把小增益归因于这两个字段 |
+
+## 为什么最近很难继续涨
+
+这不是单一原因，而是三个因素叠加：
+
+1. 许多新增特征来自同一类全局统计或稀疏交叉，和 FM/BPR 已有信号高度重复；因此单 split 的 `+0.0000x` 很容易只是噪声。
+2. 评分是用户内排序（GAUC、nDCG@5），不是分类 accuracy。改变概率校准或增加相似字段，未必改变用户内排序。
+3. 官方 `convergence_epsilon=0.002` 大于大多数真实增益；默认循环会在连续小改动后结束。研究时必须显式使用 `--research-after-convergence`，但仍要保留官方收敛点。
+
+这轮真正有效的变化不是新 feature，而是对同一两个模型的分数做用户内 rank calibration，再重新检查融合权重。局部扫描把 validation peak 从 `0.605291` 推到 `0.605365`；同一批四个 seed 的组件 checkpoint 上，`0.63` 的融合增量为 4/4 正、均值 `+0.000430`，但区间仍跨 0。当前规则是：`0.605365` 可作为 validation-best 提交候选，rolling 3/3 的 `0.604713` 保留为稳健 fallback。
+
+## Shadow validation：模拟未见时间段
+
+为了测试“validation 上的权重是否能泛化到其他未来窗口”，新增
+`scripts/run_shadow_validation.py`。它只使用官方 train period `20220408–20220420`，
+切出四组严格按时间排列的 train/holdout，不读取官方 validation 或 test label：
+
+```bash
+python scripts/run_shadow_validation.py
+```
+
+比较参考融合 `weight=0.4 + z-score` 与候选 `weight=0.63 + fm_zscore_deepfm_rank`：
+
+| Shadow fold | Candidate delta |
+|---|---:|
+| shadow_1 | +0.000275 |
+| shadow_2 | +0.000206 |
+| shadow_3 | +0.000345 |
+| shadow_4 | -0.000484 |
+
+汇总为 **3/4** 窗口提升、平均 **+0.000085**。这不是新的 leaderboard 分数，而是
+对时间泛化的额外 sanity check；它支持“候选可能有轻微优势”，同时也证明优势很容易
+随时间段消失，因此不能据此宣称 `.605365` 一定优于稳健 fallback。
 
 ## 评价口径
 
@@ -170,6 +228,33 @@ DeepFM+BCE 在相同基础字段上得到 `0.603862`。它没有超过 FM+BPR，
 | Mean | 0.592587 | **0.593710** | **+0.001123** |
 
 结论：当前最好方案不是最强单模型，而是 ranking signal 与 nonlinear pointwise signal 的融合。
+
+### I. 测试融合校准，而不是继续堆 feature
+
+此前 ensemble 先对两个模型都做用户内 z-score，再按 `0.6/0.4` 融合。由于
+官方评估只看同一用户内部排序，模型分数的绝对尺度并不重要；因此新增一个
+严格对照：FM 保留 z-score，DeepFM 改成用户内 rank，模型和输入完全不变。
+
+| 融合方式 | DeepFM 权重 | Official validation Primary |
+|---|---:|---:|
+| 两边 z-score（原冠军） | 0.40 | 0.604713 |
+| FM z-score + DeepFM rank | 0.40 | 0.604746 |
+| FM z-score + DeepFM rank | **0.65** | **0.605291** |
+
+rolling 对照以“两边 z-score、weight=0.40”为基准：
+
+| Fold | 基准 | rank-calibrated / 0.65 | Delta |
+|---|---:|---:|---:|
+| Fold 1 | 0.611392 | 0.612421 | +0.001029 |
+| Fold 2 | 0.581429 | 0.580925 | -0.000504 |
+| Fold 3 | 0.588308 | 0.588855 | +0.000547 |
+| Mean delta | — | — | **+0.000357，2/3** |
+
+这次提升来自“融合排序校准 + weight”，不是新特征或换模型。它解释了为什么
+之前继续加 tag、duration、user metadata 都只能带来 `0.0001~0.0004`：当前单模型
+已经相近，瓶颈更多在如何组合它们。由于 rolling 仍有一个负 fold，当前策略是：
+把 `0.605291` 作为 validation submission candidate，保留 `0.604713` 作为稳健参考，
+后续用预先声明的 paired seeds 决定最终提交。
 
 ### E. 用 rolling validation 推翻单切分假象
 
@@ -396,7 +481,7 @@ Random 的 long-view rate 为 **8.06%**，standard 为 **31.33%**。两套 Prima
 
 严格对照 delta 为 **-0.001079**，所以“直接把当前 multi-task 主任务换成 BPR”被拒绝。
 
-随后只做一次外部报告配置复现，不继续扫参数：
+随后只做一次不同参数配置复现，不继续扫参数：
 
 ```text
 Like Multi-task + BPR
@@ -405,7 +490,7 @@ auxiliary_weight = 0.3
 learning_rate = 0.001
 ```
 
-结果 Primary 为 **0.603610**，相对同实现 BCE 仍为 **-0.000791**，相对当前冠军 0.604713 为 **-0.001103**。因此没有复现对方报告的 0.6069；合理解释是双方的 pairwise loss、auxiliary target、采样方式或模型实现并不相同，不能只凭配置名称认为是同一个实验。
+结果 Primary 为 **0.603610**，相对同实现 BCE 仍为 **-0.000791**，相对当前冠军 0.604713 为 **-0.001103**。因此这个配置没有超过当前结果；pairwise loss、auxiliary target、采样方式或模型实现的改变都必须单独对照，不能只凭配置名称认为是同一个实验。
 
 结论：保留 pairwise multi-task 的可执行能力和单元测试，但自动 memory 对上述两个精确配置标记 `STOP_DIRECTION`。只有获得对方 loss/target/sampler 代码，或提出实质不同的机制，才重新打开这个方向。
 
@@ -422,6 +507,40 @@ learning_rate = 0.001
 Pointwise 版本的 GAUC 略升但 nDCG 略降，最终 Primary 只增加 `0.000077`，不足以支持 rolling 或替换 like-only；科学状态记为 `INSUFFICIENT`，提交状态记为 `RESEARCH_ONLY`。Pairwise 版本明确下降，当前精确配置记为 `REJECTED / NOT_ELIGIBLE`。
 
 路线变化：不能再说“censored watch-time 没测过”，也不能把微小正值写成有效提升。只在提出不同的 survival likelihood、共享结构或经过预声明的强假设时才重开，不继续扫辅助权重。
+
+### O. FM+BPR + censored watch-time 复跑
+
+为核对 one-sided censored watch-time 目标，重新运行：
+python scripts/run_fm_watchtime_ablation.py。主任务是 FM+BPR，辅助目标使用
+one-sided censored watch-time；当前脚本的辅助权重为 **0.3**。只使用 validation，
+test_labels_used=false。
+
+| 配置 | GAUC | nDCG@5 | Primary | 对 FM+BPR 0.603963 |
+|---|---:|---:|---:|---:|
+| FM+BPR baseline | — | — | 0.603963 | — |
+| FM+BPR + censored watch-time | 0.670766 | 0.537451 | **0.604108** | **+0.000145** |
+| 上述模型 + prior_video_exposure + author_recency | 0.670981 | 0.537463 | **0.604222** | **+0.000259** |
+
+解释：这个目标比 capped/log-watch regression 更接近共享 embedding
+辅助监督，确实复现了一个小的 validation 增量；但增量仍小于当前运行波动，
+且两种配置都低于 0.604713 的稳健 ensemble（分别低 0.000605 和
+0.000491）。因此本次结论是 **PROMISING / RESEARCH_ONLY**，不能把它写成
+新的冠军。若要重开该方向，应单独预注册并运行不同权重的对照，不能把 0.3
+的结果当成其他权重的结果。
+
+随后用相同代码、相同 seed 和相同数据单独测试 lambda=0.2
+（输出目录 runs/fm_watchtime_ablation_lambda02/）：
+
+| 配置 | GAUC | nDCG@5 | Primary | 对 FM+BPR 0.603963 |
+|---|---:|---:|---:|---:|
+| FM+BPR + censored watch-time，lambda=0.2 | 0.671008 | 0.537393 | **0.604201** | **+0.000238** |
+| 上述模型 + prior_video_exposure + author_recency | 0.670770 | 0.537537 | **0.604154** | **+0.000191** |
+
+lambda=0.2 的纯 watch-time 版本比当前脚本的 lambda=0.3 高 0.000092，
+但仍比稳健 ensemble 低 0.000512。加两个历史字段后反而比纯版本低
+0.000047，没有形成叠加收益。结论更新为：**lambda=0.2 是目前该 FM
+watch-time 分支的最好单次结果，但仍是小幅、未做 rolling/paired-seed
+确认的候选，不能替换 ensemble。**
 
 ---
 
@@ -512,3 +631,49 @@ python scripts/evaluate_global_context_ensemble.py
 Agent 自主运行、memory ablation、运行耗时和停止原因单独记录在 [`AGENT-TRY.md`](AGENT-TRY.md)。
 
 最后更新结论：**当前 ML 冠军仍为 0.6 FM+BPR + 0.4 DeepFM+BCE，Validation Primary 0.604713；已知失败 feature 不再重复。**
+
+## P. 异构 ensemble：缓存预测后的离线搜索
+
+把训练结果保存成 validation prediction cache，再离线比较不同模型子集、分数校准
+和粗粒度权重。这样一次训练可以支持很多融合假设，也能检查“单模型不强但是否互补”。
+
+```bash
+python scripts/search_heterogeneous_ensemble.py --max-members 3
+```
+
+搜索约束是预先固定的：最多 3 个成员、z-score/rank/混合校准、少量权重网格；只读 validation cache 或已有 checkpoint 推理，不读取 test label、不重新训练。结果写入
+`runs/heterogeneous_ensemble_search/summary.json`，并缓存 DCNv2/轻量序列模型的 validation prediction，之后重复搜索无需再次构造序列。
+
+### 本次候选池与结果
+
+| 组件 | Validation Primary | 作用解释 |
+|---|---:|---|
+| FM+BPR | 0.603963 | 主 ranking 信号 |
+| DeepFM+BCE | 0.603862 | 非线性交互信号 |
+| Multi-task like | 0.604400 | like 辅助监督 |
+| Censored watch-time BCE | 0.603939 | watch-time 辅助监督 |
+| LambdaRank | 0.598493 | 与 FM/DeepFM 相关性较低的 ranking 视角 |
+| DCNv2 | 0.604164 | 交叉网络，单模型较强但与 DeepFM 高相关 |
+| Lightweight sequence | 0.603369 | 顺序信息候选；当前单模型较弱 |
+
+| 融合 | Primary | 相对稳健冠军 0.604713 |
+|---|---:|---:|
+| `multitask_like + LambdaRank + DCNv2`，z-score/rank，权重 `0.6/0.2/0.2` | 0.605263 | +0.000550 |
+| `fm_watchtime + LambdaRank + DCNv2`，z-score/rank，权重 `0.2/0.3/0.5` | **0.605309** | **+0.000596** |
+
+### 学到的东西与判断
+
+1. **低单模型分数不等于没有 ensemble 价值。** LambdaRank 单独只有 0.598493，但与 watch-time/DCNv2 的 within-user prediction correlation 约 `0.872–0.880`，明显低于 FM/DeepFM 家族的约 `0.946–0.997`；它提供了不同的排序视角，进入前三名候选。
+2. **真正有收益的是“不同信息源 + 缓存搜索”，不是继续堆同一 FM 变体。** 当前最好组合包含 watch-time 或 like 辅助、LambdaRank 和交叉网络，和现有 FM/DeepFM 预测并不完全相同。
+3. **仍不能宣布超过 0.605365。** `0.605309` 只比稳健冠军高 `0.000596`，但比已有单 split 峰值 `0.605365` 低 `0.000056`，且本轮尚未做 rolling/paired-seed；状态为 `RESEARCH_ONLY`，不替换最终冠军。
+4. **搜索本身也可能过拟合 validation。** 所以后续必须对搜索选出的一个组合预先固定配置，再做 rolling 和 paired seeds；不能继续在同一 split 上无限细扫。
+
+之后若新增训练模型，只需要保存其 `*_validation.npz`（字段 `users/labels/scores`），即可通过：
+
+```bash
+python scripts/search_heterogeneous_ensemble.py \
+  --cache bst=path/to/bst_validation.npz \
+  --max-members 3
+```
+
+接入候选池。这个接口把模型选择、融合网格和最终确认分开，避免把一次 validation 峰值误当成泛化结论。

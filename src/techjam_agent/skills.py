@@ -77,6 +77,8 @@ CONTROLLED_FEATURE_KEYS = {
     "author_positive_recency",
     "prior_video_count",
     "previous_author_same",
+    "prior_video_exposure",
+    "author_recency",
 }
 OTHER_FEATURE_KEYS = {
     "user_long_view_rate",
@@ -88,6 +90,13 @@ OTHER_FEATURE_KEYS = {
     "user_recent_3d_activity",
     "item_recent_3d_exposure",
     "global_context",
+    "video_tag",
+    "video_upload_type",
+    "user_active_degree",
+    "user_register_days_range",
+    "duration_semantic_bucket",
+    "video_music_type",
+    "video_tag_components",
 }
 MODEL_DIVERSITY_FAMILIES = {
     "heterogeneous_ensemble",

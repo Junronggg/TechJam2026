@@ -40,7 +40,16 @@ def branch_name(changes: dict[str, Any]) -> str:
         "author_positive_recency",
         "prior_video_count",
         "previous_author_same",
+        "prior_video_exposure",
+        "author_recency",
         "global_context",
+        "video_tag",
+        "video_upload_type",
+        "user_active_degree",
+        "user_register_days_range",
+        "duration_semantic_bucket",
+        "video_music_type",
+        "video_tag_components",
     }
     if feature_keys.intersection(changes):
         return "features"

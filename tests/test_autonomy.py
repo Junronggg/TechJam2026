@@ -74,8 +74,53 @@ class CandidatePlanningTests(unittest.TestCase):
         })
         payload = ranked[0].as_dict()
         for key in ("expected_gain", "evidence_strength", "novelty",
-                    "compute_cost", "redundancy", "score"):
+                    "compute_cost", "redundancy", "score", "action_type",
+                    "hard_blocked", "soft_stopped", "evidence_reasons"):
             self.assertIn(key, payload)
+        self.assertEqual(ranked[0].candidate.action_type, "TRY_MODEL")
+
+    def test_censored_watchtime_is_distinct_legal_research_family(self):
+        rows = rank_candidates(load_config(), [])
+        censored = next(
+            row for row in rows if row.candidate.family == "censored_watchtime"
+        )
+        self.assertEqual(censored.candidate.changes["auxiliary_signals"], "censored_watch")
+        self.assertEqual(censored.candidate.changes["training_objective"], "bce")
+        self.assertEqual(censored.candidate.changes["learning_rate"], 0.001)
+
+    def test_uncertain_submission_eligible_policy_boosts_without_confirming(self):
+        config = apply_changes(
+            load_config(), {"training_objective": "bpr", "learning_rate": 0.0003}
+        )
+        evidence = {
+            "family_policies": [{
+                "family": "global_context",
+                "policy": "gather_evidence",
+                "scientific_verdict": "UNCERTAIN",
+                "competition_status": "ELIGIBLE",
+                "confidence": 0.7,
+                "applies_to": {
+                    "task": "long_view",
+                    "feature_schema": "v3",
+                    "models": ["fm"],
+                    "training_objectives": ["bpr"],
+                    "features": {"global_context": True},
+                    "hyperparameters": {},
+                },
+            }]
+        }
+        selected = next(
+            row for row in rank_candidates(config, [], prior_evidence=evidence)
+            if row.candidate.family == "global_context"
+        )
+        control = next(
+            row for row in rank_candidates(config, [], memory_mode="no_memory")
+            if row.candidate.family == "global_context"
+        )
+        self.assertGreater(selected.score, control.score)
+        self.assertFalse(selected.direction_stopped)
+        self.assertEqual(selected.retrieved_pattern["scientific_verdict"], "UNCERTAIN")
+        self.assertEqual(selected.retrieved_pattern["competition_status"], "ELIGIBLE")
 
     def test_censored_watchtime_is_distinct_legal_research_family(self):
         rows = rank_candidates(load_config(), [])
@@ -137,12 +182,47 @@ class CandidatePlanningTests(unittest.TestCase):
             if row.candidate.family == "global_context"
         )
         self.assertTrue(global_context.direction_stopped)
+        self.assertFalse(global_context.hard_blocked)
+        self.assertTrue(global_context.soft_stopped)
         no_memory = next(
             row for row in rank_candidates(
                 load_config(), history, memory_mode="no_memory"
             ) if row.candidate.family == "global_context"
         )
-        self.assertFalse(no_memory.direction_stopped)
+        self.assertFalse(no_memory.hard_blocked)
+        self.assertEqual(no_memory.evidence_reasons, ("missing_leakage_evidence",))
+
+    def test_unseen_ensemble_calibration_variant_survives_family_noise(self):
+        base = load_config()
+        bpr = apply_changes(base, {
+            "training_objective": "bpr", "learning_rate": 0.0003,
+        })
+        ensemble = apply_changes(bpr, {
+            "model": "ensemble", "training_objective": "hybrid",
+            "ensemble_deepfm_weight": 0.4,
+        })
+        calibrated = apply_changes(ensemble, {
+            "ensemble_normalization": "fm_zscore_deepfm_rank",
+        })
+        history = [
+            {"iteration": 0, "config": base, "changes": {}},
+            {"iteration": 1, "config": bpr, "changes": {"training_objective": "bpr"}},
+            {"iteration": 2, "config": ensemble,
+             "changes": {"model": "ensemble", "ensemble_deepfm_weight": 0.4},
+             "candidate_selection": {"selected_family": "heterogeneous_ensemble"},
+             "delta_from_parent": 0.0001, "critique": {"verdict": "noise"},
+             "diagnostics": {}},
+            {"iteration": 3, "config": calibrated,
+             "changes": {"ensemble_normalization": "fm_zscore_deepfm_rank"},
+             "candidate_selection": {"selected_family": "heterogeneous_ensemble"},
+             "delta_from_parent": 0.0001, "critique": {"verdict": "noise"},
+             "diagnostics": {}},
+        ]
+        weight = next(
+            row for row in rank_candidates(calibrated, history)
+            if row.candidate.changes == {"ensemble_deepfm_weight": 0.65}
+        )
+        self.assertFalse(weight.direction_stopped)
 
 
 class AutonomousControlTests(unittest.TestCase):
@@ -302,7 +382,8 @@ class StructuredMemoryTests(unittest.TestCase):
             ) if row.candidate.family == "temporal_counts"
         )
         self.assertTrue(distilled.direction_stopped)
-        self.assertFalse(raw.direction_stopped)
+        self.assertFalse(raw.hard_blocked)
+        self.assertEqual(raw.evidence_reasons, ("missing_leakage_evidence",))
 
     def test_scoped_policy_only_stops_matching_model(self):
         evidence = {"family_policies": [{
@@ -328,7 +409,8 @@ class StructuredMemoryTests(unittest.TestCase):
                 ensemble, [], prior_evidence=evidence,
             ) if row.candidate.family == "temporal_counts"
         )
-        self.assertFalse(fm_temporal.direction_stopped)
+        self.assertFalse(fm_temporal.hard_blocked)
+        self.assertEqual(fm_temporal.evidence_reasons, ("missing_leakage_evidence",))
         self.assertTrue(ensemble_temporal.direction_stopped)
 
     def test_policy_expires_when_feature_schema_changes(self):
@@ -347,7 +429,8 @@ class StructuredMemoryTests(unittest.TestCase):
                 load_config(), [], prior_evidence=evidence,
             ) if row.candidate.family == "temporal_counts"
         )
-        self.assertFalse(temporal.direction_stopped)
+        self.assertFalse(temporal.hard_blocked)
+        self.assertEqual(temporal.evidence_reasons, ("missing_leakage_evidence",))
 
     def test_policy_only_applies_when_scoped_features_are_present(self):
         evidence = {"family_policies": [{
@@ -381,7 +464,8 @@ class StructuredMemoryTests(unittest.TestCase):
                 ensemble_with_user, [], prior_evidence=evidence,
             ) if row.candidate.changes == {"item_recent_3d_exposure": True}
         )
-        self.assertFalse(user_only.direction_stopped)
+        self.assertFalse(user_only.hard_blocked)
+        self.assertEqual(user_only.evidence_reasons, ("missing_leakage_evidence",))
         self.assertTrue(combined.direction_stopped)
 
     def test_generated_evidence_stops_exact_rejected_pairwise_multitask(self):

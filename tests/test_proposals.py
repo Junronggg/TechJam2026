@@ -15,6 +15,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from techjam_agent.config import FEATURE_SCHEMA_VERSION
 from techjam_agent.controller import Controller
 from techjam_agent.proposals import (
     CHANGE_RULE,
@@ -142,6 +143,10 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(prompt["history"][0]["critique"]["observation"], "Validation Primary=0.601500")
         self.assertEqual(prompt["history"][0]["decision"], "KEEP")
         self.assertIn("remaining", prompt)
+        self.assertIn("research_patterns", prompt)
+        self.assertIsInstance(prompt["research_patterns"], list)
+        import techjam_agent.proposals as proposals_mod
+        self.assertTrue(hasattr(proposals_mod, "distill_research_patterns"))
         self.assertIn("bpr", prompt["remaining"]["training_objectives"])
 
     def test_prompt_excludes_test_metrics(self) -> None:
@@ -488,6 +493,65 @@ class FallbackTests(unittest.TestCase):
             self.assertEqual(summary["llm_failures"], 1)
             self.assertEqual(summary["llm_fallbacks"][0]["iteration"], 1)
             self.assertEqual(summary["llm_fallbacks"][0]["provider_error"], "HTTP 503")
+
+    def test_llm_fallback_preserves_prior_evidence_stop_direction(self) -> None:
+        evidence = {
+            "family_policies": [{
+                "family": "ranking_objective",
+                "policy": "stop_direction",
+                "scientific_verdict": "REJECTED",
+                "confidence": 0.9,
+                "applies_to": {
+                    "task": "long_view",
+                    "feature_schema": FEATURE_SCHEMA_VERSION,
+                    "models": ["fm"],
+                    "training_objectives": ["bpr"],
+                },
+                "created_from": [{
+                    "source_id": "bpr_rolling_v1",
+                    "kind": "rolling_aggregate",
+                    "result": {
+                        "signal": "negative",
+                        "mean_delta": -0.0003,
+                        "wins": 1,
+                        "folds": 3,
+                        "robust": True,
+                    },
+                }],
+            }]
+        }
+
+        class FailingLlm:
+            last_attempts = 1
+            last_token_usage = {
+                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+            }
+            last_error = "HTTP 503"
+
+            def __init__(self, prior_evidence):
+                self.prior_evidence = prior_evidence
+
+            def propose(self, best, history):
+                raise RuntimeError("LLM proposal failed after 1 attempts: JSONDecodeError")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            controller = Controller(
+                FakeRunner(), FailingLlm(evidence), load_config(), load_project(),
+                base / "logs", base / "artifacts", base / "submissions",
+            )
+            with patch("sys.stdout", new=io.StringIO()):
+                summary = controller.run(max_iterations=2)
+            records = sorted((base / "logs").glob("iteration_*.json"))
+            self.assertEqual(len(records), 2)
+            second = json.loads(records[1].read_text(encoding="utf-8"))
+            self.assertEqual(second["source"], "deterministic")
+            self.assertNotEqual(
+                second["changes"],
+                {"training_objective": "bpr", "learning_rate": 0.0003},
+            )
+            self.assertNotEqual(second["changes"].get("training_objective"), "bpr")
+            self.assertEqual(summary["llm_fallbacks"][0]["iteration"], 1)
 
 
 if __name__ == "__main__":
