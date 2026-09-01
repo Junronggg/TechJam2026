@@ -1,0 +1,28 @@
+{
+  "started_at": "2026-08-31T12:43:46.585876+00:00",
+  "benchmark": "KuaiRand-Pure",
+  "limits": {
+    "max_iterations": 50,
+    "max_wall_clock_hours": 6,
+    "convergence_epsilon": 0.002,
+    "convergence_rounds": 3
+  },
+  "max_total_experiments": 5,
+  "planner_memory_mode": "distilled_patterns",
+  "researcher": "DeterministicResearcher",
+  "research_after_convergence": true,
+  "auto_confirm": false,
+  "skill_registry_version": "v1",
+  "available_skills": [
+    "analyze_prediction_diversity",
+    "build_feature",
+    "profile_candidate",
+    "read_research_memory",
+    "run_paired_seeds",
+    "run_placebo",
+    "run_rolling",
+    "train_model",
+    "train_with_auxiliary_loss",
+    "update_research_memory"
+  ]
+}

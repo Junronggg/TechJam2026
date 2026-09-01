@@ -22,6 +22,7 @@ REQUIRED_STARTER_FILES = (
 )
 REQUIRED_DATA_FILES = (
     "video_features_basic_pure.csv",
+    "user_features_pure.csv",
     "log_standard_4_08_to_4_21_pure.csv",
     "log_standard_4_22_to_5_08_pure.csv",
 )
@@ -45,8 +46,11 @@ def main() -> int:
     python_ok = sys.version_info >= (3, 9)
     result(python_ok, "Python 3.9+")
 
-    numpy_ok = importlib.util.find_spec("numpy") is not None
-    result(numpy_ok, "NumPy installed")
+    dependencies_ok = True
+    for package in ("numpy", "lightgbm", "sklearn", "torch"):
+        installed = importlib.util.find_spec(package) is not None
+        result(installed, f"{package} installed")
+        dependencies_ok &= installed
 
     starter_ok = True
     for name in REQUIRED_STARTER_FILES:
@@ -76,8 +80,8 @@ def main() -> int:
         result(exists, f"dataset file: {path}")
         data_ok &= exists
 
-    if python_ok and numpy_ok and starter_ok and data_ok:
-        print("\nReady to reproduce the official baseline.")
+    if python_ok and dependencies_ok and starter_ok and data_ok:
+        print("\nReady to reproduce the baseline and run the research agent.")
         return 0
 
     if not data_ok:

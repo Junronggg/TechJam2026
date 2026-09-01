@@ -1,5 +1,6 @@
 """KuaiRand-Pure 数据加载 + 官方划分 + 特征编码。只依赖标准库和 numpy。"""
 import csv, os, collections
+from datetime import datetime
 import numpy as np
 
 LABEL = 'long_view'
@@ -12,17 +13,41 @@ FIELDS = ['user_id', 'video_id', 'author_id', 'tab', 'dur_bucket']
 def load(data_dir):
     """读日志 + 视频侧特征，返回按划分切好的 dict。"""
     vid2author = {}
+    vid2tag = {}
+    vid2type = {}
+    vid2upload = {}
     with open(os.path.join(data_dir, 'video_features_basic_pure.csv')) as fh:
         for r in csv.DictReader(fh):
             vid2author[r['video_id']] = r['author_id']
+            vid2tag[r['video_id']] = r.get('tag') or 'UNK'
+            vid2type[r['video_id']] = r.get('video_type') or 'UNK'
+            try:
+                vid2upload[r['video_id']] = datetime.strptime(r.get('upload_dt', ''), '%Y-%m-%d').date()
+            except ValueError:
+                vid2upload[r['video_id']] = None
+
+    user2activity = {}
+    user_path = os.path.join(data_dir, 'user_features_pure.csv')
+    if os.path.isfile(user_path):
+        with open(user_path) as fh:
+            for r in csv.DictReader(fh):
+                user2activity[r['user_id']] = r.get('user_active_degree') or 'UNK'
 
     rows = []
     for f in ('log_standard_4_08_to_4_21_pure.csv', 'log_standard_4_22_to_5_08_pure.csv'):
         with open(os.path.join(data_dir, f)) as fh:
             for r in csv.DictReader(fh):
+                event_date = datetime.strptime(r['date'], '%Y%m%d').date()
+                upload_date = vid2upload.get(r['video_id'])
+                upload_age_days = -1 if upload_date is None else max(0, (event_date - upload_date).days)
                 rows.append((int(r['date']), r['user_id'], r['video_id'],
                              vid2author.get(r['video_id'], 'UNK'), r['tab'],
-                             float(r['duration_ms']), 1 if r[LABEL] != '0' else 0))
+                             float(r['duration_ms']), 1 if r[LABEL] != '0' else 0,
+                             vid2tag.get(r['video_id'], 'UNK'), int(r['time_ms']),
+                             max(0, min(23, int(r.get('hourmin') or 0) // 100)),
+                             event_date.weekday(), upload_age_days,
+                             vid2type.get(r['video_id'], 'UNK'),
+                             user2activity.get(r['user_id'], 'UNK')))
 
     out = {}
     for name, (lo, hi) in SPLITS.items():

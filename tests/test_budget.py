@@ -18,7 +18,6 @@ sys.path.insert(0, str(ROOT / "src"))
 from techjam_agent.config import ALLOWED_VALUES, apply_changes
 from techjam_agent.controller import Controller
 from techjam_agent.proposals import DeterministicResearcher, Proposal, empty_token_usage
-from techjam_agent.tree import ExperimentParent, branch_name, select_parent
 
 STOP_REASONS = {
     "max_iterations",
@@ -113,39 +112,17 @@ class SweepResearcher:
         raise StopIteration("fake sweep exhausted")
 
 
-class GlobalBestParentController(Controller):
-    """Pins expansion to the global-best node so convergence accounting is what is measured."""
-
-    def _select_parent(self):
-        return select_parent(self.history)
-
-
-class WeakParentController(Controller):
-    """Always expands the baseline, which stops being the global best after the first KEEP."""
-
-    def _select_parent(self):
-        for row in self.history:
-            if row["iteration"] == 0 and row.get("metrics"):
-                return ExperimentParent("baseline", 0, row["config"],
-                                        row["metrics"]["primary"], branch_name(row["changes"]))
-        return None
+def build(runner, researcher, tmp: Path, clock=None, project=None):
+    return Controller(runner, researcher, load_config(), project or load_project(),
+                      tmp / "logs", tmp / "artifacts", tmp / "submissions",
+                      **({} if clock is None else {"clock": clock}))
 
 
-def build(runner, researcher, tmp: Path, clock=None, project=None, controller_cls=Controller):
-    return controller_cls(runner, researcher, load_config(), project or load_project(),
-                          tmp / "logs", tmp / "artifacts", tmp / "submissions",
-                          **({} if clock is None else {"clock": clock}))
-
-
-def run_controller(runner, researcher, max_iterations=None, clock=None, project=None,
-                   controller_cls=Controller, research_after_convergence=False):
+def run_controller(runner, researcher, max_iterations=None, clock=None, project=None):
     with tempfile.TemporaryDirectory() as tmp:
-        controller = build(runner, researcher, Path(tmp), clock, project, controller_cls)
+        controller = build(runner, researcher, Path(tmp), clock, project)
         with patch("sys.stdout", new=io.StringIO()):
-            summary = controller.run(
-                max_iterations,
-                research_after_convergence=research_after_convergence,
-            )
+            summary = controller.run(max_iterations)
         return controller, summary
 
 
@@ -193,79 +170,18 @@ class ConvergenceTests(unittest.TestCase):
         self.assertEqual(controller.convergence_streak, 0)
         self.assertEqual(summary["convergence_streak"], 0)
 
-    def test_three_consecutive_small_deltas_stop_the_run(self) -> None:
+    def test_minimum_search_depth_prevents_premature_convergence(self) -> None:
         runner = ScriptedRunner([0.6015, 0.6016, 0.6016, 0.6016, 0.7000])
-        controller, summary = run_controller(runner, SweepResearcher(), max_iterations=10,
-                                             controller_cls=GlobalBestParentController)
+        controller, summary = run_controller(runner, SweepResearcher(), max_iterations=10)
         self.assertEqual(summary["stop_reason"], "converged")
         self.assertEqual(summary["convergence_streak"], 3)
-        self.assertEqual(runner.calls, 4)
-        self.assertEqual(summary["candidate_experiments"], 3)
-        self.assertTrue(all(row["expanded_global_best"] for row in controller.history[1:]))
-
-    def test_research_mode_records_competition_convergence_but_keeps_exploring(self) -> None:
-        runner = ScriptedRunner([0.6015, 0.6016, 0.6016, 0.6016, 0.6017])
-        controller, summary = run_controller(
-            runner,
-            SweepResearcher(),
-            max_iterations=5,
-            controller_cls=GlobalBestParentController,
-            research_after_convergence=True,
-        )
-        self.assertEqual(runner.calls, 5)
-        self.assertEqual(summary["stop_reason"], "max_iterations")
-        self.assertTrue(summary["competition_converged"])
-        self.assertEqual(summary["competition_converged_at"], 3)
-        self.assertTrue(summary["research_after_convergence"])
-        self.assertEqual(summary["competition_best_at_convergence"]["iteration"], 1)
-
-    def test_convergence_reached_on_final_iteration_is_still_recorded(self) -> None:
-        runner = ScriptedRunner([0.6015, 0.6016, 0.6016, 0.6016])
-        _, summary = run_controller(
-            runner,
-            SweepResearcher(),
-            max_iterations=4,
-            controller_cls=GlobalBestParentController,
-            research_after_convergence=True,
-        )
-        self.assertEqual(summary["stop_reason"], "max_iterations")
-        self.assertTrue(summary["competition_converged"])
-        self.assertEqual(summary["competition_converged_at"], 3)
-
-    def test_summary_writes_separate_submission_candidate_pool(self) -> None:
-        runner = ScriptedRunner([0.6015, 0.6018])
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            controller = build(runner, SweepResearcher(), base)
-            with patch("sys.stdout", new=io.StringIO()):
-                summary = controller.run(max_iterations=2)
-            candidates = json.loads(
-                Path(summary["submission_candidates"]).read_text(encoding="utf-8")
-            )
-        self.assertEqual(summary["submission_candidate_count"], 2)
-        self.assertEqual(candidates[0]["submission_status"], "ALLOW")
-        self.assertIn("scientific_status", candidates[0])
-        self.assertIn("competition_status", candidates[0])
-
-    def test_unscoped_rejected_experiment_is_not_a_submission_candidate(self) -> None:
-        runner = ScriptedRunner([0.6015, 0.5900])
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            controller = build(runner, SweepResearcher(), base)
-            with patch("sys.stdout", new=io.StringIO()):
-                summary = controller.run(max_iterations=2)
-            candidates = json.loads(
-                Path(summary["submission_candidates"]).read_text(encoding="utf-8")
-            )
-        self.assertEqual(summary["submission_candidate_count"], 1)
-        by_iteration = {row["iteration"]: row for row in candidates}
-        self.assertEqual(by_iteration[0]["submission_status"], "ALLOW")
-        self.assertEqual(by_iteration[1]["submission_status"], "EXCLUDE")
+        self.assertEqual(runner.calls, 8)
+        self.assertEqual(summary["candidate_experiments"], 7)
+        self.assertEqual(summary["best_primary"], 0.7000)
 
     def test_meaningful_delta_resets_the_streak(self) -> None:
         runner = ScriptedRunner([0.6015, 0.6016, 0.6016, 0.6500, 0.6501])
-        controller, summary = run_controller(runner, SweepResearcher(), max_iterations=5,
-                                             controller_cls=GlobalBestParentController)
+        controller, summary = run_controller(runner, SweepResearcher(), max_iterations=5)
         self.assertEqual(runner.calls, 5)
         self.assertEqual(summary["stop_reason"], "max_iterations")
         self.assertEqual(summary["convergence_streak"], 1)
@@ -299,89 +215,6 @@ class ConvergenceTests(unittest.TestCase):
         self.assertEqual(candidate["critique"]["verdict"], "noise")
         self.assertFalse(candidate["critique"]["meaningful_improvement"])
         self.assertEqual(controller.convergence_streak, 1)
-
-    def test_weak_parent_exploration_never_signals_convergence(self) -> None:
-        """Deliberate exploration of a losing branch is not evidence the leader has stalled."""
-        runner = ScriptedRunner([0.6015, 0.6300, 0.6100, 0.6101, 0.6102])
-        controller, summary = run_controller(runner, SweepResearcher(), max_iterations=5,
-                                             controller_cls=WeakParentController)
-        self.assertEqual(runner.calls, 5)
-        self.assertEqual(summary["stop_reason"], "max_iterations")
-        self.assertEqual(summary["convergence_streak"], 0)
-        explorations = controller.history[2:]
-        self.assertEqual([row["parent_id"] for row in explorations], ["baseline"] * 3)
-        self.assertFalse(any(row["expanded_global_best"] for row in explorations))
-        self.assertTrue(all(row["delta_from_best"] < 0 for row in explorations))
-
-    def test_global_best_parent_small_deltas_still_converge(self) -> None:
-        runner = ScriptedRunner([0.6015, 0.6016, 0.6017, 0.6018, 0.7000])
-        controller, summary = run_controller(runner, SweepResearcher(), max_iterations=10,
-                                             controller_cls=GlobalBestParentController)
-        self.assertEqual(summary["stop_reason"], "converged")
-        self.assertEqual(summary["convergence_streak"], 3)
-        self.assertEqual(runner.calls, 4)
-        self.assertEqual([row["parent_id"] for row in controller.history],
-                         [None, "baseline", "exp_001", "exp_002"])
-
-    def test_meaningful_improvement_from_global_best_resets_the_streak(self) -> None:
-        runner = ScriptedRunner([0.6015, 0.6016, 0.6017, 0.6500])
-        controller, summary = run_controller(runner, SweepResearcher(), max_iterations=4,
-                                             controller_cls=GlobalBestParentController)
-        self.assertEqual(summary["stop_reason"], "max_iterations")
-        self.assertEqual(summary["convergence_streak"], 0)
-        self.assertTrue(controller.history[3]["expanded_global_best"])
-        self.assertAlmostEqual(controller.history[3]["delta_from_best"], 0.0483, places=6)
-
-    def test_weak_parent_breakthrough_resets_the_streak(self) -> None:
-        """A new global best is progress even when an explored side branch produced it."""
-
-        class PlannedParentController(Controller):
-            """Expands the global best except at iteration 3, which explores the baseline."""
-
-            def __init__(self, *args, **kwargs) -> None:
-                super().__init__(*args, **kwargs)
-                self.streaks: list[int] = []
-
-            def _select_parent(self):
-                if len(self.history) == 3:
-                    row = self.history[0]
-                    return ExperimentParent("baseline", 0, row["config"],
-                                            row["metrics"]["primary"],
-                                            branch_name(row["changes"]))
-                return select_parent(self.history)
-
-            def _record(self, item, parent_id):
-                super()._record(item, parent_id)
-                self.streaks.append(self.convergence_streak)
-
-        runner = ScriptedRunner([0.6015, 0.6016, 0.6017, 0.6500, 0.6501])
-        controller, summary = run_controller(runner, SweepResearcher(), max_iterations=5,
-                                             controller_cls=PlannedParentController)
-        breakthrough = controller.history[3]
-        self.assertEqual(breakthrough["parent_id"], "baseline")
-        self.assertEqual(breakthrough["global_best_node_id_before"], "exp_002")
-        self.assertFalse(breakthrough["expanded_global_best"])
-        self.assertEqual(breakthrough["decision"], "KEEP")
-        self.assertEqual(controller.streaks, [0, 1, 2, 0, 1])
-        self.assertEqual(summary["stop_reason"], "max_iterations")
-        self.assertEqual(summary["convergence_streak"], 1)
-        self.assertEqual(runner.calls, 5)
-
-    def test_failed_or_non_finite_exploration_leaves_the_streak_untouched(self) -> None:
-        runner = ScriptedRunner([
-            0.6015,
-            0.6016,
-            RuntimeError("experiment exceeded 900s timeout"),
-            float("nan"),
-            None,
-        ])
-        controller, summary = run_controller(runner, SweepResearcher(), max_iterations=5,
-                                             controller_cls=WeakParentController)
-        self.assertEqual(runner.calls, 5)
-        self.assertEqual(summary["stop_reason"], "max_iterations")
-        self.assertEqual(summary["convergence_streak"], 1)
-        self.assertEqual([row["critique"]["verdict"] for row in controller.history[2:]],
-                         ["failed", "failed", "failed"])
 
     def test_test_metrics_never_affect_stopping(self) -> None:
         runner = ScriptedRunner([0.6015, 0.6016, 0.6016, 0.6016])
@@ -422,6 +255,9 @@ class WallClockTests(unittest.TestCase):
     def test_insufficient_remaining_time_stops_before_the_runner(self) -> None:
         clock = FakeClock()
         project = load_project()
+        project["research_search"]["minimum_reserve_seconds"] = (
+            project["experiment_timeout_seconds"]
+        )
         runner = ScriptedRunner([0.6015, 0.6100], clock=clock, cost=21_000.0)
         controller, summary = run_controller(runner, SweepResearcher(), max_iterations=10,
                                              clock=clock, project=project)

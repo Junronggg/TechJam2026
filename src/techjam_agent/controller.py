@@ -4,25 +4,28 @@ import json
 import math
 import shutil
 import time
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from .config import apply_changes, validate_config
+from .autonomous_branch import materialize_code_branch
 from .critic import review
-from .evidence_escalator import ConfirmationAction, EvidenceEscalator
 from .interventions import InterventionLogger
-from .memory import build_structured_research_memory, is_duplicate_config
-from .proposals import DeterministicResearcher, Proposal
-from .research_diagnostics import placebo_verdict
-from .skills import SKILL_REGISTRY_VERSION, default_skill_registry
-from .sequence_features import SEQUENCE_FEATURE_DIMS
+from .memory import is_duplicate_config
+from .proposals import (
+    DeterministicResearcher,
+    Proposal,
+    legal_candidate_catalog,
+    standardize_proposal,
+)
+from .research import build_research_context
 from .tree import (
     ExperimentParent,
     ExperimentTree,
     TreePolicyConfig,
     TreeSearchPolicy,
-    node_id_for,
 )
 
 
@@ -57,16 +60,37 @@ def _as_float(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _validation_metrics_only(metrics: Any) -> dict[str, float] | None:
+    if not isinstance(metrics, dict):
+        return None
+    cleaned: dict[str, float] = {}
+    for key in ("GAUC", "nDCG@5", "primary"):
+        value = _as_float(metrics.get(key))
+        if value is not None:
+            cleaned[key] = value
+    return cleaned or None
+
+
 class Controller:
     def __init__(self, runner, researcher, initial_config: dict[str, Any], project: dict[str, Any],
                  run_dir: Path, artifacts_dir: Path, submissions_dir: Path,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 prior_history: list[dict[str, Any]] | None = None,
+                 shared_incumbent: dict[str, Any] | None = None,
+                 initial_checkpoint: Path | None = None,
+                 initial_metrics: dict[str, Any] | None = None) -> None:
         validate_config(initial_config)
         self.runner, self.researcher = runner, researcher
+        # Planner autonomy expands the legal candidate catalog; it does not
+        # bypass the existing model, setup, validation, or safety boundaries.
+        self.autonomous_mode = bool(getattr(researcher, "autonomous_mode", False))
         self.best_config = initial_config
         self.project = project
         self.run_dir, self.artifacts_dir, self.submissions_dir = run_dir, artifacts_dir, submissions_dir
         self.history: list[dict[str, Any]] = []
+        self.prior_history = [
+            item for item in (prior_history or []) if isinstance(item, dict)
+        ]
         self.best_score = float("-inf")
         self.best_checkpoint: Path | None = None
         self.best_iteration: int | None = None
@@ -80,104 +104,147 @@ class Controller:
                                 "total_tokens": 0}
         self.llm_requests = 0
         self.llm_failures = 0
-        self.llm_fallbacks: list[dict[str, Any]] = []
-        self.competition_converged_at: int | None = None
-        self.competition_best_at_convergence: dict[str, Any] | None = None
-        self.evidence_escalator = EvidenceEscalator.from_project(project)
-        self.skill_registry = default_skill_registry()
-        self.auto_confirm = False
-        self._confirmation_queue: list[ConfirmationAction] = []
-        self.confirmations: list[dict[str, Any]] = []
+        self.llm_http_requests = 0
+        self.llm_http_failures = 0
+        self.llm_proposal_failures = 0
+        self.llm_fallbacks = 0
+        self.llm_error_categories: dict[str, int] = {}
+        self._last_llm_call_ids: list[str] = []
         self._research_context: dict[str, Any] = {}
-        self._pending_candidate_selection: dict[str, Any] | None = None
-        self._pending_diagnostic: dict[str, Any] | None = None
-        self._diagnostic_queue: list[tuple[dict[str, Any], Proposal, ExperimentParent, dict[str, Any]]] = []
-        self._placebo_groups: dict[str, dict[str, Any]] = {}
         self.interventions = InterventionLogger(self.run_dir / "manual_interventions.jsonl")
+        self.initial_checkpoint = initial_checkpoint
+        self.initial_metrics = _validation_metrics_only(initial_metrics)
+        incumbent_metrics = (
+            shared_incumbent.get("validation_metrics")
+            if isinstance(shared_incumbent, dict) else None
+        )
+        self.shared_best_score = _as_float(
+            incumbent_metrics.get("primary") if isinstance(incumbent_metrics, dict) else None
+        )
+        if self.shared_best_score is None:
+            self.shared_best_score = float("-inf")
+        existing_score = self._existing_shared_score()
+        self.shared_best_ready = existing_score is not None and (
+            existing_score + 1e-12 >= self.shared_best_score
+        )
+        if existing_score is not None:
+            self.shared_best_score = max(self.shared_best_score, existing_score)
+
+    def _planning_history(self) -> list[dict[str, Any]]:
+        return [*self.prior_history, *self.history]
+
+    def _existing_shared_score(self) -> float | None:
+        path = self.artifacts_dir / "best_metrics.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        score = _as_float(payload.get("primary") if isinstance(payload, dict) else None)
+        required = (
+            self.artifacts_dir / "best_config.json",
+            self.artifacts_dir / "best_model.npz",
+        )
+        return score if score is not None and all(path.is_file() for path in required) else None
+
+    def _persist_run_best(
+        self, config: dict[str, Any], metrics: dict[str, Any], checkpoint: Path
+    ) -> None:
+        best_dir = self.run_dir / "best"
+        _write_json(best_dir / "config.json", config)
+        _write_json(best_dir / "metrics.json", metrics)
+        shutil.copy2(checkpoint, best_dir / "model.npz")
+        text_checkpoint = checkpoint.with_suffix(".txt")
+        if text_checkpoint.is_file():
+            shutil.copy2(text_checkpoint, best_dir / "model.txt")
+
+    def _maybe_promote_shared_best(
+        self,
+        config: dict[str, Any],
+        metrics: dict[str, Any],
+        checkpoint: Path,
+        iteration: int,
+    ) -> bool:
+        """Promote only if this run meets or beats the durable validation incumbent."""
+        score = float(metrics["primary"])
+        improves = score > self.shared_best_score + 1e-12
+        restores_missing_incumbent = (
+            not self.shared_best_ready and score + 1e-12 >= self.shared_best_score
+        )
+        if not improves and not restores_missing_incumbent:
+            return False
+        _write_json(self.artifacts_dir / "best_config.json", config)
+        _write_json(self.artifacts_dir / "best_metrics.json", metrics)
+        shutil.copy2(checkpoint, self.artifacts_dir / "best_model.npz")
+        text_checkpoint = checkpoint.with_suffix(".txt")
+        if text_checkpoint.is_file():
+            shutil.copy2(text_checkpoint, self.artifacts_dir / "best_model.txt")
+        _write_json(self.artifacts_dir / "best_manifest.json", {
+            "validation_primary": score,
+            "source_run": self.run_dir.name,
+            "source_iteration": iteration,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        self.shared_best_score = score
+        self.shared_best_ready = True
+        return True
 
     def _record(self, item: dict[str, Any], parent_id: str | None) -> None:
-        self.skill_registry.require("update_research_memory")
         self.history.append(item)
         self.tree.add(item["iteration"], parent_id, item)
         _write_json(self.run_dir / f"iteration_{item['iteration']:03d}.json", item)
         _write_json(self.run_dir / "tree_snapshot.json", self.tree.snapshot())
-        _write_json(
-            self.run_dir / "research_memory.json",
-            build_structured_research_memory(self.history),
-        )
         with (self.run_dir / "experiment_history.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(item, ensure_ascii=False, default=_json_default) + "\n")
 
     def record_intervention(self, reason: str, action: str, avoidable: bool) -> dict[str, Any]:
-        """Record a human action explicitly; normal launch configuration is not intervention."""
+        """Record an explicit human action without treating normal launch options as intervention."""
         return self.interventions.record(reason, action, avoidable)
 
-    @staticmethod
-    def _is_control(config: dict[str, Any]) -> bool:
-        return config["hyperparameters"].get("feature_control", "real") != "real"
-
-    def _diagnose(self, checkpoint: Path, champion: Path | None) -> dict[str, Any] | None:
-        self.skill_registry.require("profile_candidate")
-        self.skill_registry.require("analyze_prediction_diversity")
-        diagnose = getattr(self.runner, "diagnose", None)
-        if not callable(diagnose):
-            return None
-        try:
-            return diagnose(checkpoint, champion)
-        except Exception as exc:
-            return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
-
-    def _research_decision(
-        self,
-        score: float,
-        parent_primary: float | None,
-        diagnostics: dict[str, Any] | None,
-        *,
-        is_control: bool,
-    ) -> str:
-        if is_control:
-            return "CONTROL"
-        if parent_primary is None:
-            return "REFERENCE"
-        delta = score - parent_primary
-        policy = self.project.get("autonomy", {})
-        noise = float(policy.get("noise_threshold", 0.0002))
-        slice_threshold = float(policy.get("strong_slice_gain", 0.002))
-        strongest_slice = 0.0
-        diverse = False
-        if isinstance(diagnostics, dict):
-            strongest_slice = float(diagnostics.get("strongest_slice_gain", 0.0) or 0.0)
-            diverse = bool(diagnostics.get("diversity_advantage"))
-        if abs(delta) < noise and strongest_slice < slice_threshold and not diverse:
-            return "STOP_DIRECTION"
-        if delta > 0:
-            return "KEEP_CANDIDATE"
-        if strongest_slice >= slice_threshold and diverse:
-            return "ENSEMBLE_ONLY"
-        return "REJECT"
-
     def _execute(self, iteration: int, config: dict[str, Any], proposal: Proposal,
-                 parent: ExperimentParent | None = None) -> None:
+                 parent: ExperimentParent | None = None, *,
+                 cached_checkpoint: Path | None = None,
+                 cached_metrics: dict[str, Any] | None = None) -> None:
         """Run one experiment against an explicit parent; global best stays a separate concept."""
         checkpoint = self.run_dir / "checkpoints" / f"iteration_{iteration:03d}.npz"
         global_best_before = None if self.best_score == float("-inf") else self.best_score
-        global_best_node_id = node_id_for(self.best_iteration)
         parent_id = None if parent is None else parent.node_id
         parent_primary = None if parent is None else parent.primary
-        # Node identity, not score equality: two nodes can share a Primary value.
-        expanded_global_best = parent_id is not None and parent_id == global_best_node_id
+        parent_metrics = self._parent_metrics(parent)
         item = {"iteration": iteration, "timestamp": datetime.now(timezone.utc).isoformat(),
                 **proposal.as_dict(),
+                "autonomous_mode": self.autonomous_mode,
                 "parent_id": parent_id,
                 "parent_primary": parent_primary,
+                "parent_metrics": parent_metrics,
                 # Pre-P2.6 name for parent_primary. Kept so old readers stay valid.
                 "parent_score": parent_primary,
                 "global_best_primary_before": global_best_before,
-                "global_best_node_id_before": global_best_node_id,
-                "expanded_global_best": expanded_global_best,
                 "config": config, "manual_intervention": False}
-        item["candidate_selection"] = self._pending_candidate_selection
-        item["diagnostic_group"] = self._pending_diagnostic
+        research = self._research_context.get("research")
+        if isinstance(research, dict):
+            ranked = research.get("ranked_candidates")
+            ranked = ranked if isinstance(ranked, list) else []
+            selected = next(
+                (row for row in ranked if row.get("candidate_id") == proposal.candidate_id),
+                {},
+            )
+            item.update({
+                "research_phase": research.get("phase"),
+                "expansion_mode": research.get("expansion_mode"),
+                "reference_ids": research.get("reference_ids", []),
+                "strategy_id": selected.get("strategy_id"),
+                "evolution_recipe": selected.get("evolution_recipe"),
+                "candidate_rank": (
+                    next((index for index, row in enumerate(ranked, start=1)
+                          if row.get("candidate_id") == proposal.candidate_id), None)
+                ),
+                "predicted_utility": selected.get("predicted_utility"),
+                "estimated_runtime_seconds": selected.get("estimated_runtime_seconds"),
+                "diagnosis_codes": [
+                    row.get("code") for row in research.get("diagnoses", [])
+                    if isinstance(row, dict) and row.get("code")
+                ],
+            })
         if (self._pending_parent_selection is not None and
                 self._pending_parent_selection.get("parent_id") == parent_id):
             item["parent_selection"] = self._pending_parent_selection
@@ -186,416 +253,144 @@ class Controller:
         changes = "baseline" if not proposal.changes else ", ".join(
             f"{key}={value}" for key, value in proposal.changes.items())
         print(f"\nIteration {iteration}: {changes}", flush=True)
+        print(f"  Researcher: {proposal.source}", flush=True)
+        if parent is not None:
+            parent_features = [
+                key for key, enabled in parent.config.get("features", {}).items() if enabled
+            ]
+            print(
+                f"  Parent: {parent.node_id} | model={parent.config['model']} "
+                f"objective={parent.config['training_objective']} "
+                f"primary={parent.primary:.6f} | features={parent_features or ['base_only']}",
+                flush=True,
+            )
         print(f"  Hypothesis: {proposal.hypothesis}", flush=True)
+        if proposal.proposal_type == "code_branch" and proposal.code_branch:
+            print(
+                f"  Generated code branch: {proposal.code_branch.get('branch_name', 'unnamed')} "
+                f"({len(str(proposal.code_branch.get('source', ''))):,} chars; static gate passed)",
+                flush=True,
+            )
+        execution_started = self.clock()
         try:
-            metrics = self.runner.run(config, checkpoint)
-            score = float(metrics["primary"])
-            is_control = self._is_control(config)
-            diagnostics = self._diagnose(
-                checkpoint,
-                None if is_control else self.best_checkpoint,
-            )
-            decision = (
-                "CONTROL" if is_control
-                else "KEEP" if score > self.best_score else "REJECT"
-            )
+            if cached_checkpoint is not None and cached_metrics is not None:
+                checkpoint.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(cached_checkpoint, checkpoint)
+                cached_text = cached_checkpoint.with_suffix(".txt")
+                if cached_text.is_file():
+                    shutil.copy2(cached_text, checkpoint.with_suffix(".txt"))
+                metrics = dict(cached_metrics)
+                item["cache_hit"] = True
+                item["cache_source"] = str(cached_checkpoint)
+                print("  Reusing exact validated checkpoint; no retraining.", flush=True)
+            else:
+                metrics = self.runner.run(config, checkpoint)
+                item["cache_hit"] = False
+            item["execution_seconds"] = max(0.0, self.clock() - execution_started)
+            slice_path = checkpoint.with_suffix(".slices.json")
+            if slice_path.is_file():
+                try:
+                    slice_report = json.loads(slice_path.read_text(encoding="utf-8"))
+                    item["error_slices"] = {
+                        "structural": slice_report.get("structural", {}),
+                        "worst_slices": list(slice_report.get("worst_slices") or [])[:5],
+                    }
+                except (OSError, json.JSONDecodeError):
+                    item["error_slices"] = None
+            score = metrics["primary"]
+            decision = "KEEP" if score > self.best_score else "REJECT"
             item.update({"status": "success", "metrics": metrics,
                          "delta_from_parent":
                              None if parent_primary is None else score - parent_primary,
                          "delta_from_best":
                              None if global_best_before is None else score - global_best_before,
-                         "decision": decision, "error": None,
-                         "diagnostics": diagnostics})
-            item["research_decision"] = self._research_decision(
-                score, parent_primary, diagnostics, is_control=is_control
+                         "delta_from_incumbent":
+                             None if global_best_before is None else score - global_best_before,
+                         "delta_from_official_baseline": score - float(
+                             self.project["baseline"]["validation"]["primary"]
+                         ),
+                         "decision": decision, "error": None})
+            # Search reward is always measured against the global incumbent.
+            # A branch-local improvement is useful negative/neutral evidence,
+            # but it is never a success and must not attract more budget.
+            reward_epsilon = float(self.project["run_limits"]["convergence_epsilon"])
+            genuine_gain = (
+                decision == "KEEP" and iteration > 0
+                and global_best_before is not None
+                and score - global_best_before > reward_epsilon
             )
+            if genuine_gain:
+                item.update({"search_outcome": "global_best", "search_reward": 2})
+            else:
+                item.update({"search_outcome": "valid_nonimproving", "search_reward": 0})
             item["critique"] = review(
                 metrics, parent_primary,
                 self.project["run_limits"]["convergence_epsilon"], "success",
                 history=self.history, changes=proposal.changes,
+                parent_metrics=parent_metrics,
             )
-            if iteration > 0 and not is_control:
-                self._update_convergence_streak(
-                    score, global_best_before, expanded_global_best=expanded_global_best)
+            item["metric_deltas"] = item["critique"].get("metric_deltas", {})
+            if iteration > 0:
+                self._update_convergence_streak(score, global_best_before)
             if decision == "KEEP":
                 self.best_score, self.best_config, self.best_checkpoint = score, config, checkpoint
                 self.best_iteration = iteration
-                _write_json(self.artifacts_dir / "best_config.json", config)
-                _write_json(self.artifacts_dir / "best_metrics.json", metrics)
-                shutil.copy2(checkpoint, self.artifacts_dir / "best_model.npz")
-            print(
-                f"  Result: primary={score:.6f} | {decision}"
-                f" | research={item['research_decision']}",
-                flush=True,
-            )
+                self._persist_run_best(config, metrics, checkpoint)
+                item["shared_best_promoted"] = self._maybe_promote_shared_best(
+                    config, metrics, checkpoint, iteration
+                )
+            else:
+                item["shared_best_promoted"] = False
+            print(f"  Result: primary={score:.6f} | {decision}", flush=True)
         except Exception as exc:
+            item["execution_seconds"] = max(0.0, self.clock() - execution_started)
             item.update({"status": "error", "metrics": None,
                          "delta_from_parent": None, "delta_from_best": None,
-                         "decision": "REJECT", "error": {"type": type(exc).__name__, "message": str(exc)}})
-            item["research_decision"] = "REJECT"
-            item["diagnostics"] = None
+                          "decision": "REJECT", "error": {"type": type(exc).__name__, "message": str(exc)}})
+            item.update({"search_outcome": "execution_failure", "search_reward": -1})
             item["critique"] = review(
                 None, parent_primary,
                 self.project["run_limits"]["convergence_epsilon"],
                 "error", item["error"],
                 history=self.history, changes=proposal.changes,
+                parent_metrics=parent_metrics,
             )
+            item["metric_deltas"] = item["critique"].get("metric_deltas", {})
             print(f"  Error: {type(exc).__name__}: {exc} | REJECT", flush=True)
         self._record(item, parent_id)
-        if item["status"] == "success":
-            if self._is_control(config):
-                self._record_placebo_control(item)
-            else:
-                self._maybe_schedule_placebos(item, checkpoint)
-                diagnostics = item.get("diagnostics")
-                waiting_for_placebo = bool(
-                    isinstance(diagnostics, dict)
-                    and diagnostics.get("placebo_status") == "scheduled"
-                )
-                if not waiting_for_placebo:
-                    self._maybe_schedule_confirmation(
-                        item, None if parent is None else parent.config
-                    )
         self._pending_parent_selection = None
-        self._pending_candidate_selection = None
-        self._pending_diagnostic = None
 
-    def _maybe_schedule_placebos(self, item: dict[str, Any], checkpoint: Path) -> None:
-        self.skill_registry.require("run_placebo")
-        policy = self.project.get("autonomy", {})
-        if not bool(policy.get("automatic_placebo", True)):
-            return
-        feature = next(
-            (key for key in SEQUENCE_FEATURE_DIMS if item.get("changes", {}).get(key) is True),
-            None,
-        )
-        delta = _as_float(item.get("delta_from_parent"))
-        trigger = float(policy.get("placebo_trigger_delta", 0.002))
-        if feature is None or delta is None or not (0.0 < delta <= trigger):
-            return
-        group_id = f"placebo_{item['iteration']:03d}_{feature}"
-        previous_node = item.get("global_best_node_id_before")
-        previous_item = next(
-            (row for row in self.history
-             if node_id_for(row.get("iteration")) == previous_node),
-            None,
-        )
-        group = {
-            "group_id": group_id,
-            "feature": feature,
-            "real_iteration": item["iteration"],
-            "real_primary": float(item["metrics"]["primary"]),
-            "controls": {},
-            "previous_best": {
-                "score": item.get("global_best_primary_before"),
-                "node_id": previous_node,
-                "iteration": None if previous_item is None else previous_item.get("iteration"),
-                "config": None if previous_item is None else previous_item.get("config"),
-                "metrics": None if previous_item is None else previous_item.get("metrics"),
-            },
-            "real_checkpoint": str(checkpoint),
-        }
-        self._placebo_groups[group_id] = group
-        if not isinstance(item.get("diagnostics"), dict):
-            item["diagnostics"] = {}
-        item["diagnostics"]["placebo_status"] = "scheduled"
-        item["diagnostics"]["placebo_group_id"] = group_id
-        item["diagnostics"]["attribution_reason"] = (
-            "positive categorical feature gain requires matched structural controls"
-        )
-        parent = ExperimentParent(
-            node_id_for(item["iteration"]), item["iteration"], item["config"],
-            float(item["metrics"]["primary"]), "features",
-        )
-        for control in ("constant", "shuffled", "random_same_cardinality"):
-            controlled = apply_changes(item["config"], {"feature_control": control})
-            proposal = Proposal(
-                f"Run the matched {control} placebo for {feature}.",
-                "Attribution requires the real categorical feature to beat structural controls.",
-                {"feature_control": control}, "system-control",
-            )
-            metadata = {"group_id": group_id, "feature": feature, "control": control}
-            self._diagnostic_queue.append((controlled, proposal, parent, metadata))
-        _write_json(self.run_dir / f"iteration_{item['iteration']:03d}.json", item)
-        _write_json(self.run_dir / "research_memory.json", build_structured_research_memory(self.history))
+    def _parent_metrics(self, parent: ExperimentParent | None) -> dict[str, float] | None:
+        if parent is None:
+            return None
+        for item in reversed(self.history):
+            if item.get("iteration") == parent.iteration:
+                return _validation_metrics_only(item.get("metrics"))
+        return None
 
-    def _maybe_schedule_confirmation(
-        self,
-        item: dict[str, Any],
-        reference_config: dict[str, Any] | None,
-    ) -> None:
-        if not self.auto_confirm:
-            return
-        decision = self.evidence_escalator.plan_discovery(item, reference_config)
-        if not isinstance(item.get("diagnostics"), dict):
-            item["diagnostics"] = {}
-        item["diagnostics"]["evidence_escalation"] = decision.as_dict()
-        action = decision.next_action
-        if action is not None:
-            known = {
-                queued.action_id for queued in self._confirmation_queue
-            } | {
-                str(row.get("action", {}).get("action_id"))
-                for row in self.confirmations
-            }
-            if action.action_id not in known:
-                self._confirmation_queue.append(action)
-        _write_json(self.run_dir / f"iteration_{item['iteration']:03d}.json", item)
-        _write_json(
-            self.run_dir / "research_memory.json",
-            build_structured_research_memory(self.history),
-        )
-
-    def _execute_confirmation(
-        self,
-        action_iteration: int,
-        action: ConfirmationAction,
-    ) -> None:
-        confirmation_skill = {
-            "rolling": "run_rolling",
-            "paired_seeds": "run_paired_seeds",
-        }.get(action.kind)
-        if confirmation_skill is None:
-            raise ValueError(f"unsupported confirmation kind: {action.kind}")
-        self.skill_registry.require(confirmation_skill)
-        output_dir = self.run_dir / "confirmations" / action.action_id
-        record: dict[str, Any] = {
-            "action_iteration": action_iteration,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "action_type": "confirmation",
-            "action": action.as_dict(),
-            "manual_intervention": False,
-        }
-        print(
-            f"\nAction {action_iteration}: confirm={action.kind} "
-            f"target=iteration_{action.target_iteration:03d}",
-            flush=True,
-        )
-        target = next(
-            (row for row in self.history
-             if row.get("iteration") == action.target_iteration),
-            None,
-        )
-        try:
-            confirm = getattr(self.runner, "confirm", None)
-            if not callable(confirm):
-                raise RuntimeError("runner does not implement confirmation actions")
-            result = confirm(action, output_dir)
-            if result.get("test_labels_used") is not False:
-                raise ValueError("confirmation result must explicitly exclude test labels")
-            decision = self.evidence_escalator.evaluate(action, result)
-            record.update({
-                "status": "success",
-                "result": result,
-                "decision": decision.as_dict(),
-                "error": None,
-            })
-            if decision.next_action is not None:
-                self._confirmation_queue.append(decision.next_action)
-            if isinstance(target, dict):
-                if not isinstance(target.get("diagnostics"), dict):
-                    target["diagnostics"] = {}
-                confirmations = target["diagnostics"].setdefault("confirmations", [])
-                confirmations.append({
-                    "action_id": action.action_id,
-                    "kind": action.kind,
-                    "result": result,
-                    "decision": decision.as_dict(),
-                })
-                target["diagnostics"]["scientific_status"] = decision.scientific_status
-                target["diagnostics"]["competition_status"] = decision.competition_status
-                target["diagnostics"]["confirmation_status"] = (
-                    "scheduled" if decision.next_action is not None else "complete"
-                )
-                if decision.scientific_status == "REJECTED":
-                    target["research_decision"] = "STOP_DIRECTION"
-                elif decision.scientific_status in {"VALIDATED", "UNCERTAIN"}:
-                    target["research_decision"] = "KEEP_CANDIDATE"
-                _write_json(
-                    self.run_dir / f"iteration_{target['iteration']:03d}.json",
-                    target,
-                )
-            print(
-                f"  Confirmation: scientific={decision.scientific_status} "
-                f"competition={decision.competition_status}",
-                flush=True,
-            )
-        except Exception as exc:
-            record.update({
-                "status": "error",
-                "result": None,
-                "decision": None,
-                "error": {"type": type(exc).__name__, "message": str(exc)},
-            })
-            if isinstance(target, dict):
-                if not isinstance(target.get("diagnostics"), dict):
-                    target["diagnostics"] = {}
-                target["diagnostics"]["confirmation_status"] = "failed"
-            print(f"  Confirmation error: {type(exc).__name__}: {exc}", flush=True)
-        self.confirmations.append(record)
-        _write_json(
-            self.run_dir / f"confirmation_{action_iteration:03d}.json", record
-        )
-        with (self.run_dir / "confirmation_history.jsonl").open(
-            "a", encoding="utf-8"
-        ) as handle:
-            handle.write(json.dumps(record, ensure_ascii=False, default=_json_default) + "\n")
-        _write_json(
-            self.run_dir / "research_memory.json",
-            build_structured_research_memory(self.history),
-        )
-
-    def _record_placebo_control(self, item: dict[str, Any]) -> None:
-        metadata = item.get("diagnostic_group")
-        if not isinstance(metadata, dict):
-            return
-        group = self._placebo_groups.get(str(metadata.get("group_id")))
-        if group is None:
-            return
-        group["controls"][str(metadata.get("control"))] = float(item["metrics"]["primary"])
-        if len(group["controls"]) < 3:
-            return
-        verdict = placebo_verdict(group["real_primary"], group["controls"])
-        group["verdict"] = verdict
-        real_item = next(
-            row for row in self.history if row.get("iteration") == group["real_iteration"]
-        )
-        if not isinstance(real_item.get("diagnostics"), dict):
-            real_item["diagnostics"] = {}
-        real_item["diagnostics"]["placebo_status"] = "complete"
-        real_item["diagnostics"]["placebo_verdict"] = verdict["verdict"]
-        real_item["diagnostics"]["placebo"] = verdict
-        if verdict["verdict"] == "REINTERPRET":
-            real_item["research_decision"] = "REINTERPRET"
-            real_item["decision"] = "REINTERPRET"
-            if self.best_iteration == group["real_iteration"]:
-                previous = group["previous_best"]
-                previous_iteration = previous.get("iteration")
-                previous_config = previous.get("config")
-                previous_metrics = previous.get("metrics")
-                if (isinstance(previous_iteration, int)
-                        and isinstance(previous_config, dict)
-                        and isinstance(previous_metrics, dict)):
-                    previous_checkpoint = (
-                        self.run_dir / "checkpoints" /
-                        f"iteration_{previous_iteration:03d}.npz"
-                    )
-                    self.best_iteration = previous_iteration
-                    self.best_config = previous_config
-                    self.best_score = float(previous_metrics["primary"])
-                    self.best_checkpoint = previous_checkpoint
-                    _write_json(self.artifacts_dir / "best_config.json", previous_config)
-                    _write_json(self.artifacts_dir / "best_metrics.json", previous_metrics)
-                    shutil.copy2(previous_checkpoint, self.artifacts_dir / "best_model.npz")
-            for node in self.tree.nodes:
-                if node.get("node_id") == node_id_for(group["real_iteration"]):
-                    node["decision"] = "REINTERPRET"
-                    break
-            _write_json(self.run_dir / "tree_snapshot.json", self.tree.snapshot())
-        _write_json(self.run_dir / f"placebo_{group['real_iteration']:03d}.json", group)
-        _write_json(
-            self.run_dir / f"iteration_{group['real_iteration']:03d}.json",
-            real_item,
-        )
-        with (self.run_dir / "diagnostic_events.jsonl").open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(group, ensure_ascii=False, default=_json_default) + "\n")
-        _write_json(self.run_dir / "research_memory.json", build_structured_research_memory(self.history))
-        if verdict["verdict"] == "KEEP_CANDIDATE":
-            previous_config = group["previous_best"].get("config")
-            self._maybe_schedule_confirmation(real_item, previous_config)
-
-    def _update_convergence_streak(self, score: Any, global_best_before: Any, *,
-                                   expanded_global_best: bool) -> None:
-        """Track how long the search has gone without moving the global best forward.
-
-        A real improvement clears the streak whichever parent produced it, because a new
-        global best is progress even when it came from an explored side branch. Only a
-        flat attempt against the leading node counts as evidence of a stall; expanding a
-        weaker branch is a deliberate search decision, and unusable results say nothing,
-        so both leave the streak alone.
-        """
-        candidate, best = _as_float(score), _as_float(global_best_before)
-        if candidate is None or best is None:
+    def _update_convergence_streak(self, score: Any, parent_score: Any) -> None:
+        """Only a finite candidate comparison is convergence evidence; failures leave it as is."""
+        candidate, parent = _as_float(score), _as_float(parent_score)
+        if candidate is None or parent is None:
             return
         epsilon = float(self.project["run_limits"]["convergence_epsilon"])
-        if candidate - best > epsilon:
+        if candidate - parent > epsilon:
             self.convergence_streak = 0
-        elif expanded_global_best:
+        else:
             self.convergence_streak += 1
 
     def _converged(self) -> bool:
-        return self.convergence_streak >= int(self.project["run_limits"]["convergence_rounds"])
-
-    def _record_competition_convergence(self) -> None:
-        if self.competition_converged_at is not None or not self.history:
-            return
-        latest_research = next(
-            (row for row in reversed(self.history)
-             if not self._is_control(row["config"])),
-            self.history[-1],
+        minimum = int(self.project["run_limits"].get("min_candidate_experiments", 0))
+        completed_candidates = sum(
+            item.get("iteration", 0) > 0 and item.get("status") == "success"
+            for item in self.history
         )
-        self.competition_converged_at = int(latest_research["iteration"])
-        self.competition_best_at_convergence = {
-            "iteration": self.best_iteration,
-            "primary": self.best_score,
-        }
-
-    def _submission_candidates(self) -> list[dict[str, Any]]:
-        """Separate scientific confidence from validation-based submission eligibility."""
-        rows: list[dict[str, Any]] = []
-        for item in self.history:
-            if item.get("status") != "success" or self._is_control(item["config"]):
-                continue
-            selection = item.get("candidate_selection")
-            pattern = (
-                selection.get("retrieved_pattern")
-                if isinstance(selection, dict) else None
+        return (
+            completed_candidates >= minimum
+            and self.convergence_streak >= int(
+                self.project["run_limits"]["convergence_rounds"]
             )
-            if not isinstance(pattern, dict):
-                pattern = {}
-            diagnostics = (
-                item.get("diagnostics")
-                if isinstance(item.get("diagnostics"), dict) else {}
-            )
-            research = str(item.get("research_decision", "UNKNOWN"))
-            scientific = (
-                diagnostics.get("scientific_status")
-                or pattern.get("scientific_verdict")
-                or {
-                    "REFERENCE": "REFERENCE",
-                    "KEEP_CANDIDATE": "PROMISING",
-                    "ENSEMBLE_ONLY": "PROMISING",
-                    "STOP_DIRECTION": "NOT_CONFIRMED",
-                    "REJECT": "REJECTED",
-                    "REINTERPRET": "REINTERPRETED",
-                }.get(research, "NOT_CONFIRMED")
-            )
-            competition = (
-                diagnostics.get("competition_status")
-                or pattern.get("competition_status")
-            )
-            if competition is None:
-                competition = (
-                    "ELIGIBLE"
-                    if research in {"REFERENCE", "KEEP_CANDIDATE", "ENSEMBLE_ONLY"}
-                    else "RESEARCH_ONLY"
-                )
-            eligible = (
-                competition == "ELIGIBLE"
-                and research != "REINTERPRET"
-                and item.get("decision") != "REINTERPRET"
-            )
-            rows.append({
-                "iteration": item["iteration"],
-                "primary": float(item["metrics"]["primary"]),
-                "scientific_status": scientific,
-                "competition_status": competition,
-                "submission_status": "ALLOW" if eligible else "EXCLUDE",
-                "research_decision": research,
-                "selected": bool(eligible and item["iteration"] == self.best_iteration),
-                "config": item["config"],
-            })
-        return sorted(rows, key=lambda row: (-row["primary"], row["iteration"]))
+        )
 
     def _iteration_cap(self, max_iterations: int | None) -> int:
         """Total executed experiments, baseline included, clamped to the official maximum."""
@@ -629,7 +424,11 @@ class Controller:
         budget_seconds = float(self.project["run_limits"]["max_wall_clock_hours"]) * 3600.0
         remaining = max(0.0, budget_seconds - self._elapsed())
         try:
-            selection = self.tree_policy.select(self.history, remaining)
+            selection = self.tree_policy.select(
+                self.history,
+                remaining,
+                getattr(self, "_search_progress", 0.0),
+            )
         except RuntimeError:
             self._pending_parent_selection = None
             return None
@@ -637,13 +436,23 @@ class Controller:
         return selection.parent
 
     def _capture_researcher_accounting(self, researcher: Any, *, failed: bool) -> None:
+        records = getattr(researcher, "last_call_records", [])
+        if not isinstance(records, list):
+            records = []
+        records = [item for item in records if isinstance(item, dict)]
+        self._last_llm_call_ids = [
+            str(item["call_id"]) for item in records if item.get("call_id")
+        ]
+        if records:
+            self._persist_llm_calls(records)
         attempts = getattr(researcher, "last_attempts", 0)
         try:
             attempts = max(0, int(attempts))
         except (TypeError, ValueError):
             attempts = 0
-        if attempts == 0:
-            return
+        if records:
+            attempts = len(records)
+        is_llm = bool(getattr(researcher, "is_llm", False) or records or attempts)
         usage = getattr(researcher, "last_token_usage", {})
         if isinstance(usage, dict):
             for key in self.llm_token_usage:
@@ -652,8 +461,40 @@ class Controller:
                 except (TypeError, ValueError):
                     continue
         self.llm_requests += attempts
-        if failed:
+        self.llm_http_requests += attempts
+        for item in records:
+            error = item.get("error") if isinstance(item.get("error"), dict) else {}
+            status = item.get("http_status")
+            try:
+                failed_status = status is not None and int(status) >= 400
+            except (TypeError, ValueError):
+                failed_status = False
+            unavailable_transport = (
+                status is None and error.get("category") in {"network", "timeout"}
+            )
+            if failed_status or unavailable_transport:
+                self.llm_http_failures += 1
+        for item in records:
+            error = item.get("error") if isinstance(item.get("error"), dict) else {}
+            category = error.get("category")
+            if isinstance(category, str) and category:
+                self.llm_error_categories[category] = (
+                    self.llm_error_categories.get(category, 0) + 1
+                )
+        if failed and is_llm:
             self.llm_failures += 1
+            self.llm_proposal_failures += 1
+
+    def _persist_llm_calls(self, records: list[dict[str, Any]]) -> None:
+        path = self.run_dir / "llm_calls.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            for record in records:
+                call_id = str(record.get("call_id") or "unknown_call")
+                _write_json(self.run_dir / "llm_calls" / f"{call_id}.json", record)
+                handle.write(
+                    json.dumps(record, ensure_ascii=False, default=_json_default) + "\n"
+                )
 
     def _propose(self, researcher, parent: ExperimentParent) -> tuple[Any, Any, tuple[str, str] | None]:
         """Resolve one legal, non-duplicate candidate, or report why the search stopped."""
@@ -664,16 +505,7 @@ class Controller:
         for _ in range(MAX_PROPOSAL_RESOLUTION_ATTEMPTS):
             failed = False
             try:
-                proposal = researcher.propose(parent.config, self.history)
-                selection = getattr(researcher, "last_selection", None)
-                self._pending_candidate_selection = (
-                    dict(selection) if isinstance(selection, dict) else {
-                        "selected_family": "llm_generated",
-                        "selected_score": None,
-                        "criteria": "LLM evaluated structured validation memory and legal search space",
-                        "ranked_candidates": [],
-                    }
-                )
+                proposal = researcher.propose(parent.config, self._planning_history())
             except StopIteration as exc:
                 failed = True
                 self._capture_researcher_accounting(researcher, failed=failed)
@@ -684,33 +516,29 @@ class Controller:
                 return None, None, ("search_exhausted", f"{type(exc).__name__}: {exc}")
             self._capture_researcher_accounting(researcher, failed=failed)
             try:
+                proposal = standardize_proposal(
+                    proposal,
+                    parent.config,
+                    self._planning_history(),
+                    autonomous=self.autonomous_mode,
+                )
                 candidate = apply_changes(parent.config, proposal.changes)
+                if proposal.proposal_type == "code_branch":
+                    if candidate.get("model") != "custom" or not proposal.code_branch:
+                        raise ValueError("generated branch must resolve to model='custom'")
+                    branch = materialize_code_branch(
+                        self.artifacts_dir.parent, proposal.code_branch
+                    )
+                    candidate.update({
+                        "code_branch": branch["source_path"],
+                        "code_branch_sha256": branch["sha256"],
+                        "code_branch_name": branch["branch_name"],
+                    })
+                    validate_config(candidate)
             except (KeyError, TypeError, ValueError) as exc:
                 last_problem = ("search_exhausted", f"invalid proposal: {type(exc).__name__}: {exc}")
                 continue
-            selection = (
-                self._pending_candidate_selection
-                if isinstance(self._pending_candidate_selection, dict) else {}
-            )
-            family = str(selection.get("selected_family") or "unknown")
-            expected_skill = self.skill_registry.primary_for_candidate(
-                family, proposal.changes
-            )
-            try:
-                self.skill_registry.require(expected_skill)
-            except ValueError as exc:
-                last_problem = ("missing_capability", str(exc))
-                continue
-            selected_skill = selection.get("selected_skill")
-            if selected_skill not in (None, expected_skill):
-                last_problem = (
-                    "invalid_skill_binding",
-                    f"planner selected {selected_skill!r}, expected {expected_skill!r}",
-                )
-                continue
-            selection["selected_skill"] = expected_skill
-            self._pending_candidate_selection = selection
-            if is_duplicate_config(candidate, self.history):
+            if is_duplicate_config(candidate, self._planning_history()):
                 last_problem = ("duplicate_configuration",
                                 "candidate configuration already executed")
                 continue
@@ -731,11 +559,16 @@ class Controller:
         self,
         max_iterations: int | None = None,
         *,
-        finalize_test: bool = True,
+        final_evaluation: bool = True,
+        finalize_test: bool | None = None,
         research_after_convergence: bool = False,
         auto_confirm: bool = False,
     ) -> dict[str, Any]:
-        if finalize_test and self._test_finalization_consumed():
+        # ``finalize_test`` is the peer-branch spelling; keep it as an alias so
+        # old commands remain reproducible after the merge.
+        if finalize_test is not None:
+            final_evaluation = bool(finalize_test)
+        if final_evaluation and self._test_finalization_consumed():
             raise RuntimeError(
                 "test finalization has already been consumed for this workspace; "
                 "run validation-only experiments without --finalize-test and keep "
@@ -745,168 +578,214 @@ class Controller:
         cap = self._iteration_cap(max_iterations)
         budget_seconds = float(limits["max_wall_clock_hours"]) * 3600.0
         reserve = self._experiment_cost_seconds()
-        self.auto_confirm = bool(auto_confirm)
+        research_settings = self.project.get("research_search", {})
+        minimum_reserve = min(
+            reserve,
+            float(research_settings.get("minimum_reserve_seconds", 60.0)),
+        ) if reserve > 0 else 0.0
         self.run_dir.mkdir(parents=True, exist_ok=True)
         print(f"Run log: {self.run_dir}", flush=True)
-        planner = getattr(self.researcher, "planner", None)
-        memory_mode = getattr(planner, "memory_mode", None)
-        _write_json(self.run_dir / "run_meta.json", {
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "benchmark": self.project["benchmark"],
-            "limits": limits,
+        _write_json(self.run_dir / "run_meta.json", {"started_at": datetime.now(timezone.utc).isoformat(),
+            "benchmark": self.project["benchmark"], "limits": limits,
             "max_total_experiments": cap,
-            "planner_memory_mode": memory_mode,
-            "researcher": type(self.researcher).__name__,
-            "research_after_convergence": bool(research_after_convergence),
-            "auto_confirm": self.auto_confirm,
-            "skill_registry_version": SKILL_REGISTRY_VERSION,
-            "available_skills": [
-                row["skill_id"] for row in self.skill_registry.catalog()
-            ],
-        })
-        baseline = Proposal("Reproduce the official FM baseline.",
-                            "A verified baseline anchors every subsequent comparison.", {}, "system")
+            "prior_experiments_loaded": len(self.prior_history),
+            "researcher": {
+                "type": type(self.researcher).__name__,
+                "model": getattr(self.researcher, "model", None),
+                "base_url": getattr(self.researcher, "base_url", None),
+                "allow_code_branches": bool(getattr(self.researcher, "allow_code_branches", False)),
+                "autonomous_mode": self.autonomous_mode,
+            }})
+        baseline = Proposal(
+            "Reproduce the selected starting configuration.",
+            "A freshly measured validation checkpoint anchors this run while prior evidence "
+            "prevents repeated experiments.", {}, "system",
+        )
         stop_reason, stop_detail = "max_iterations", None
         for iteration in range(cap):
-            if iteration > 0 and not self._diagnostic_queue and self._converged():
-                self._record_competition_convergence()
-                if not research_after_convergence:
-                    stop_reason = "converged"
-                    break
-            next_reserve = reserve
-            if self.auto_confirm and self._confirmation_queue:
-                next_reserve *= max(
-                    1, self._confirmation_queue[0].estimated_training_runs
-                )
-            blocked = self._budget_block(budget_seconds, next_reserve)
+            blocked = self._budget_block(budget_seconds, minimum_reserve)
             if blocked is not None:
                 stop_reason = blocked
                 break
             if iteration == 0:
-                self._execute(0, self.best_config, baseline, None)
+                self._execute(
+                    0,
+                    self.best_config,
+                    baseline,
+                    None,
+                    cached_checkpoint=self.initial_checkpoint,
+                    cached_metrics=self.initial_metrics,
+                )
                 if self.best_checkpoint is None:
                     stop_reason = "baseline_failed"
                     break
                 continue
-            if self._diagnostic_queue:
-                candidate, proposal, parent, metadata = self._diagnostic_queue.pop(0)
-                self._pending_parent_selection = {
-                    **parent.as_record(),
-                    "priority": None,
-                    "selection_reason": "automatic_placebo_control",
-                }
-                self._pending_candidate_selection = {
-                    "selected_family": "placebo_control",
-                    "selected_score": None,
-                    "criteria": "mandatory attribution control",
-                    "ranked_candidates": [],
-                }
-                self._pending_diagnostic = metadata
-                self._execute(iteration, candidate, proposal, parent)
-                continue
-            if self.auto_confirm and self._confirmation_queue:
-                self._execute_confirmation(
-                    iteration, self._confirmation_queue.pop(0)
-                )
-                continue
+            if self._converged() and not research_after_convergence:
+                stop_reason = "converged"
+                break
+            # Keep the no-argument hook stable for custom controllers while exposing
+            # run progress to the default progressive tree policy.
+            self._search_progress = (iteration - 1) / max(1, cap - 2)
             parent = self._select_parent()
             if parent is None:
                 stop_reason, stop_detail = "search_exhausted", "no expandable parent node"
                 break
+            planning_history = self._planning_history()
+            remaining_seconds = max(0.0, budget_seconds - self._elapsed())
+            candidates = legal_candidate_catalog(
+                parent.config,
+                planning_history,
+                autonomous=self.autonomous_mode,
+            )
+            research = build_research_context(
+                parent.config,
+                planning_history,
+                candidates,
+                iteration=iteration,
+                total_iterations=cap,
+                parent_id=parent.node_id,
+                remaining_seconds=remaining_seconds,
+                shortlist_size=int(research_settings.get("shortlist_size", 5)),
+            )
             self._research_context = {
+                "iteration": iteration,
+                "parent_id": parent.node_id,
                 "remaining_iterations": cap - iteration,
-                "remaining_seconds": max(0.0, budget_seconds - self._elapsed()),
+                "remaining_seconds": remaining_seconds,
                 "estimated_next_experiment_seconds": reserve,
+                "total_iterations": cap,
+                "research": research,
             }
+            if self._pending_parent_selection is None:
+                # Custom controller hooks may return a forced parent without using
+                # TreeSearchPolicy. Preserve a complete audit record in that case.
+                self._pending_parent_selection = {
+                    **parent.as_record(),
+                    "selection_mode": "custom",
+                }
+            self._pending_parent_selection.update({
+                "research_phase": research["phase"],
+                "expansion_mode": research["expansion_mode"],
+                "exploration_probability": research["exploration_probability"],
+            })
+            self._last_llm_call_ids = []
             proposal, candidate, failure = self._propose(self.researcher, parent)
             if failure is not None and not isinstance(self.researcher, DeterministicResearcher):
-                self.llm_fallbacks.append({
-                    "iteration": iteration,
-                    "reason": failure[1],
-                    "provider_error": getattr(self.researcher, "last_error", None),
-                })
-                prior_evidence = getattr(self.researcher, "prior_evidence", None)
-                if prior_evidence is None:
-                    planner = getattr(self.researcher, "planner", None)
-                    prior_evidence = getattr(planner, "prior_evidence", None)
-                proposal, candidate, failure = self._propose(
-                    DeterministicResearcher(prior_evidence=prior_evidence), parent
+                is_llm_fallback = bool(
+                    getattr(self.researcher, "is_llm", False) or
+                    getattr(self.researcher, "last_attempts", 0)
                 )
+                fallback_reason = {
+                    "used": True,
+                    "reason_code": (
+                        getattr(self.researcher, "last_error_category", None) or failure[0]
+                    ),
+                    "reason": failure[1],
+                    "proposal_episode_id": getattr(
+                        self.researcher, "last_proposal_episode_id", None
+                    ),
+                    "llm_call_ids": list(self._last_llm_call_ids),
+                }
+                print(
+                    "  Researcher proposal unavailable; using explicit deterministic fallback "
+                    f"({fallback_reason['reason_code']}).",
+                    flush=True,
+                )
+                if is_llm_fallback:
+                    self.llm_fallbacks += 1
+                proposal, candidate, failure = self._propose(
+                    DeterministicResearcher(autonomous_mode=self.autonomous_mode), parent
+                )
+                if proposal is not None:
+                    proposal = replace(
+                        proposal,
+                        source="deterministic_fallback",
+                        llm_call_ids=tuple(fallback_reason["llm_call_ids"]),
+                        fallback=fallback_reason,
+                    )
             if failure is not None:
                 stop_reason, stop_detail = failure
                 break
+            selected = next(
+                (
+                    row for row in research.get("ranked_candidates", [])
+                    if row.get("candidate_id") == proposal.candidate_id
+                ),
+                {},
+            )
+            estimate = _as_float(selected.get("estimated_runtime_seconds")) or minimum_reserve
+            safety = float(research_settings.get("runtime_safety_factor", 1.25))
+            if budget_seconds - self._elapsed() < min(reserve, max(minimum_reserve, estimate * safety)):
+                stop_reason = "insufficient_time_for_selected_experiment"
+                stop_detail = (
+                    f"estimated {estimate:.1f}s plus safety margin exceeds remaining budget"
+                )
+                break
             self._execute(iteration, candidate, proposal, parent)
-        if self._converged():
-            # The streak may reach the threshold on the final allowed iteration,
-            # leaving no next loop turn in which to record the official point.
-            self._record_competition_convergence()
         final_test = None
-        if finalize_test and self.best_checkpoint is not None:
+        if final_evaluation and self.best_checkpoint is not None:
             final_test = self.runner.finalize(self.best_config, self.best_checkpoint,
                                               self.submissions_dir / "final.csv")
             _write_json(self.artifacts_dir / "final_test_metrics.json", final_test)
-        executed = len(self.history) + len(self.confirmations)
+        executed = len(self.history)
         elapsed = self._elapsed()
-        submission_candidates = self._submission_candidates()
-        _write_json(self.run_dir / "submission_candidates.json", submission_candidates)
-        memory_influenced = sum(
-            bool(item.get("candidate_selection", {}).get("memory_changed_choice"))
-            for item in self.history
-            if isinstance(item.get("candidate_selection"), dict)
+        valid_rows = [
+            item for item in self.history
+            if item.get("status") == "success"
+            and isinstance(item.get("metrics"), dict)
+            and _as_float(item["metrics"].get("nDCG@5")) is not None
+        ]
+        best_ndcg_row = max(
+            valid_rows,
+            key=lambda item: (
+                float(item["metrics"]["nDCG@5"]),
+                float(item["metrics"].get("primary", float("-inf"))),
+            ),
+            default=None,
         )
         summary = {"stop_reason": stop_reason, "stop_detail": stop_detail,
                    "iterations": executed,
                    "total_experiments": executed,
                    "candidate_experiments": max(0, executed - 1),
-                   "discovery_actions": sum(
-                       not self._is_control(row["config"])
-                       for row in self.history[1:]
-                   ),
-                   "control_actions": sum(
-                       self._is_control(row["config"])
-                       for row in self.history
-                   ),
-                   "confirmation_actions": len(self.confirmations),
-                   "confirmation_training_runs": sum(
-                       int(row.get("result", {}).get("training_runs", 0) or 0)
-                       for row in self.confirmations
-                       if isinstance(row.get("result"), dict)
-                   ),
-                   "pending_confirmations": [
-                       action.as_dict() for action in self._confirmation_queue
-                   ],
+                   "prior_experiments_loaded": len(self.prior_history),
                    "best_primary": None if self.best_score == float("-inf") else self.best_score,
+                   "best_ndcg_at_5": (
+                       None if best_ndcg_row is None
+                       else float(best_ndcg_row["metrics"]["nDCG@5"])
+                   ),
+                   "best_ndcg_iteration": (
+                       None if best_ndcg_row is None else best_ndcg_row.get("iteration")
+                   ),
+                   "best_ndcg_primary": (
+                       None if best_ndcg_row is None
+                       else float(best_ndcg_row["metrics"].get("primary", 0.0))
+                   ),
+                   "shared_best_primary": (
+                       None if self.shared_best_score == float("-inf")
+                       else self.shared_best_score
+                   ),
                    "best_iteration": self.best_iteration,
                    "manual_interventions": self.interventions.count,
                    "avoidable_manual_interventions": self.interventions.avoidable_count,
                    "intervention_log": str(self.interventions.path),
-                   "planner_memory_mode": memory_mode,
-                   "memory_influenced_selections": memory_influenced,
+                   "research_after_convergence": bool(research_after_convergence),
+                   "auto_confirm": bool(auto_confirm),
+                   "autonomous_mode": self.autonomous_mode,
+                   "candidate_generation": (
+                       "dynamic_compatible_bundles" if self.autonomous_mode else "registered_catalog"
+                   ),
                    "final_test_metrics": final_test,
                    "convergence_streak": self.convergence_streak,
-                   "competition_converged": self.competition_converged_at is not None,
-                   "competition_converged_at": self.competition_converged_at,
-                   "competition_best_at_convergence": self.competition_best_at_convergence,
-                   "research_after_convergence": bool(research_after_convergence),
-                   "auto_confirm": self.auto_confirm,
-                   "skill_registry_version": SKILL_REGISTRY_VERSION,
-                   "available_skills": [
-                       row["skill_id"] for row in self.skill_registry.catalog()
-                   ],
-                   "research_exhausted": stop_reason == "search_exhausted",
-                   "submission_candidate_count": sum(
-                       row["submission_status"] == "ALLOW"
-                       for row in submission_candidates
-                   ),
-                   "submission_candidates": str(
-                       self.run_dir / "submission_candidates.json"
-                   ),
                    "elapsed_seconds": elapsed,
                    "remaining_seconds": max(0.0, budget_seconds - elapsed),
                    "wall_clock_seconds": elapsed,
                    "llm_requests": self.llm_requests,
                    "llm_failures": self.llm_failures,
-                   "llm_fallbacks": list(self.llm_fallbacks),
+                   "llm_http_requests": self.llm_http_requests,
+                   "llm_http_failures": self.llm_http_failures,
+                   "llm_proposal_failures": self.llm_proposal_failures,
+                   "llm_fallbacks": self.llm_fallbacks,
+                   "llm_error_categories": dict(sorted(self.llm_error_categories.items())),
                    "llm_tokens": dict(self.llm_token_usage),
                    "limits": {"max_total_experiments": cap,
                               "official_max_iterations": int(limits["max_iterations"]),
@@ -914,8 +793,43 @@ class Controller:
                               "wall_clock_budget_seconds": budget_seconds,
                               "convergence_epsilon": float(limits["convergence_epsilon"]),
                               "convergence_rounds": int(limits["convergence_rounds"]),
+                              "min_candidate_experiments": int(
+                                  limits.get("min_candidate_experiments", 0)
+                              ),
                               "experiment_cost_seconds": reserve,
+                              "minimum_experiment_reserve_seconds": minimum_reserve,
                               "max_active_branches": self.tree_policy.config.max_active_branches}}
+        trajectory = [
+            {
+                "iteration": item.get("iteration"),
+                "parent_id": item.get("parent_id"),
+                "source": item.get("source"),
+                "llm_call_ids": item.get("llm_call_ids", []),
+                "observation": item.get("observation"),
+                "diagnosis": item.get("diagnosis"),
+                "hypothesis": item.get("hypothesis"),
+                "evidence_ids": item.get("evidence_ids", []),
+                "changes": item.get("changes", {}),
+                "expected_effect": item.get("expected_effect"),
+                "estimated_cost": item.get("estimated_cost"),
+                "research_phase": item.get("research_phase"),
+                "expansion_mode": item.get("expansion_mode"),
+                "reference_ids": item.get("reference_ids", []),
+                "strategy_id": item.get("strategy_id"),
+                "evolution_recipe": item.get("evolution_recipe"),
+                "predicted_utility": item.get("predicted_utility"),
+                "search_outcome": item.get("search_outcome"),
+                "search_reward": item.get("search_reward"),
+                "validation_metrics": _validation_metrics_only(item.get("metrics")),
+                "metric_deltas": item.get("metric_deltas", {}),
+                "decision": item.get("decision"),
+                "critic": item.get("critique"),
+                "fallback": item.get("fallback"),
+                "token_usage": item.get("token_usage", {}),
+            }
+            for item in self.history
+        ]
+        _write_json(self.run_dir / "research_trajectory.json", trajectory)
         _write_json(self.run_dir / "summary.json", summary)
         print(f"\nStopped: {stop_reason} | best_primary={summary['best_primary']}", flush=True)
         return summary

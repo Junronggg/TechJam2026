@@ -19,11 +19,28 @@ class CriticResult:
     meaningful_improvement: bool
     next_test: str
     reasons: list[str]
+    metric_deltas: dict[str, float | None] | None = None
+    hypothesis_status: str = "inconclusive"
+    evidence_strength: str = "single_seed"
+    seed_count: int = 1
+    reflection_triggered: bool = False
+    reflection_reasons: list[str] | None = None
+    general_lesson: str | None = None
+    next_questions: list[str] | None = None
+    bottleneck: str = "uncertain"
+    recommended_strategy_ids: list[str] | None = None
+    failure_category: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         if payload["delta"] is not None:
             payload["delta"] = float(payload["delta"])
+        payload["metric_deltas"] = payload["metric_deltas"] or {
+            key: None for key in VALIDATION_METRIC_KEYS
+        }
+        payload["reflection_reasons"] = payload["reflection_reasons"] or []
+        payload["next_questions"] = payload["next_questions"] or []
+        payload["recommended_strategy_ids"] = payload["recommended_strategy_ids"] or []
         return payload
 
 
@@ -115,11 +132,12 @@ def review(
     *,
     history: list[dict[str, Any]] | None = None,
     changes: dict[str, Any] | None = None,
+    parent_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Separate measured validation facts from interpretation. Returns a JSON-safe dict."""
     return _review(
         metrics, parent_score, epsilon, status, error,
-        history=history, changes=changes,
+        history=history, changes=changes, parent_metrics=parent_metrics,
     ).as_dict()
 
 
@@ -132,6 +150,7 @@ def _review(
     *,
     history: list[dict[str, Any]] | None = None,
     changes: dict[str, Any] | None = None,
+    parent_metrics: dict[str, Any] | None = None,
 ) -> CriticResult:
     history = history or []
     threshold = float(epsilon) if _finite(epsilon) else DEFAULT_EPSILON
@@ -148,6 +167,15 @@ def _review(
         elif missing_primary and status in {"success", "ok"}:
             message = "missing or non-finite validation Primary"
         observation = f"Experiment failed: {message}"
+        lowered = message.lower()
+        if "timeout" in lowered or "exceeded" in lowered:
+            failure_category, bottleneck = "timeout", "runtime_budget"
+        elif "memory" in lowered or "cuda" in lowered or "allocation" in lowered:
+            failure_category, bottleneck = "resource", "memory_or_device"
+        elif "config" in lowered or "unsupported" in lowered or "schema" in lowered:
+            failure_category, bottleneck = "configuration", "implementation_contract"
+        else:
+            failure_category, bottleneck = "execution", "implementation_or_dependency"
         return CriticResult(
             observation=observation,
             interpretation="No ranking-quality conclusion can be drawn from this run.",
@@ -157,13 +185,34 @@ def _review(
             meaningful_improvement=False,
             next_test=_next_test("failed", changes, 0, threshold),
             reasons=["failed_or_invalid_metrics"],
+            metric_deltas={key: None for key in VALIDATION_METRIC_KEYS},
+            hypothesis_status="inconclusive",
+            evidence_strength="no_valid_result",
+            seed_count=0,
+            reflection_triggered=True,
+            reflection_reasons=["experiment_failure"],
+            general_lesson="The failure is execution evidence only; it does not rank the model family.",
+            next_questions=["Is the failure caused by configuration, runtime, or implementation?"],
+            bottleneck=bottleneck,
+            recommended_strategy_ids=["strategy_runtime_repair"],
+            failure_category=failure_category,
         )
 
     primary = valid["primary"]
-    parent = float(parent_score) if parent_score is not None and _finite(parent_score) else None
+    valid_parent = _validation_metrics(parent_metrics)
+    parent = valid_parent.get("primary")
+    if parent is None and parent_score is not None and _finite(parent_score):
+        parent = float(parent_score)
     delta = None if parent is None else primary - parent
     gauc = valid.get("GAUC")
     ndcg = valid.get("nDCG@5")
+    metric_deltas: dict[str, float | None] = {}
+    for key in VALIDATION_METRIC_KEYS:
+        metric_deltas[key] = (
+            valid[key] - valid_parent[key]
+            if key in valid and key in valid_parent
+            else (delta if key == "primary" else None)
+        )
 
     observation = f"Validation Primary={_format_primary(primary)}"
     if gauc is not None:
@@ -173,7 +222,13 @@ def _review(
     if parent is None:
         observation += "."
     else:
-        observation += f" versus previous best {_format_primary(parent)} (delta={delta:+.6f})."
+        observation += f" versus selected parent {_format_primary(parent)} (delta={delta:+.6f})."
+        component_deltas = []
+        for key in ("GAUC", "nDCG@5"):
+            if metric_deltas[key] is not None:
+                component_deltas.append(f"delta_{key}={metric_deltas[key]:+.6f}")
+        if component_deltas:
+            observation += " Component changes: " + ", ".join(component_deltas) + "."
 
     previous_notes = _recent_validation_notes(history)
     if previous_notes:
@@ -186,6 +241,7 @@ def _review(
         verdict = "noise"
         meaningful = False
         confidence = "high"
+        hypothesis_status = "inconclusive"
         interpretation = (
             "This run establishes a validation reference. It is not an improvement over a previous best."
         )
@@ -194,6 +250,7 @@ def _review(
         verdict = "promote"
         meaningful = True
         confidence = "medium"
+        hypothesis_status = "supported"
         interpretation = (
             f"Validation Primary increased by more than epsilon {threshold}. "
             "This is a single-seed observation, not a statistical significance test."
@@ -203,6 +260,7 @@ def _review(
         verdict = "reject"
         meaningful = False
         confidence = "medium"
+        hypothesis_status = "unsupported"
         interpretation = (
             f"Validation Primary decreased by more than epsilon {threshold} versus the previous best."
         )
@@ -211,6 +269,7 @@ def _review(
         verdict = "noise"
         meaningful = False
         confidence = "low"
+        hypothesis_status = "inconclusive"
         interpretation = (
             f"Validation Primary changed by {delta:+.6f}, which is within epsilon {threshold}. "
             "Treat this as noise, not a confirmed improvement or regression."
@@ -219,11 +278,68 @@ def _review(
         if delta > 0:
             reasons.append("tiny_positive_not_meaningful")
 
+    gauc_delta = metric_deltas.get("GAUC")
+    ndcg_delta = metric_deltas.get("nDCG@5")
+    if (gauc_delta is not None and ndcg_delta is not None and
+            gauc_delta * ndcg_delta < 0):
+        interpretation += (
+            " GAUC and nDCG@5 moved in opposite directions, so the aggregate hides a metric trade-off."
+        )
+        reasons.append("component_metric_tradeoff")
+
     if noisy_streak >= 2 and verdict == "noise":
         reasons.append("repeated_noisy_changes")
 
     if previous_notes:
         reasons.append("used_recent_validation_history")
+
+    reflection_reasons: list[str] = []
+    next_questions: list[str] = []
+    general_lesson: str | None = None
+    if verdict in {"promote", "reject"}:
+        reflection_reasons.append("meaningful_primary_change")
+    if "component_metric_tradeoff" in reasons:
+        reflection_reasons.append("component_metric_tradeoff")
+        next_questions.append("Which user or item slices caused GAUC and nDCG@5 to diverge?")
+    if changes and "model" in changes:
+        reflection_reasons.append("model_family_test")
+        next_questions.append("Did the model fail because of its inductive bias or its input encoding?")
+    if "repeated_noisy_changes" in reasons:
+        reflection_reasons.append("repeated_uncertainty")
+        next_questions.append("Should this family be replicated or deprioritized for a distinct mechanism?")
+    if verdict == "promote":
+        general_lesson = (
+            f"{_change_label(changes)} is promising on validation, but requires matched replication."
+        )
+    elif verdict == "reject":
+        general_lesson = (
+            f"{_change_label(changes)} underperformed its selected parent in this controlled run."
+        )
+    elif reflection_reasons:
+        general_lesson = (
+            f"{_change_label(changes)} produced an informative but unconfirmed result."
+        )
+
+    bottleneck = "uncertain"
+    recommended_strategy_ids = ["strategy_optimization_stability"]
+    if gauc_delta is not None and ndcg_delta is not None and gauc_delta > 0 > ndcg_delta:
+        bottleneck = "top_rank_quality"
+        recommended_strategy_ids = ["strategy_ranking_alignment", "strategy_personalization_signal"]
+    elif gauc_delta is not None and ndcg_delta is not None and ndcg_delta > 0 > gauc_delta:
+        bottleneck = "global_discrimination"
+        recommended_strategy_ids = ["strategy_personalization_signal", "strategy_interaction_capacity"]
+    elif verdict == "promote":
+        bottleneck = "promising_unreplicated"
+        recommended_strategy_ids = ["strategy_replication", "strategy_optimization_stability"]
+    elif changes and "model" in changes and verdict in {"noise", "reject"}:
+        bottleneck = "interaction_capacity_not_dominant"
+        recommended_strategy_ids = ["strategy_personalization_signal", "strategy_ranking_alignment"]
+    elif changes and any(key.endswith(("_rate", "_count", "_bucket")) or key == "tag" for key in changes):
+        bottleneck = "weak_or_redundant_feature"
+        recommended_strategy_ids = ["strategy_interaction_capacity", "strategy_ranking_alignment"]
+    elif verdict == "noise" and delta is not None and delta > 0:
+        bottleneck = "provisional_gain"
+        recommended_strategy_ids = ["strategy_replication"]
 
     return CriticResult(
         observation=observation,
@@ -234,4 +350,14 @@ def _review(
         meaningful_improvement=meaningful,
         next_test=_next_test(verdict, changes, noisy_streak, threshold),
         reasons=reasons,
+        metric_deltas=metric_deltas,
+        hypothesis_status=hypothesis_status,
+        evidence_strength=("baseline_reference" if parent is None else "single_seed"),
+        seed_count=1,
+        reflection_triggered=bool(reflection_reasons),
+        reflection_reasons=reflection_reasons,
+        general_lesson=general_lesson,
+        next_questions=next_questions,
+        bottleneck=bottleneck,
+        recommended_strategy_ids=recommended_strategy_ids,
     )

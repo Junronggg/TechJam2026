@@ -31,17 +31,24 @@ class ErrorPropagationTests(unittest.TestCase):
             checkpoint = root / "checkpoints" / "iteration_002.npz"
             result = checkpoint.with_suffix(".result.json")
 
-            def failed_worker(*args, **kwargs):
-                result.parent.mkdir(parents=True, exist_ok=True)
-                result.write_text(json.dumps({
-                    "status": "error",
-                    "error": "Traceback (most recent call last):\n"
-                             "ModuleNotFoundError: No module named 'lightgbm'",
-                }), encoding="utf-8")
-                return subprocess.CompletedProcess(args[0], 1, stdout="", stderr="")
+            class FailedWorker:
+                pid = 123
+                returncode = 1
+
+                def __init__(self, *args, **kwargs):
+                    del args, kwargs
+                    result.parent.mkdir(parents=True, exist_ok=True)
+                    result.write_text(json.dumps({
+                        "status": "error",
+                        "error": "Traceback (most recent call last):\n"
+                                 "ModuleNotFoundError: No module named 'lightgbm'",
+                    }), encoding="utf-8")
+
+                def wait(self, timeout=None):
+                    return self.returncode
 
             isolated = IsolatedExperimentRunner(FakeRunner(root))
-            with patch("techjam_agent.isolated.subprocess.run", side_effect=failed_worker):
+            with patch("techjam_agent.isolated.subprocess.Popen", FailedWorker):
                 with self.assertRaises(RuntimeError) as raised:
                     isolated.run({"model": "lightgbm"}, checkpoint)
         self.assertEqual(
@@ -56,14 +63,49 @@ class ErrorPropagationTests(unittest.TestCase):
             result.parent.mkdir(parents=True, exist_ok=True)
             result.write_text('{"status":"success","metrics":{"primary":1}}', encoding="utf-8")
 
-            def failed_without_result(*args, **kwargs):
-                self.assertFalse(result.exists())
-                return subprocess.CompletedProcess(args[0], 1, stdout="", stderr="worker crashed")
+            test_case = self
+
+            class FailedWithoutResult:
+                pid = 123
+                returncode = 1
+
+                def __init__(self, *args, **kwargs):
+                    del args
+                    test_case.assertFalse(result.exists())
+                    kwargs["stderr"].write("worker crashed")
+                    kwargs["stderr"].flush()
+
+                def wait(self, timeout=None):
+                    return self.returncode
 
             isolated = IsolatedExperimentRunner(FakeRunner(root))
-            with patch("techjam_agent.isolated.subprocess.run", side_effect=failed_without_result):
+            with patch("techjam_agent.isolated.subprocess.Popen", FailedWithoutResult):
                 with self.assertRaisesRegex(RuntimeError, "worker crashed"):
                     isolated.run({"model": "lightgbm"}, checkpoint)
+
+    def test_model_specific_timeout_terminates_worker_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkpoint = root / "checkpoints" / "iteration_002.npz"
+
+            class TimedOutWorker:
+                pid = 456
+                returncode = None
+
+                def __init__(self, *args, **kwargs):
+                    del args, kwargs
+
+                def wait(self, timeout=None):
+                    raise subprocess.TimeoutExpired("worker", timeout)
+
+            isolated = IsolatedExperimentRunner(
+                FakeRunner(root), timeout_seconds=900, model_timeouts={"multitask": 12}
+            )
+            with patch("techjam_agent.isolated.subprocess.Popen", TimedOutWorker), \
+                    patch.object(isolated, "_terminate_tree") as terminate:
+                with self.assertRaisesRegex(TimeoutError, "12s timeout"):
+                    isolated.run({"model": "multitask"}, checkpoint)
+            terminate.assert_called_once()
 
 
 if __name__ == "__main__":

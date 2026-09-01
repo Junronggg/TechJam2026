@@ -19,18 +19,14 @@ sys.path.insert(0, str(ROOT / "src"))
 from techjam_agent.config import apply_changes, experiment_key
 from techjam_agent.controller import Controller
 from techjam_agent.memory import (
-    GENERIC_FAILURE_THRESHOLD,
     LESSON_LIMIT,
-    PATTERN_LIMIT,
-    PLANNER_RECENT_HISTORY,
     SIGNATURE_LIMIT,
     build_memory_summary,
     collect_tried_keys,
-    distill_research_patterns,
-    evidence_directions,
     is_duplicate_config,
 )
 from techjam_agent.proposals import (
+    candidate_id_for,
     DeterministicResearcher,
     Proposal,
     build_planner_prompt,
@@ -144,10 +140,16 @@ def example_history() -> list[dict]:
     )
     bpr["critique"]["delta"] = 0.001926
     bpr["critique"]["meaningful_improvement"] = False
+    bpr["critique"]["metric_deltas"] = {
+        "GAUC": 0.0026, "nDCG@5": 0.0013, "primary": 0.001926,
+    }
+    bpr["critique"]["hypothesis_status"] = "inconclusive"
+    bpr["critique"]["evidence_strength"] = "single_seed"
+    bpr["critique"]["seed_count"] = 1
     failed = record(
         2,
-        config=apply_changes(bpr_config(), {"learning_rate": 0.005}),
-        changes={"learning_rate": 0.005},
+        config=apply_changes(bpr_config(), {"learning_rate": 0.002}),
+        changes={"learning_rate": 0.002},
         hypothesis="Raise learning rate.",
         verdict="failed",
         primary=None,
@@ -203,7 +205,12 @@ class CategoryTests(unittest.TestCase):
         self.assertEqual(summary["counts"]["failed"], 1)
         self.assertEqual(summary["best_observed"]["validation_primary"], 0.603396)
         self.assertEqual(summary["best_observed"]["training_objective"], "bpr")
+        self.assertEqual(summary["best_observed"]["hypothesis_status"], "inconclusive")
         self.assertEqual(summary["uncertain"][0]["primary"], 0.603396)
+        self.assertEqual(summary["uncertain"][0]["metric_deltas"]["primary"], 0.001926)
+        self.assertEqual(summary["research_findings"][0]["evidence_id"], "iteration_001")
+        self.assertEqual(summary["research_findings"][0]["evidence_status"], "inconclusive")
+        self.assertEqual(summary["confirmed_insights"], [])
         self.assertNotIn(0, [item["iteration"] for item in summary["uncertain"]])
         self.assertEqual(summary["failed"][0]["error_type"], "TimeoutError")
 
@@ -310,13 +317,14 @@ class BoundAndSafetyTests(unittest.TestCase):
         self.assertNotIn("sk-secret-do-not-leak", blob)
         self.assertNotIn("full traceback body", blob)
         self.assertNotIn("Traceback (most recent call last)", blob)
-        self.assertLessEqual(len(prompt["history"]), PLANNER_RECENT_HISTORY)
-        self.assertIn("promising", prompt["memory"])
+        self.assertNotIn("history", prompt)
+        self.assertIn("research_findings", prompt["memory"])
         self.assertNotIn("tried_keys", prompt["memory"])
-        self.assertIn("tried_signatures", prompt["memory"])
+        self.assertNotIn("tried_signatures", prompt["memory"])
+        self.assertIn("legal_candidates", prompt)
         self.assertIn("remaining", prompt)
 
-    def test_full_keys_stay_internal_and_compact_signatures_reach_prompt(self) -> None:
+    def test_full_keys_stay_internal_and_candidate_catalog_excludes_tried(self) -> None:
         history = example_history()
         full_keys = collect_tried_keys(history)
         self.assertEqual(len(full_keys), 3)
@@ -328,11 +336,9 @@ class BoundAndSafetyTests(unittest.TestCase):
         self.assertNotIn("experiment_key", prompt_blob)
         for key in full_keys:
             self.assertNotIn(key, prompt_blob)
-        signatures = prompt["memory"]["tried_signatures"]
-        self.assertEqual(len(signatures), 3)
-        self.assertEqual(signatures[1]["training_objective"], "bpr")
-        self.assertEqual(signatures[1]["changes"], {"training_objective": "bpr"})
-        self.assertEqual(len(signatures[1]["key_hash"]), 12)
+        candidate_ids = {item["candidate_id"] for item in prompt["legal_candidates"]}
+        for item in history:
+            self.assertNotIn(candidate_id_for(item["config"]), candidate_ids)
 
 
 class DuplicateTests(unittest.TestCase):
@@ -367,143 +373,6 @@ class DuplicateTests(unittest.TestCase):
             experiment_key(apply_changes(load_config(), {"training_objective": "bpr"})),
             experiment_key(controller.history[1]["config"]),
         )
-
-
-class EvidenceDirectionTests(unittest.TestCase):
-    """Structured evidence only: verdict, error type/message, model, objective, changes."""
-
-    def lightgbm_config(self, **features) -> dict:
-        changes = {"model": "lightgbm", **features}
-        return apply_changes(load_config(), changes)
-
-    def test_missing_dependency_hard_blocks_the_model_after_one_failure(self) -> None:
-        history = [
-            record(0),
-            record(1, config=self.lightgbm_config(), changes={"model": "lightgbm"},
-                   verdict="failed", primary=None, status="error",
-                   error={"type": "RuntimeError",
-                          "message": "LightGBM is required: python -m pip install -r requirements.txt"}),
-        ]
-        directions = evidence_directions(history)
-        self.assertEqual(directions.blocked_models, frozenset({"lightgbm"}))
-        self.assertEqual(directions.soft_models, frozenset())
-        self.assertIsNotNone(directions.hard_block_for(self.lightgbm_config()))
-        self.assertIsNone(directions.soft_reason_for(self.lightgbm_config()))
-
-    def test_import_error_type_alone_is_structural(self) -> None:
-        history = [record(1, config=self.lightgbm_config(), verdict="failed", primary=None,
-                          status="error",
-                          error={"type": "ModuleNotFoundError", "message": "boom"})]
-        self.assertEqual(evidence_directions(history).blocked_models,
-                         frozenset({"lightgbm"}))
-
-    def test_single_timeout_disfavors_nothing(self) -> None:
-        history = [
-            record(0),
-            record(1, config=self.lightgbm_config(), verdict="failed", primary=None,
-                   status="error",
-                   error={"type": "TimeoutError",
-                          "message": "experiment exceeded 900s timeout"}),
-        ]
-        self.assertFalse(evidence_directions(history))
-
-    def test_two_consistent_generic_failures_are_soft_not_hard(self) -> None:
-        failure = {"type": "TimeoutError", "message": "experiment exceeded 900s timeout"}
-        history = [record(0)] + [
-            record(index, config=self.lightgbm_config(), verdict="failed", primary=None,
-                   status="error", error=failure)
-            for index in range(1, GENERIC_FAILURE_THRESHOLD + 1)
-        ]
-        directions = evidence_directions(history)
-        self.assertEqual(directions.soft_models, frozenset({"lightgbm"}))
-        self.assertEqual(directions.blocked_models, frozenset())
-        self.assertIsNone(directions.hard_block_for(self.lightgbm_config()))
-        self.assertIsNotNone(directions.soft_reason_for(self.lightgbm_config()))
-
-    def test_a_structural_failure_outranks_generic_counts(self) -> None:
-        history = [
-            record(1, config=self.lightgbm_config(), verdict="failed", primary=None,
-                   status="error", error={"type": "TimeoutError", "message": "timeout"}),
-            record(2, config=self.lightgbm_config(), verdict="failed", primary=None,
-                   status="error", error={"type": "TimeoutError", "message": "timeout"}),
-            record(3, config=self.lightgbm_config(), verdict="failed", primary=None,
-                   status="error",
-                   error={"type": "RuntimeError", "message": "LightGBM is required: install"}),
-        ]
-        directions = evidence_directions(history)
-        self.assertEqual(directions.blocked_models, frozenset({"lightgbm"}))
-        self.assertEqual(directions.soft_models, frozenset())
-
-    def test_reject_narrows_to_the_mechanism_the_change_introduced(self) -> None:
-        ensemble = apply_changes(bpr_config(), {"model": "ensemble",
-                                                "training_objective": "hybrid"})
-        history = [record(1, config=ensemble, verdict="reject", primary=0.55,
-                          changes={"model": "ensemble", "training_objective": "hybrid"})]
-        directions = evidence_directions(history)
-        self.assertEqual(directions.soft_mechanisms, frozenset({("ensemble", "hybrid")}))
-        self.assertEqual(directions.blocked_models, frozenset())
-        self.assertIsNone(directions.soft_reason_for(bpr_config()))
-        self.assertIsNotNone(directions.soft_reason_for(ensemble))
-        self.assertIsNone(directions.hard_block_for(ensemble))
-
-    def test_reject_on_a_plain_hyperparameter_change_blocks_nothing(self) -> None:
-        tuned = apply_changes(load_config(), {"learning_rate": 0.002})
-        history = [record(1, config=tuned, verdict="reject", primary=0.55,
-                          changes={"learning_rate": 0.002})]
-        directions = evidence_directions(history)
-        self.assertFalse(directions)
-        self.assertIsNone(directions.soft_reason_for(tuned))
-
-    def test_dirty_and_legacy_rows_are_ignored_without_crashing(self) -> None:
-        history = [
-            None,
-            "not a record",
-            {},
-            {"config": "not a dict"},
-            {"config": {"model": 7, "training_objective": None}},
-            {"config": load_config(), "critique": "not a dict", "error": "not a dict"},
-        ]
-        directions = evidence_directions(history)
-        self.assertFalse(directions)
-        self.assertIsNone(directions.hard_block_for(load_config()))
-        self.assertIsNone(directions.soft_reason_for("not a dict"))
-        self.assertEqual(evidence_directions(None).blocked_models, frozenset())
-
-    def test_status_error_without_an_error_payload_counts_as_generic(self) -> None:
-        history = [record(index, primary=None, status="error", verdict=None, error=None)
-                   for index in range(1, GENERIC_FAILURE_THRESHOLD + 1)]
-        self.assertEqual(evidence_directions(history).soft_models, frozenset({"fm"}))
-        self.assertFalse(evidence_directions(history[:1]))
-
-    def test_summary_is_deterministic_for_identical_history(self) -> None:
-        history = [
-            record(0),
-            record(1, config=self.lightgbm_config(), verdict="failed", primary=None,
-                   status="error",
-                   error={"type": "RuntimeError", "message": "LightGBM is required: install"}),
-        ]
-        self.assertEqual(evidence_directions(history), evidence_directions(history))
-
-
-class PatternLimitRegressionTests(unittest.TestCase):
-    def test_pattern_limit_is_defined_and_truncates_distilled_families(self) -> None:
-        self.assertIsInstance(PATTERN_LIMIT, int)
-        self.assertGreaterEqual(PATTERN_LIMIT, 1)
-        history = []
-        for index, family in enumerate(
-            f"family_{index}" for index in range(PATTERN_LIMIT + 3)
-        ):
-            history.append({
-                "iteration": index + 1,
-                "status": "success",
-                "decision": "REJECT",
-                "candidate_selection": {"selected_family": family},
-                "critique": {"verdict": "reject"},
-                "diagnostics": {},
-                "delta_from_parent": -0.001,
-            })
-        patterns = distill_research_patterns(history)
-        self.assertEqual(len(patterns), PATTERN_LIMIT)
 
 
 if __name__ == "__main__":
